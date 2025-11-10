@@ -36,6 +36,7 @@ def create_estimator(method: str, config: ExperimentConfig, obs_dim: int):
     EstimatorClass = ESTIMATOR_MAP[method]
     hidden_sizes = config.network.hidden_sizes
     activation = config.network.activation
+    device = config.network.device
 
     # Get method-specific config
     if method == 'monte_carlo':
@@ -52,6 +53,7 @@ def create_estimator(method: str, config: ExperimentConfig, obs_dim: int):
             discount_factor=method_config.discount_factor,
             activation=activation,
             learning_rate=method_config.learning_rate,
+            device=device,
         )
     elif method == 'td_lambda':
         method_config = config.value_estimators.td_lambda
@@ -69,6 +71,7 @@ def create_estimator(method: str, config: ExperimentConfig, obs_dim: int):
             n_step=method_config.n_step,
             activation=activation,
             learning_rate=method_config.learning_rate,
+            device=device,
         )
     elif method == 'dqn':
         method_config = config.value_estimators.dqn
@@ -86,6 +89,7 @@ def create_estimator(method: str, config: ExperimentConfig, obs_dim: int):
             double_dqn=method_config.double_dqn,
             activation=activation,
             learning_rate=method_config.learning_rate,
+            device=device,
         )
 
 
@@ -141,6 +145,109 @@ def check_convergence(loss_history: list, patience: int, threshold: float) -> bo
     return relative_improvement < threshold
 
 
+def get_n_initializations(config: ExperimentConfig, method: str) -> int:
+    """Get number of initializations for a method.
+
+    Args:
+        config: Experiment configuration
+        method: Estimator method name
+
+    Returns:
+        Number of initializations to train
+    """
+    if method == 'monte_carlo':
+        return config.value_estimators.monte_carlo.n_initializations
+    elif method == 'td_lambda':
+        return config.value_estimators.td_lambda.n_initializations
+    elif method == 'dqn':
+        return config.value_estimators.dqn.n_initializations
+    return 1
+
+
+def train_single_initialization(
+    estimator,
+    batch: dict,
+    config: ExperimentConfig,
+    method: str,
+    batch_name: str,
+    init_idx: int,
+    use_wandb: bool
+):
+    """Train a single initialization and return its final loss.
+
+    Args:
+        estimator: Estimator instance to train
+        batch: Batch data
+        config: Experiment configuration
+        method: Method name
+        batch_name: Batch name for logging
+        init_idx: Initialization index
+        use_wandb: Whether to use wandb
+
+    Returns:
+        Final loss value
+    """
+    # Initialize wandb for this initialization
+    if use_wandb and config.logging.use_wandb:
+        run_name = f"{method}_{batch_name}_init{init_idx}"
+        wandb.init(
+            project=config.logging.wandb_project,
+            entity=config.logging.wandb_entity,
+            name=run_name,
+            group=config.experiment_id,
+            config={
+                'method': method,
+                'batch_name': batch_name,
+                'init_idx': init_idx,
+                'experiment_id': config.experiment_id,
+                **estimator.get_config(),
+            },
+            tags=[method, batch_name, f"init{init_idx}"],
+        )
+
+    training_config = config.value_estimators.training
+    loss_history = []
+    best_loss = float('inf')
+
+    for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
+        metrics = estimator.train_step(batch)
+        loss_history.append(metrics['loss'])
+
+        if metrics['loss'] < best_loss:
+            best_loss = metrics['loss']
+
+        # Logging
+        if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
+            wandb.log({
+                'epoch': epoch,
+                'train/loss': metrics['loss'],
+                'train/mean_value': metrics['mean_value'],
+                'train/mean_target': metrics['mean_target'],
+                'train/best_loss': best_loss,
+            })
+
+        # Evaluation logging
+        if epoch % training_config.eval_frequency == 0 and use_wandb and config.logging.use_wandb:
+            wandb.log({
+                'epoch': epoch,
+                'eval/mse': metrics['loss'],
+                'eval/mae': metrics['mae'],
+            })
+
+        # Check convergence
+        if check_convergence(loss_history, training_config.convergence_patience,
+                           training_config.convergence_threshold):
+            break
+
+    final_loss = loss_history[-1] if loss_history else float('inf')
+
+    if use_wandb and config.logging.use_wandb:
+        wandb.log({'final/best_loss': best_loss})
+        wandb.finish()
+
+    return final_loss
+
+
 def train_estimator(
     config: ExperimentConfig,
     method: str,
@@ -148,7 +255,7 @@ def train_estimator(
     output_dir: Path,
     use_wandb: bool = True
 ):
-    """Train a value estimator on a batch of data.
+    """Train multiple estimator initializations and keep the best one.
 
     Args:
         config: Experiment configuration
@@ -169,103 +276,51 @@ def train_estimator(
     print(f"Loading batch data from {batch_path}")
     batch = load_batch_data(batch_path)
 
-    # Get observation dimension
+    # Get observation dimension and number of initializations
     obs_dim = batch['observations'][0].shape[-1]
+    n_inits = get_n_initializations(config, method)
+    batch_name = batch_path.stem
 
-    # Create estimator
-    print(f"Creating {method} estimator")
-    estimator = create_estimator(method, config, obs_dim)
+    print(f"\nTraining {n_inits} initialization(s) of {method} on {batch_name}")
+    print(f"Max epochs: {config.value_estimators.training.max_epochs}\n")
 
-    # Initialize wandb
-    batch_name = batch_path.stem  # e.g., "batch_0" or "batch_tuning"
-    if use_wandb and config.logging.use_wandb:
-        run_name = f"{method}_{batch_name}"
-        wandb.init(
-            project=config.logging.wandb_project,
-            entity=config.logging.wandb_entity,
-            name=run_name,
-            group=config.experiment_id,
-            config={
-                'method': method,
-                'batch_name': batch_name,
-                'experiment_id': config.experiment_id,
-                **estimator.get_config(),
-            },
-            tags=[method, batch_name],
+    # Train multiple initializations
+    best_loss = float('inf')
+    best_estimator = None
+
+    for init_idx in range(n_inits):
+        # Create fresh estimator with different random seed
+        torch.manual_seed(config.seed + init_idx)
+        np.random.seed(config.seed + init_idx)
+        estimator = create_estimator(method, config, obs_dim)
+
+        # Train this initialization
+        final_loss = train_single_initialization(
+            estimator, batch, config, method, batch_name, init_idx, use_wandb
         )
 
-    # Training loop
-    print(f"\nTraining {method} estimator on {batch_name}")
-    print(f"Max epochs: {config.value_estimators.training.max_epochs}")
-    print(f"Batch size: {config.value_estimators.training.batch_size}\n")
+        print(f"Init {init_idx}: final loss = {final_loss:.6f}")
 
-    training_config = config.value_estimators.training
-    loss_history = []
-    best_loss = float('inf')
+        # Keep track of best estimator
+        if final_loss < best_loss:
+            best_loss = final_loss
+            best_estimator = estimator
+            print(f"  -> New best!")
 
-    for epoch in tqdm(range(training_config.max_epochs), desc="Training"):
-        # Perform training step (full batch for now, can add mini-batching later)
-        metrics = estimator.train_step(batch)
-
-        loss_history.append(metrics['loss'])
-        if metrics['loss'] < best_loss:
-            best_loss = metrics['loss']
-
-        # Logging
-        if epoch % config.logging.log_frequency == 0:
-            log_dict = {
-                'epoch': epoch,
-                'train/loss': metrics['loss'],
-                'train/mean_value': metrics['mean_value'],
-                'train/mean_target': metrics['mean_target'],
-                'train/best_loss': best_loss,
-            }
-
-            if use_wandb and config.logging.use_wandb:
-                wandb.log(log_dict)
-
-        # Evaluation
-        if epoch % training_config.eval_frequency == 0:
-            eval_log_dict = {
-                'epoch': epoch,
-                'eval/mse': metrics['loss'],
-                'eval/mae': metrics['mae'],
-            }
-
-            if use_wandb and config.logging.use_wandb:
-                wandb.log(eval_log_dict)
-
-        # Check convergence
-        if check_convergence(loss_history, training_config.convergence_patience,
-                           training_config.convergence_threshold):
-            print(f"\nConverged at epoch {epoch}")
-            break
-
-        # Save checkpoint periodically
-        if epoch % 100 == 0 and epoch > 0:
-            checkpoint = output_dir / f"checkpoint_epoch{epoch}.pt"
-            estimator.save(checkpoint)
-
-    # Save final model
-    print(f"\nSaving final checkpoint to {checkpoint_path}")
-    estimator.save(checkpoint_path)
+    # Save best model
+    print(f"\nSaving best estimator (loss={best_loss:.6f}) to {checkpoint_path}")
+    best_estimator.save(checkpoint_path)
 
     # Save training statistics
     stats = {
         'method': method,
         'batch_name': batch_name,
-        'final_epoch': epoch,
+        'n_initializations': n_inits,
         'best_loss': best_loss,
-        'final_loss': loss_history[-1] if loss_history else None,
-        'converged': epoch < training_config.max_epochs - 1,
     }
 
     with open(output_dir / "training_stats.json", 'w') as f:
         json.dump(stats, f, indent=2)
-
-    if use_wandb and config.logging.use_wandb:
-        wandb.log({'final/best_loss': best_loss, 'final/converged': stats['converged']})
-        wandb.finish()
 
     print(f"Training complete for {method} {batch_name}")
 

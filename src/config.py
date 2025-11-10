@@ -44,25 +44,31 @@ class ValueEstimatorTrainingConfig:
 
 
 @dataclass
-class MonteCarloConfig:
+class BaseEstimatorConfig:
+    """Base configuration with parameters common to all estimators."""
     discount_factor: float = 0.99
     learning_rate: float = 0.001
+    n_initializations: int = 1  # Number of random initializations to try
 
 
 @dataclass
-class TDLambdaConfig:
-    discount_factor: float = 0.99
+class MonteCarloConfig(BaseEstimatorConfig):
+    """Monte Carlo estimator configuration (only uses base parameters)."""
+    pass
+
+
+@dataclass
+class TDLambdaConfig(BaseEstimatorConfig):
+    """TD(λ) estimator configuration."""
     lambda_: float = 0.95  # using lambda_ to avoid Python keyword
     n_step: int = 1
-    learning_rate: float = 0.001
 
 
 @dataclass
-class DQNConfig:
-    discount_factor: float = 0.99
-    target_update_rate: int = 1.0e-5
+class DQNConfig(BaseEstimatorConfig):
+    """DQN estimator configuration."""
+    target_update_rate: float = 1.0e-5
     double_dqn: bool = True
-    learning_rate: float = 0.001
 
 
 @dataclass
@@ -78,6 +84,7 @@ class ValueEstimatorsConfig:
 class NetworkConfig:
     hidden_sizes: List[int]
     activation: str = "relu"
+    device: str = "auto"  # "cpu" or "auto" (GPU if available, else CPU)
 
 
 @dataclass

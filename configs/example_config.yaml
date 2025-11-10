@@ -51,24 +51,27 @@ value_estimators:
   monte_carlo:
     discount_factor: 0.99
     learning_rate: 0.001
+    n_initializations: 5
 
-  # td_lambda config omitted since it's not in the methods list
   # td_lambda:
   #   discount_factor: 0.99
+  #   learning_rate: 0.001
+  #   n_initializations: 5
   #   lambda: 0.95
   #   n_step: 1
-  #   learning_rate: 0.001
 
   dqn:
     discount_factor: 0.99
+    learning_rate: 0.0003
+    n_initializations: 5
     target_update_rate: 1.0e-3
     double_dqn: true
-    learning_rate: 0.0003
 
 # Network architecture (will match SB3 critic architecture)
 network:
   hidden_sizes: [64, 64]
   activation: "relu"
+  device: "auto"  # "cpu" for CPU-only, "auto" for GPU if available (otherwise CPU)
 
 # Logging
 logging:
