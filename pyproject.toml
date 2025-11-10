@@ -1,0 +1,19 @@
+[project]
+name = "pooling-eval"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gymnasium[box2d,atari,mujoco]>=1.0.0",
+    "ipykernel>=7.1.0",
+    "ipywidgets>=8.1.8",
+    "stable-baselines3[extra]>=2.7.0",
+    "torch>=2.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "wandb>=0.16.0",
+    "tqdm>=4.65.0",
+    "matplotlib>=3.7.0",
+    "weave>=0.52.14",
+]

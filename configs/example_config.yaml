@@ -1,0 +1,78 @@
+# Example configuration for pooling evaluation experiments
+
+experiment_id: "cartpole_test"
+seed: 42
+
+# Environment configuration
+environment:
+  name: "CartPole-v1"
+  # For Atari: name: "ALE/Pong-v5"
+  # For MuJoCo: name: "HalfCheetah-v4"
+
+# Policy training (Stable Baselines 3)
+policy:
+  algorithm: "PPO"  # PPO, A2C, SAC, etc.
+  total_timesteps: 10000
+  learning_rate: 0.0003
+  n_steps: 2048  # for on-policy algorithms
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+
+# Data generation
+data_generation:
+  n_batches: 10  # number of independent batches
+  episodes_per_batch: 500  # k episodes per batch
+  deterministic_policy: false  # whether to use deterministic actions
+
+  # Special batches for different purposes
+  tuning_episodes: 1000  # For hyperparameter tuning (batch_tuning.npz)
+  ground_truth_episodes: 5000  # For training ground truth estimator (batch_ground_truth.npz)
+  eval_episodes: 1000  # For final evaluation (batch_eval.npz)
+
+# Value estimator training
+value_estimators:
+  # Which methods to evaluate (only include methods you want to run)
+  methods: ["monte_carlo", "dqn"]
+
+  # NOTE: Only specify configuration for methods listed in 'methods' above.
+  # If a method is not listed in 'methods', its configuration can be omitted.
+
+  # Shared training parameters
+  training:
+    max_epochs: 3000
+    batch_size: 256
+    convergence_patience: 50  # early stopping if no improvement
+    convergence_threshold: 1.0e-4
+    eval_frequency: 10  # evaluate every N epochs
+
+  # Method-specific parameters (only include configs for methods in 'methods' list)
+  monte_carlo:
+    discount_factor: 0.99
+    learning_rate: 0.001
+
+  # td_lambda config omitted since it's not in the methods list
+  # td_lambda:
+  #   discount_factor: 0.99
+  #   lambda: 0.95
+  #   n_step: 1
+  #   learning_rate: 0.001
+
+  dqn:
+    discount_factor: 0.99
+    target_update_rate: 1.0e-3
+    double_dqn: true
+    learning_rate: 0.0003
+
+# Network architecture (will match SB3 critic architecture)
+network:
+  hidden_sizes: [64, 64]
+  activation: "relu"
+
+# Logging
+logging:
+  use_wandb: true
+  wandb_project: "pooling-eval"
+  wandb_entity: null  # set to your wandb username/team
+  log_frequency: 10  # log every N training steps
