@@ -145,7 +145,7 @@ class ValueEstimator(ABC):
 
         return {
             'loss': loss.item(),
-            'mae': loss.item(),
+            'mae': mae,
             'mean_value': values.mean().item(),
             'mean_target': targets.mean().item(),
         }
