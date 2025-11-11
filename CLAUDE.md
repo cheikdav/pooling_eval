@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Project Rules
+
+- **Git Commits**: Never include Claude Code references, attributions, or Co-Authored-By tags in commit messages. Keep commits clean and professional.
+
 ## Project Overview
 
 This is a research framework for evaluating value function estimation methods in reinforcement learning. The core workflow:
@@ -37,12 +41,28 @@ python -m src.train_estimator --config configs/example_config.yaml --method mont
 # Sequential (simple, good for debugging)
 python -m src.run_all_estimators --config configs/example_config.yaml --mode sequential
 
-# Parallel across GPUs
+# Parallel across GPUs (local machine)
 python -m src.run_all_estimators --config configs/example_config.yaml --mode parallel
 
-# Or call the bash script directly
+# Cluster mode (SGE array jobs)
+python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster
+
+# Cluster mode with custom settings
+python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster \
+    --grid-mem 16g \
+    --max-concurrent 10
+
+# Or call the bash script directly for parallel mode
 ./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,td_lambda,dqn 10
 ```
+
+**Cluster Mode Details:**
+- Submits one SGE array job per method
+- Each array task (identified by `SGE_TASK_ID`) trains one batch
+- `SGE_TASK_ID` is automatically converted to batch index (1-indexed → 0-indexed)
+- Monitor jobs with `qstat`
+- View logs in `*.o*` and `*.e*` files
+- Use `--max-concurrent N` to limit concurrent tasks per method (useful for resource management)
 
 ### Evaluate Results
 ```bash

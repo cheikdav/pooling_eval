@@ -331,18 +331,29 @@ def main():
     parser.add_argument("--method", type=str, required=True,
                        choices=list(ESTIMATOR_MAP.keys()),
                        help="Estimator method")
-    parser.add_argument("--batch-idx", type=int, required=True,
-                       help="Batch index to train on")
+    parser.add_argument("--batch-idx", type=int, required=False,
+                       help="Batch index to train on (if not set, uses SGE_TASK_ID-1 from environment)")
     parser.add_argument("--no-wandb", action="store_true",
                        help="Disable wandb logging")
     args = parser.parse_args()
+
+    # Determine batch index: use argument if provided, otherwise check SGE_TASK_ID
+    if args.batch_idx is not None:
+        batch_idx = args.batch_idx
+    else:
+        import os
+        sge_task_id = os.getenv('SGE_TASK_ID')
+        if sge_task_id is None:
+            parser.error("--batch-idx is required when not running as SGE array job")
+        batch_idx = int(sge_task_id) - 1  # SGE_TASK_ID starts at 1, batch_idx starts at 0
+        print(f"Using SGE_TASK_ID={sge_task_id} -> batch_idx={batch_idx}")
 
     # Load configuration
     config = ExperimentConfig.from_yaml(args.config)
 
     # Set paths based on batch index
-    batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{args.batch_idx}.npz"
-    output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method / f"batch_{args.batch_idx}"
+    batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{batch_idx}.npz"
+    output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method / f"batch_{batch_idx}"
 
     # Save config to output directory
     output_dir.mkdir(parents=True, exist_ok=True)
