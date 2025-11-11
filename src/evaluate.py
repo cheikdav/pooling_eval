@@ -1,209 +1,134 @@
 """Evaluate and compare value estimators."""
 
 import argparse
-import numpy as np
-from pathlib import Path
 import json
-from typing import Dict, List
-import matplotlib.pyplot as plt
-from collections import defaultdict
+import numpy as np
+import pandas as pd
+import torch
+from pathlib import Path
+from typing import Dict
 
 from src.config import ExperimentConfig
+from src.estimators.base import ValueNetwork
 
 
-def load_training_stats(estimator_dir: Path) -> Dict:
-    """Load training statistics from a trained estimator.
+def load_evaluation_batch(data_dir: Path) -> Dict:
+    """Load the evaluation batch of data.
+
+    Args:
+        data_dir: Directory containing data files
+
+    Returns:
+        Dictionary containing evaluation batch data
+    """
+    eval_batch_path = data_dir / "batch_eval.npz"
+    if not eval_batch_path.exists():
+        raise FileNotFoundError(f"Evaluation batch not found at {eval_batch_path}")
+
+    batch = np.load(eval_batch_path, allow_pickle=True)
+    return dict(batch)
+
+
+def load_estimator_model(estimator_dir: Path, config: ExperimentConfig, device: str = "cpu"):
+    """Load a trained estimator model.
 
     Args:
         estimator_dir: Directory containing trained estimator
+        config: Experiment configuration
+        device: Device to load model on
 
     Returns:
-        Dictionary of training statistics
+        Loaded value network
     """
-    stats_file = estimator_dir / "training_stats.json"
-    if not stats_file.exists():
-        return None
+    model_path = estimator_dir / "estimator_final.pt"
+    if not model_path.exists():
+        model_path = estimator_dir / "estimator_best.pt"
+        if not model_path.exists():
+            return None
 
-    with open(stats_file, 'r') as f:
-        return json.load(f)
+    # Load checkpoint
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # Create network
+    obs_dim = checkpoint['obs_dim']
+    hidden_sizes = checkpoint['hidden_sizes']
+    activation = checkpoint['activation']
+
+    value_net = ValueNetwork(obs_dim, hidden_sizes, activation)
+    value_net.load_state_dict(checkpoint['value_net_state_dict'])
+    value_net.to(device)
+    value_net.eval()
+
+    return value_net
 
 
-def collect_all_stats(experiment_dir: Path, methods: List[str], n_batches: int) -> Dict:
-    """Collect statistics from all trained estimators.
+def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
+                        eval_batch: Dict, device: str = "cpu") -> pd.DataFrame:
+    """Generate predictions from all trained models on the evaluation batch.
 
     Args:
         experiment_dir: Experiment directory
-        methods: List of methods
-        n_batches: Number of batches
+        config: Experiment configuration
+        eval_batch: Evaluation batch data
+        device: Device to use for inference
 
     Returns:
-        Nested dictionary: {method: {batch_idx: stats}}
+        DataFrame with columns: state_idx, method, batch_idx, predicted_value
     """
-    all_stats = defaultdict(dict)
+    # Flatten evaluation batch observations
+    eval_obs_list = eval_batch['observations']
+    eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
+    n_states = len(eval_obs_flat)
 
-    for method in methods:
-        for batch_idx in range(n_batches):
-            estimator_dir = (experiment_dir / "estimators" / method /
-                           f"batch_{batch_idx}")
+    print(f"\nGenerating predictions on {n_states} states from evaluation batch...")
 
-            if estimator_dir.exists():
-                stats = load_training_stats(estimator_dir)
-                if stats:
-                    all_stats[method][batch_idx] = stats
+    # Convert observations to torch tensor
+    eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
 
-    return all_stats
+    # Collect all predictions
+    predictions = []
 
+    for method in config.value_estimators.methods:
+        print(f"\n  Processing method: {method}")
 
-def compute_aggregate_metrics(all_stats: Dict) -> Dict:
-    """Compute aggregate metrics across batches for each method.
+        for batch_idx in range(config.data_generation.n_batches):
+            estimator_dir = experiment_dir / "estimators" / method / f"batch_{batch_idx}"
 
-    Args:
-        all_stats: Nested dictionary of statistics
+            if not estimator_dir.exists():
+                print(f"    Batch {batch_idx}: Directory not found, skipping")
+                continue
 
-    Returns:
-        Dictionary of aggregate metrics per method
-    """
-    aggregate = {}
+            # Load model
+            value_net = load_estimator_model(estimator_dir, config, device)
 
-    for method, batch_stats in all_stats.items():
-        if not batch_stats:
-            continue
+            if value_net is None:
+                print(f"    Batch {batch_idx}: Model not found, skipping")
+                continue
 
-        final_losses = [stats['final_loss'] for stats in batch_stats.values()
-                       if stats['final_loss'] is not None]
-        best_losses = [stats['best_loss'] for stats in batch_stats.values()]
-        final_epochs = [stats['final_epoch'] for stats in batch_stats.values()]
-        converged = [stats['converged'] for stats in batch_stats.values()]
+            # Generate predictions
+            with torch.no_grad():
+                values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
 
-        aggregate[method] = {
-            'mean_final_loss': np.mean(final_losses) if final_losses else None,
-            'std_final_loss': np.std(final_losses) if final_losses else None,
-            'mean_best_loss': np.mean(best_losses),
-            'std_best_loss': np.std(best_losses),
-            'mean_epochs': np.mean(final_epochs),
-            'std_epochs': np.std(final_epochs),
-            'convergence_rate': np.mean(converged),
-            'n_batches': len(batch_stats),
-        }
+            # Store predictions for each state
+            for state_idx in range(n_states):
+                predictions.append({
+                    'state_idx': state_idx,
+                    'method': method,
+                    'batch_idx': batch_idx,
+                    'predicted_value': values[state_idx]
+                })
 
-    return aggregate
+            print(f"    Batch {batch_idx}: Generated {n_states} predictions")
 
+    # Create DataFrame
+    df = pd.DataFrame(predictions)
 
-def print_summary(aggregate: Dict):
-    """Print summary of results.
+    print(f"\nTotal predictions: {len(df)}")
+    print(f"Shape: {len(df['state_idx'].unique())} states × "
+          f"{len(df['method'].unique())} methods × "
+          f"{len(df['batch_idx'].unique())} batches")
 
-    Args:
-        aggregate: Aggregate metrics dictionary
-    """
-    print("\n" + "="*80)
-    print("EVALUATION SUMMARY")
-    print("="*80 + "\n")
-
-    for method, metrics in aggregate.items():
-        print(f"\n{method.upper()}")
-        print("-" * 40)
-        print(f"  Batches completed: {metrics['n_batches']}")
-        print(f"  Mean final loss: {metrics['mean_final_loss']:.6f} ± {metrics['std_final_loss']:.6f}")
-        print(f"  Mean best loss: {metrics['mean_best_loss']:.6f} ± {metrics['std_best_loss']:.6f}")
-        print(f"  Mean epochs: {metrics['mean_epochs']:.1f} ± {metrics['std_epochs']:.1f}")
-        print(f"  Convergence rate: {metrics['convergence_rate']*100:.1f}%")
-
-    print("\n" + "="*80 + "\n")
-
-
-def plot_results(all_stats: Dict, aggregate: Dict, output_dir: Path):
-    """Create visualization plots.
-
-    Args:
-        all_stats: All statistics
-        aggregate: Aggregate metrics
-        output_dir: Directory to save plots
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    methods = list(all_stats.keys())
-    n_methods = len(methods)
-
-    # Plot 1: Final loss comparison
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    x_pos = np.arange(n_methods)
-    means = [aggregate[m]['mean_final_loss'] for m in methods]
-    stds = [aggregate[m]['std_final_loss'] for m in methods]
-
-    ax.bar(x_pos, means, yerr=stds, capsize=5, alpha=0.7)
-    ax.set_xlabel('Method')
-    ax.set_ylabel('Final Loss (MSE)')
-    ax.set_title('Final Loss Comparison Across Methods')
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(methods)
-    ax.grid(axis='y', alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_dir / 'final_loss_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Plot 2: Loss distribution per method (box plot)
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    data_to_plot = []
-    labels = []
-    for method in methods:
-        losses = [stats['final_loss'] for stats in all_stats[method].values()
-                 if stats['final_loss'] is not None]
-        if losses:
-            data_to_plot.append(losses)
-            labels.append(method)
-
-    if data_to_plot:
-        ax.boxplot(data_to_plot, labels=labels)
-        ax.set_xlabel('Method')
-        ax.set_ylabel('Final Loss (MSE)')
-        ax.set_title('Loss Distribution Across Batches')
-        ax.grid(axis='y', alpha=0.3)
-
-        plt.tight_layout()
-        plt.savefig(output_dir / 'loss_distribution.png', dpi=300, bbox_inches='tight')
-        plt.close()
-
-    # Plot 3: Training epochs comparison
-    fig, ax = plt.subplots(figsize=(10, 6))
-
-    means = [aggregate[m]['mean_epochs'] for m in methods]
-    stds = [aggregate[m]['std_epochs'] for m in methods]
-
-    ax.bar(x_pos, means, yerr=stds, capsize=5, alpha=0.7, color='orange')
-    ax.set_xlabel('Method')
-    ax.set_ylabel('Number of Epochs')
-    ax.set_title('Training Duration Comparison')
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(methods)
-    ax.grid(axis='y', alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_dir / 'epochs_comparison.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    # Plot 4: Per-batch performance
-    fig, ax = plt.subplots(figsize=(12, 6))
-
-    for method in methods:
-        batch_indices = sorted(all_stats[method].keys())
-        losses = [all_stats[method][idx]['final_loss'] for idx in batch_indices
-                 if all_stats[method][idx]['final_loss'] is not None]
-        ax.plot(batch_indices[:len(losses)], losses, marker='o', label=method, alpha=0.7)
-
-    ax.set_xlabel('Batch Index')
-    ax.set_ylabel('Final Loss (MSE)')
-    ax.set_title('Performance Across Batches')
-    ax.legend()
-    ax.grid(alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_dir / 'per_batch_performance.png', dpi=300, bbox_inches='tight')
-    plt.close()
-
-    print(f"\nPlots saved to {output_dir}")
+    return df
 
 
 def main():
@@ -237,35 +162,49 @@ def main():
     print(f"Methods: {config.value_estimators.methods}")
     print(f"Batches: {config.data_generation.n_batches}\n")
 
-    # Collect all statistics
-    print("Collecting training statistics...")
-    all_stats = collect_all_stats(
-        experiment_dir,
-        config.value_estimators.methods,
-        config.data_generation.n_batches
-    )
+    # Load evaluation batch
+    data_dir = experiment_dir / "data"
+    print("Loading evaluation batch...")
+    try:
+        eval_batch = load_evaluation_batch(data_dir)
+        print(f"Loaded evaluation batch with {len(eval_batch['observations'])} episodes")
 
-    # Compute aggregate metrics
-    aggregate = compute_aggregate_metrics(all_stats)
+        # Generate predictions
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Using device: {device}")
 
-    # Print summary
-    print_summary(aggregate)
+        predictions_df = generate_predictions(experiment_dir, config, eval_batch, device)
+
+        # Save predictions as CSV
+        predictions_csv = output_dir / "predictions.csv"
+        predictions_df.to_csv(predictions_csv, index=False)
+        print(f"\nPredictions saved to {predictions_csv}")
+
+        # Also save as parquet for more efficient storage (optional)
+        predictions_parquet = output_dir / "predictions.parquet"
+        predictions_df.to_parquet(predictions_parquet, index=False)
+        print(f"Predictions saved to {predictions_parquet}")
+
+    except FileNotFoundError as e:
+        print(f"Warning: {e}")
+        print("Skipping prediction generation.")
+        predictions_df = None
 
     # Save results
-    results = {
-        'aggregate': aggregate,
-        'all_stats': {method: dict(batch_stats)
-                     for method, batch_stats in all_stats.items()},
-    }
+    results = {}
 
-    results_file = output_dir / "evaluation_results.json"
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"Results saved to {results_file}")
+    if predictions_df is not None:
+        results['predictions_summary'] = {
+            'n_states': int(predictions_df['state_idx'].nunique()),
+            'n_methods': int(predictions_df['method'].nunique()),
+            'n_batches': int(predictions_df['batch_idx'].nunique()),
+            'total_predictions': len(predictions_df)
+        }
 
-    # Create plots
-    print("\nGenerating plots...")
-    plot_results(all_stats, aggregate, output_dir)
+        results_file = output_dir / "evaluation_results.json"
+        with open(results_file, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"\nResults saved to {results_file}")
 
     print("\nEvaluation complete!")
 

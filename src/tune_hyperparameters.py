@@ -16,7 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hyperparameter tuning with W&B sweeps")
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--method", type=str, required=True,
-                       choices=['monte_carlo', 'td_lambda', 'dqn'])
+                       choices=['monte_carlo', 'dqn'])
     parser.add_argument("--learning-rate", type=float, default=None)
     args = parser.parse_args()
 
@@ -32,8 +32,6 @@ def main():
     if learning_rate is not None:
         if args.method == 'monte_carlo':
             config.value_estimators.monte_carlo.learning_rate = learning_rate
-        elif args.method == 'td_lambda':
-            config.value_estimators.td_lambda.learning_rate = learning_rate
         elif args.method == 'dqn':
             config.value_estimators.dqn.learning_rate = learning_rate
 

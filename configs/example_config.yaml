@@ -35,6 +35,7 @@ data_generation:
 value_estimators:
   # Which methods to evaluate (only include methods you want to run)
   methods: ["monte_carlo", "dqn"]
+  # Note: TD(λ) has been removed from the codebase
 
   # NOTE: Only specify configuration for methods listed in 'methods' above.
   # If a method is not listed in 'methods', its configuration can be omitted.

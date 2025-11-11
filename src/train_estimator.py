@@ -9,12 +9,11 @@ import wandb
 import json
 
 from src.config import ExperimentConfig
-from src.estimators import MonteCarloEstimator, TDLambdaEstimator, DQNEstimator
+from src.estimators import MonteCarloEstimator, DQNEstimator
 
 
 ESTIMATOR_MAP = {
     'monte_carlo': MonteCarloEstimator,
-    'td_lambda': TDLambdaEstimator,
     'dqn': DQNEstimator,
 }
 
@@ -51,24 +50,6 @@ def create_estimator(method: str, config: ExperimentConfig, obs_dim: int):
             obs_dim=obs_dim,
             hidden_sizes=hidden_sizes,
             discount_factor=method_config.discount_factor,
-            activation=activation,
-            learning_rate=method_config.learning_rate,
-            device=device,
-        )
-    elif method == 'td_lambda':
-        method_config = config.value_estimators.td_lambda
-        if method_config is None:
-            raise ValueError(
-                f"Configuration for '{method}' is missing in the config file. "
-                f"Please add a 'td_lambda' section under 'value_estimators' "
-                f"or remove '{method}' from the 'methods' list."
-            )
-        return EstimatorClass(
-            obs_dim=obs_dim,
-            hidden_sizes=hidden_sizes,
-            discount_factor=method_config.discount_factor,
-            lambda_=method_config.lambda_,
-            n_step=method_config.n_step,
             activation=activation,
             learning_rate=method_config.learning_rate,
             device=device,
@@ -157,8 +138,6 @@ def get_n_initializations(config: ExperimentConfig, method: str) -> int:
     """
     if method == 'monte_carlo':
         return config.value_estimators.monte_carlo.n_initializations
-    elif method == 'td_lambda':
-        return config.value_estimators.td_lambda.n_initializations
     elif method == 'dqn':
         return config.value_estimators.dqn.n_initializations
     return 1
@@ -221,17 +200,11 @@ def train_single_initialization(
             wandb.log({
                 'epoch': epoch,
                 'train/loss': metrics['loss'],
+                'train/mse': metrics['loss'],
+                'train/mae': metrics['mae'],
                 'train/mean_value': metrics['mean_value'],
                 'train/mean_target': metrics['mean_target'],
                 'train/best_loss': best_loss,
-            })
-
-        # Evaluation logging
-        if epoch % training_config.eval_frequency == 0 and use_wandb and config.logging.use_wandb:
-            wandb.log({
-                'epoch': epoch,
-                'eval/mse': metrics['loss'],
-                'eval/mae': metrics['mae'],
             })
 
         # Check convergence
@@ -267,7 +240,7 @@ def train_estimator(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if already completed
-    checkpoint_path = output_dir / "final_checkpoint.pt"
+    checkpoint_path = output_dir / "estimator_final.pt"
     if checkpoint_path.exists():
         print(f"Training already completed for {method} at {output_dir}. Skipping.")
         return

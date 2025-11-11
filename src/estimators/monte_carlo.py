@@ -102,8 +102,6 @@ class MonteCarloEstimator(ValueEstimator):
         metrics = super().train_step(flat_batch)
         return metrics
 
- 
-
     def get_config(self) -> Dict:
         """Get estimator configuration."""
         config = super().get_config()

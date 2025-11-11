@@ -12,7 +12,7 @@ This is a research framework for evaluating value function estimation methods in
 
 1. Train a policy using Stable Baselines 3 (PPO/A2C/SAC/TD3)
 2. Generate batches of episodes using the trained policy
-3. Train multiple value estimators (Monte Carlo, TD(λ), DQN) on the same data
+3. Train multiple value estimators (Monte Carlo, DQN) on the same data
 4. Compare estimation performance across methods
 
 All experiments are reproducible via configuration files and logged with Weights & Biases.
@@ -53,7 +53,7 @@ python -m src.run_all_estimators --config configs/example_config.yaml --mode clu
     --max-concurrent 10
 
 # Or call the bash script directly for parallel mode
-./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,td_lambda,dqn 10
+./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,dqn 10
 ```
 
 **Cluster Mode Details:**
@@ -80,7 +80,7 @@ python -m src.train_estimator ... --no-wandb
 ```bash
 # Quick method: Use helper script
 ./launch_sweep.sh monte_carlo      # Run 1 agent
-./launch_sweep.sh td_lambda 4      # Run 4 parallel agents
+./launch_sweep.sh dqn 4            # Run 4 parallel agents
 
 # Manual method:
 # 1. Create sweep
@@ -112,11 +112,9 @@ All experiments are defined by a YAML config file that gets parsed into nested d
   - **PolicyConfig**: SB3 algorithm and hyperparameters
   - **DataGenerationConfig**: Number of batches and episodes per batch
   - **ValueEstimatorsConfig**: Which methods to evaluate + training hyperparameters
-    - **MonteCarloConfig**, **TDLambdaConfig**, **DQNConfig**: Method-specific parameters
+    - **MonteCarloConfig**, **DQNConfig**: Method-specific parameters
   - **NetworkConfig**: Neural network architecture (hidden sizes, activation)
   - **LoggingConfig**: Weights & Biases settings
-
-**Important quirk**: TD(λ) uses `lambda_` in Python (avoiding keyword) but `lambda` in YAML. The config system handles conversion automatically.
 
 ### Data Pipeline
 
@@ -176,12 +174,7 @@ All estimators inherit from **ValueEstimator** (base.py):
    - Computes full discounted returns: G_t = Σ γ^k * r_{t+k}
    - Simple, unbiased, but high variance
 
-2. **TDLambdaEstimator** (td_lambda.py)
-   - Uses eligibility traces for λ-returns combining n-step returns
-   - Bootstraps from current value network predictions
-   - Falls back to n-step TD if lambda=0 or lambda=1
-
-3. **DQNEstimator** (dqn.py)
+2. **DQNEstimator** (dqn.py)
    - Maintains separate target network (frozen, updated periodically)
    - Computes targets: r + γ * V_target(s')
    - Optional Double DQN: averages online and target network
@@ -196,9 +189,8 @@ All estimators inherit from **ValueEstimator** (base.py):
 - Example: If loss improves by < 0.0001 for 50 consecutive evaluations, training stops
 
 **Checkpointing:**
-- Saves `estimator_best.pt` whenever evaluation loss improves
-- Saves `estimator_final.pt` at the end of training
-- Saves `training_stats.json` with per-epoch metrics
+- Saves `estimator_final.pt` at the end of training with the best model found across all initializations
+- Saves `training_stats.json` with summary statistics
 
 **Fault Tolerance:**
 - Each estimator checks if `estimator_final.pt` exists before training
@@ -219,13 +211,10 @@ experiments/<experiment_id>/
 ├── estimators/
 │   ├── monte_carlo/
 │   │   ├── batch_0/
-│   │   │   ├── estimator_final.pt
-│   │   │   ├── estimator_best.pt
-│   │   │   └── training_stats.json
+│   │   │   ├── estimator_final.pt    # Best model across all initializations
+│   │   │   └── training_stats.json   # Summary statistics
 │   │   ├── batch_1/
 │   │   └── ...
-│   ├── td_lambda/
-│   │   └── batch_0/
 │   └── dqn/
 │       └── batch_0/
 └── results/
@@ -274,9 +263,8 @@ When implementing `compute_targets()`, remember:
 ### Wandb Integration
 
 - All runs tagged with `experiment_id` for grouping
-- Training metrics logged: `train/loss`, `train/mean_value`, `train/mean_target`
-- Evaluation metrics logged: `eval/mse`, `eval/mae`
-- Run name format: `{method}_batch_{idx}`
+- Training metrics logged: `train/loss`, `train/mse`, `train/mae`, `train/mean_value`, `train/mean_target`, `train/best_loss`
+- Run name format: `{method}_{batch_name}_init{idx}` (one run per initialization)
 
 ## Common Patterns
 

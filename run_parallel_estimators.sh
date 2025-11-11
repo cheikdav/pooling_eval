@@ -3,11 +3,11 @@ set -e
 
 # Run all estimator training jobs in parallel across GPUs
 # Usage: ./run_parallel_estimators.sh <config_file> <methods> <n_batches>
-#   methods: comma-separated list (e.g., "monte_carlo,td_lambda,dqn")
+#   methods: comma-separated list (e.g., "monte_carlo,dqn")
 
 if [ $# -lt 3 ]; then
     echo "Usage: $0 <config_file> <methods> <n_batches>"
-    echo "Example: $0 configs/example.yaml monte_carlo,td_lambda,dqn 10"
+    echo "Example: $0 configs/example.yaml monte_carlo,dqn 10"
     exit 1
 fi
 

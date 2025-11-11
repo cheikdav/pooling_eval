@@ -58,13 +58,6 @@ class MonteCarloConfig(BaseEstimatorConfig):
 
 
 @dataclass
-class TDLambdaConfig(BaseEstimatorConfig):
-    """TD(λ) estimator configuration."""
-    lambda_: float = 0.95  # using lambda_ to avoid Python keyword
-    n_step: int = 1
-
-
-@dataclass
 class DQNConfig(BaseEstimatorConfig):
     """DQN estimator configuration."""
     target_update_rate: float = 1.0e-5
@@ -76,7 +69,6 @@ class ValueEstimatorsConfig:
     methods: List[str]
     training: ValueEstimatorTrainingConfig
     monte_carlo: Optional[MonteCarloConfig] = None
-    td_lambda: Optional[TDLambdaConfig] = None
     dqn: Optional[DQNConfig] = None
 
 
@@ -111,8 +103,6 @@ class ExperimentConfig:
         """Load configuration from YAML file."""
         with open(path, 'r') as f:
             config_dict = yaml.safe_load(f)
-        print(yaml.__version__)
-        print(config_dict['value_estimators']['training'])
         return cls.from_dict(config_dict)
 
     @classmethod
@@ -134,14 +124,6 @@ class ExperimentConfig:
         if 'monte_carlo' in ve_dict:
             monte_carlo_config = MonteCarloConfig(**ve_dict['monte_carlo'])
 
-        td_lambda_config = None
-        if 'td_lambda' in ve_dict:
-            # Handle lambda -> lambda_ conversion for TD
-            td_params = ve_dict['td_lambda'].copy()
-            if 'lambda' in td_params:
-                td_params['lambda_'] = td_params.pop('lambda')
-            td_lambda_config = TDLambdaConfig(**td_params)
-
         dqn_config = None
         if 'dqn' in ve_dict:
             dqn_config = DQNConfig(**ve_dict['dqn'])
@@ -150,7 +132,6 @@ class ExperimentConfig:
             methods=ve_dict['methods'],
             training=training_config,
             monte_carlo=monte_carlo_config,
-            td_lambda=td_lambda_config,
             dqn=dqn_config
         )
 
@@ -177,11 +158,6 @@ class ExperimentConfig:
                 return obj
 
         result = dataclass_to_dict(self)
-        # Convert lambda_ back to lambda for saving
-        if 'value_estimators' in result and 'td_lambda' in result['value_estimators']:
-            if 'lambda_' in result['value_estimators']['td_lambda']:
-                result['value_estimators']['td_lambda']['lambda'] = \
-                    result['value_estimators']['td_lambda'].pop('lambda_')
         return result
 
     def save(self, path: Path):
