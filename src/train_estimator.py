@@ -8,70 +8,26 @@ from tqdm import tqdm
 import wandb
 import json
 
-from src.config import ExperimentConfig
-from src.estimators import MonteCarloEstimator, DQNEstimator
+from src.config import ExperimentConfig, BaseEstimatorConfig
+from src.estimators import ESTIMATOR_REGISTRY
 
 
-ESTIMATOR_MAP = {
-    'monte_carlo': MonteCarloEstimator,
-    'dqn': DQNEstimator,
-}
-
-
-def create_estimator(method: str, config: ExperimentConfig, obs_dim: int):
-    """Create an estimator instance based on method name.
+def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int):
+    """Create an estimator instance from configuration using registry.
 
     Args:
-        method: Estimator method name
-        config: Experiment configuration
+        method_config: Method-specific configuration
+        network_config: Network configuration
         obs_dim: Observation dimension
 
     Returns:
         Estimator instance
     """
-    if method not in ESTIMATOR_MAP:
-        raise ValueError(f"Unknown method: {method}. Available: {list(ESTIMATOR_MAP.keys())}")
+    # Look up estimator class from registry based on config type
+    EstimatorClass = ESTIMATOR_REGISTRY[type(method_config)]
 
-    EstimatorClass = ESTIMATOR_MAP[method]
-    hidden_sizes = config.network.hidden_sizes
-    activation = config.network.activation
-    device = config.network.device
-
-    # Get method-specific config
-    if method == 'monte_carlo':
-        method_config = config.value_estimators.monte_carlo
-        if method_config is None:
-            raise ValueError(
-                f"Configuration for '{method}' is missing in the config file. "
-                f"Please add a 'monte_carlo' section under 'value_estimators' "
-                f"or remove '{method}' from the 'methods' list."
-            )
-        return EstimatorClass(
-            obs_dim=obs_dim,
-            hidden_sizes=hidden_sizes,
-            discount_factor=method_config.discount_factor,
-            activation=activation,
-            learning_rate=method_config.learning_rate,
-            device=device,
-        )
-    elif method == 'dqn':
-        method_config = config.value_estimators.dqn
-        if method_config is None:
-            raise ValueError(
-                f"Configuration for '{method}' is missing in the config file. "
-                f"Please add a 'dqn' section under 'value_estimators' "
-                f"or remove '{method}' from the 'methods' list."
-            )
-        return EstimatorClass(
-            obs_dim=obs_dim,
-            hidden_sizes=hidden_sizes,
-            discount_factor=method_config.discount_factor,
-            target_update_rate=method_config.target_update_rate,
-            double_dqn=method_config.double_dqn,
-            activation=activation,
-            learning_rate=method_config.learning_rate,
-            device=device,
-        )
+    # Use the from_config classmethod to create the estimator
+    return EstimatorClass.from_config(method_config, network_config, obs_dim)
 
 
 def load_batch_data(batch_path: Path) -> dict:
@@ -126,28 +82,13 @@ def check_convergence(loss_history: list, patience: int, threshold: float) -> bo
     return relative_improvement < threshold
 
 
-def get_n_initializations(config: ExperimentConfig, method: str) -> int:
-    """Get number of initializations for a method.
-
-    Args:
-        config: Experiment configuration
-        method: Estimator method name
-
-    Returns:
-        Number of initializations to train
-    """
-    if method == 'monte_carlo':
-        return config.value_estimators.monte_carlo.n_initializations
-    elif method == 'dqn':
-        return config.value_estimators.dqn.n_initializations
-    return 1
 
 
 def train_single_initialization(
     estimator,
     batch: dict,
     config: ExperimentConfig,
-    method: str,
+    method_name: str,
     batch_name: str,
     init_idx: int,
     use_wandb: bool
@@ -158,7 +99,7 @@ def train_single_initialization(
         estimator: Estimator instance to train
         batch: Batch data
         config: Experiment configuration
-        method: Method name
+        method_name: Method name (from method_config.name)
         batch_name: Batch name for logging
         init_idx: Initialization index
         use_wandb: Whether to use wandb
@@ -168,20 +109,20 @@ def train_single_initialization(
     """
     # Initialize wandb for this initialization
     if use_wandb and config.logging.use_wandb:
-        run_name = f"{method}_{batch_name}_init{init_idx}"
+        run_name = f"{method_name}_{batch_name}_init{init_idx}"
         wandb.init(
             project=config.logging.wandb_project,
             entity=config.logging.wandb_entity,
             name=run_name,
             group=config.experiment_id,
             config={
-                'method': method,
+                'method': method_name,
                 'batch_name': batch_name,
                 'init_idx': init_idx,
                 'experiment_id': config.experiment_id,
                 **estimator.get_config(),
             },
-            tags=[method, batch_name, f"init{init_idx}"],
+            tags=[method_name, batch_name, f"init{init_idx}"],
         )
 
     training_config = config.value_estimators.training
@@ -223,27 +164,30 @@ def train_single_initialization(
 
 def train_estimator(
     config: ExperimentConfig,
-    method: str,
+    method_config: BaseEstimatorConfig,
     batch_path: Path,
     output_dir: Path,
-    use_wandb: bool = True
+    use_wandb: bool = True,
+    save_model: bool = True
 ):
     """Train multiple estimator initializations and keep the best one.
 
     Args:
         config: Experiment configuration
-        method: Estimator method name
+        method_config: Method-specific configuration
         batch_path: Path to batch data file
         output_dir: Directory to save outputs
         use_wandb: Whether to use wandb logging
+        save_model: Whether to save the trained model (default: True)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if already completed
-    checkpoint_path = output_dir / "estimator_final.pt"
-    if checkpoint_path.exists():
-        print(f"Training already completed for {method} at {output_dir}. Skipping.")
-        return
+    # Check if already completed (only if we're saving models)
+    if save_model:
+        checkpoint_path = output_dir / "estimator_final.pt"
+        if checkpoint_path.exists():
+            print(f"Training already completed for {method_config.name} at {output_dir}. Skipping.")
+            return
 
     # Load batch data
     print(f"Loading batch data from {batch_path}")
@@ -251,11 +195,15 @@ def train_estimator(
 
     # Get observation dimension and number of initializations
     obs_dim = batch['observations'][0].shape[-1]
-    n_inits = get_n_initializations(config, method)
+    n_inits = method_config.n_initializations
     batch_name = batch_path.stem
+    method_name = method_config.name
 
-    print(f"\nTraining {n_inits} initialization(s) of {method} on {batch_name}")
-    print(f"Max epochs: {config.value_estimators.training.max_epochs}\n")
+    print(f"\nTraining {n_inits} initialization(s) of {method_name} on {batch_name}")
+    print(f"Max epochs: {config.value_estimators.training.max_epochs}")
+    if not save_model:
+        print("Model saving disabled (tuning mode)")
+    print()
 
     # Train multiple initializations
     best_loss = float('inf')
@@ -265,11 +213,11 @@ def train_estimator(
         # Create fresh estimator with different random seed
         torch.manual_seed(config.seed + init_idx)
         np.random.seed(config.seed + init_idx)
-        estimator = create_estimator(method, config, obs_dim)
+        estimator = create_estimator(method_config, config.network, obs_dim)
 
         # Train this initialization
         final_loss = train_single_initialization(
-            estimator, batch, config, method, batch_name, init_idx, use_wandb
+            estimator, batch, config, method_name, batch_name, init_idx, use_wandb
         )
 
         print(f"Init {init_idx}: final loss = {final_loss:.6f}")
@@ -280,30 +228,33 @@ def train_estimator(
             best_estimator = estimator
             print(f"  -> New best!")
 
-    # Save best model
-    print(f"\nSaving best estimator (loss={best_loss:.6f}) to {checkpoint_path}")
-    best_estimator.save(checkpoint_path)
+    # Save best model only if requested
+    if save_model:
+        checkpoint_path = output_dir / "estimator_final.pt"
+        print(f"\nSaving best estimator (loss={best_loss:.6f}) to {checkpoint_path}")
+        best_estimator.save(checkpoint_path)
 
-    # Save training statistics
-    stats = {
-        'method': method,
-        'batch_name': batch_name,
-        'n_initializations': n_inits,
-        'best_loss': best_loss,
-    }
+        # Save training statistics
+        stats = {
+            'method': method_name,
+            'batch_name': batch_name,
+            'n_initializations': n_inits,
+            'best_loss': best_loss,
+        }
 
-    with open(output_dir / "training_stats.json", 'w') as f:
-        json.dump(stats, f, indent=2)
+        with open(output_dir / "training_stats.json", 'w') as f:
+            json.dump(stats, f, indent=2)
+    else:
+        print(f"\nSkipping model save (best loss: {best_loss:.6f})")
 
-    print(f"Training complete for {method} {batch_name}")
+    print(f"Training complete for {method_name} {batch_name}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Train a value estimator")
     parser.add_argument("--config", type=Path, required=True, help="Path to config YAML file")
     parser.add_argument("--method", type=str, required=True,
-                       choices=list(ESTIMATOR_MAP.keys()),
-                       help="Estimator method")
+                       help="Method name (corresponds to 'name' field in method config)")
     parser.add_argument("--batch-idx", type=int, required=False,
                        help="Batch index to train on (if not set, uses SGE_TASK_ID-1 from environment)")
     parser.add_argument("--no-wandb", action="store_true",
@@ -324,6 +275,17 @@ def main():
     # Load configuration
     config = ExperimentConfig.from_yaml(args.config)
 
+    # Find method config by name
+    method_config = None
+    for mc in config.value_estimators.method_configs:
+        if mc.name == args.method:
+            method_config = mc
+            break
+
+    if method_config is None:
+        available_methods = [mc.name for mc in config.value_estimators.method_configs]
+        parser.error(f"Method '{args.method}' not found in config. Available methods: {available_methods}")
+
     # Set paths based on batch index
     batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{batch_idx}.npz"
     output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method / f"batch_{batch_idx}"
@@ -335,7 +297,7 @@ def main():
     # Train estimator
     train_estimator(
         config=config,
-        method=args.method,
+        method_config=method_config,
         batch_path=batch_path,
         output_dir=output_dir,
         use_wandb=not args.no_wandb

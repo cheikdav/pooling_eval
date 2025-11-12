@@ -88,21 +88,22 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
     # Collect all predictions
     predictions = []
 
-    for method in config.value_estimators.methods:
-        print(f"\n  Processing method: {method}")
+    for method_config in config.value_estimators.method_configs:
+        method_name = method_config.name
+        print(f"\n  Processing method: {method_name}")
 
         for batch_idx in range(config.data_generation.n_batches):
-            estimator_dir = experiment_dir / "estimators" / method / f"batch_{batch_idx}"
+            estimator_dir = experiment_dir / "estimators" / method_name / f"batch_{batch_idx}"
 
             if not estimator_dir.exists():
-                print(f"    Batch {batch_idx}: Directory not found, skipping")
+                print(f"    Batch {batch_idx}: Directory not found at {estimator_dir}, skipping")
                 continue
 
             # Load model
             value_net = load_estimator_model(estimator_dir, config, device)
 
             if value_net is None:
-                print(f"    Batch {batch_idx}: Model not found, skipping")
+                print(f"    Batch {batch_idx}: Model not found at {estimator_dir.resolve()}, skipping")
                 continue
 
             # Generate predictions
@@ -113,7 +114,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
             for state_idx in range(n_states):
                 predictions.append({
                     'state_idx': state_idx,
-                    'method': method,
+                    'method': method_name,
                     'batch_idx': batch_idx,
                     'predicted_value': values[state_idx]
                 })
@@ -159,7 +160,7 @@ def main():
 
     print(f"\nEvaluating experiment: {config.experiment_id}")
     print(f"Experiment directory: {experiment_dir}")
-    print(f"Methods: {config.value_estimators.methods}")
+    print(f"Methods: {[mc.name for mc in config.value_estimators.method_configs]}")
     print(f"Batches: {config.data_generation.n_batches}\n")
 
     # Load evaluation batch

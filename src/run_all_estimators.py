@@ -9,23 +9,23 @@ from src.config import ExperimentConfig
 
 def run_sequential(config: ExperimentConfig, config_path: Path):
     """Run all training jobs sequentially."""
-    methods = config.value_estimators.methods
+    method_configs = config.value_estimators.method_configs
     n_batches = config.data_generation.n_batches
 
-    print(f"Running {len(methods) * n_batches} jobs sequentially")
-    print(f"Methods: {methods}")
+    print(f"Running {len(method_configs) * n_batches} jobs sequentially")
+    print(f"Methods: {[mc.name for mc in method_configs]}")
     print(f"Batches: {n_batches}\n")
 
-    for method in methods:
+    for method_config in method_configs:
         for batch_idx in range(n_batches):
             print(f"\n{'='*60}")
-            print(f"Training: method={method} batch={batch_idx}")
+            print(f"Training: method={method_config.name} batch={batch_idx}")
             print(f"{'='*60}\n")
 
             subprocess.run([
                 "python", "-m", "src.train_estimator",
                 "--config", str(config_path),
-                "--method", method,
+                "--method", method_config.name,
                 "--batch-idx", str(batch_idx)
             ], check=True)
 
@@ -36,7 +36,7 @@ def run_sequential(config: ExperimentConfig, config_path: Path):
 
 def run_parallel(config: ExperimentConfig, config_path: Path):
     """Run all training jobs in parallel using bash script."""
-    methods = ','.join(config.value_estimators.methods)
+    method_names = ','.join([mc.name for mc in config.value_estimators.method_configs])
     n_batches = str(config.data_generation.n_batches)
 
     script_path = Path(__file__).parent.parent / "run_parallel_estimators.sh"
@@ -44,7 +44,7 @@ def run_parallel(config: ExperimentConfig, config_path: Path):
     subprocess.run([
         str(script_path),
         str(config_path),
-        methods,
+        method_names,
         n_batches
     ], check=True)
 
@@ -61,11 +61,11 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
         memory: Memory per job (e.g., "8g", "16g")
         max_concurrent: Maximum number of jobs to run concurrently per method (optional)
     """
-    methods = config.value_estimators.methods
+    method_configs = config.value_estimators.method_configs
     n_batches = config.data_generation.n_batches
 
-    print(f"Submitting {len(methods)} array jobs to cluster")
-    print(f"Methods: {methods}")
+    print(f"Submitting {len(method_configs)} array jobs to cluster")
+    print(f"Methods: {[mc.name for mc in method_configs]}")
     print(f"Batches per method: {n_batches}")
     print(f"Memory per job: {memory}")
     if max_concurrent:
@@ -80,8 +80,8 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
 
     # Submit one array job per method
     job_ids = []
-    for method in methods:
-        print(f"Submitting array job for {method} with array={array_spec}")
+    for method_config in method_configs:
+        print(f"Submitting array job for {method_config.name} with array={array_spec}")
 
         result = subprocess.run([
             "grid_run",
@@ -90,12 +90,12 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
             f"--grid_mem={memory}",
             "uv run", "-m", "src.train_estimator",
             "--config", str(config_path.absolute()),
-            "--method", method
+            "--method", method_config.name
         ], check=True, capture_output=True, text=True)
 
         # Try to extract job ID from output
         output = result.stdout + result.stderr
-        print(f"  Submitted: {method}")
+        print(f"  Submitted: {method_config.name}")
         if "job" in output.lower():
             # Print relevant lines containing job info
             for line in output.split('\n'):
@@ -103,8 +103,8 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
                     print(f"  {line.strip()}")
                     job_ids.append(line.strip())
 
-    print(f"\n{len(methods)} array jobs submitted successfully!")
-    print(f"Total tasks: {len(methods) * n_batches}")
+    print(f"\n{len(method_configs)} array jobs submitted successfully!")
+    print(f"Total tasks: {len(method_configs) * n_batches}")
     print(f"\nMonitor with: qstat")
     print(f"View logs: *.o* and *.e* files for each job")
 

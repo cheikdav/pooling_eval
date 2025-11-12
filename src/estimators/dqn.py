@@ -2,7 +2,7 @@
 
 import torch
 import numpy as np
-from typing import Dict
+from typing import Dict, Any
 import copy
 
 from src.estimators.base import ValueEstimator
@@ -28,14 +28,13 @@ class DQNEstimator(ValueEstimator):
             obs_dim: Observation dimension
             hidden_sizes: List of hidden layer sizes
             discount_factor: Discount factor (gamma)
-            target_update_frequency: How often to update target network (in training steps)
+            target_update_rate: Polyak averaging coefficient for target network updates
             double_dqn: Whether to use Double DQN
             activation: Activation function
             learning_rate: Learning rate
             device: Device to use
         """
-        super().__init__(obs_dim, hidden_sizes, activation, learning_rate, device)
-        self.discount_factor = discount_factor
+        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device)
         self.target_update_rate = target_update_rate
         self.double_dqn = double_dqn
 
@@ -45,6 +44,21 @@ class DQNEstimator(ValueEstimator):
 
         # Track when to update target network
         self.steps_since_target_update = 0
+
+    @classmethod
+    def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
+        """Get method-specific parameters from config.
+
+        Args:
+            method_config: DQNConfig instance
+
+        Returns:
+            Dictionary with DQN-specific parameters
+        """
+        return {
+            'target_update_rate': method_config.target_update_rate,
+            'double_dqn': method_config.double_dqn,
+        }
 
     def _format_batch(self, batch: Dict[str, np.ndarray]):
         if isinstance(batch['observations'], list):

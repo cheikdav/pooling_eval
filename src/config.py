@@ -2,8 +2,9 @@
 
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 from dataclasses import dataclass, field
+from enum import Enum
 
 
 @dataclass
@@ -43,9 +44,17 @@ class ValueEstimatorTrainingConfig:
     eval_frequency: int = 10
 
 
+class EstimatorType(str, Enum):
+    """Enum for estimator types."""
+    MONTE_CARLO = "monte_carlo"
+    DQN = "dqn"
+
+
 @dataclass
 class BaseEstimatorConfig:
     """Base configuration with parameters common to all estimators."""
+    name: str  # Name for this method config (used in output paths, logs, etc.)
+    type: EstimatorType  # Method type
     discount_factor: float = 0.99
     learning_rate: float = 0.001
     n_initializations: int = 1  # Number of random initializations to try
@@ -64,12 +73,17 @@ class DQNConfig(BaseEstimatorConfig):
     double_dqn: bool = True
 
 
+# Registry mapping EstimatorType to config class
+ESTIMATOR_CONFIG_REGISTRY: Dict[EstimatorType, Type[BaseEstimatorConfig]] = {
+    EstimatorType.MONTE_CARLO: MonteCarloConfig,
+    EstimatorType.DQN: DQNConfig,
+}
+
+
 @dataclass
 class ValueEstimatorsConfig:
-    methods: List[str]
     training: ValueEstimatorTrainingConfig
-    monte_carlo: Optional[MonteCarloConfig] = None
-    dqn: Optional[DQNConfig] = None
+    method_configs: List[BaseEstimatorConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -119,20 +133,21 @@ class ExperimentConfig:
         ve_dict = config_dict['value_estimators']
         training_config = ValueEstimatorTrainingConfig(**ve_dict['training'])
 
-        # Only create configs for methods that are specified in the YAML
-        monte_carlo_config = None
-        if 'monte_carlo' in ve_dict:
-            monte_carlo_config = MonteCarloConfig(**ve_dict['monte_carlo'])
+        # Parse method configs using registry
+        method_configs = []
+        if 'method_configs' in ve_dict:
+            for method_dict in ve_dict['method_configs']:
+                # Get the type and look up the config class
+                estimator_type = EstimatorType(method_dict['type'])
+                config_class = ESTIMATOR_CONFIG_REGISTRY[estimator_type]
 
-        dqn_config = None
-        if 'dqn' in ve_dict:
-            dqn_config = DQNConfig(**ve_dict['dqn'])
+                # Create the config instance
+                method_config = config_class(**method_dict)
+                method_configs.append(method_config)
 
         value_estimators_config = ValueEstimatorsConfig(
-            methods=ve_dict['methods'],
             training=training_config,
-            monte_carlo=monte_carlo_config,
-            dqn=dqn_config
+            method_configs=method_configs
         )
 
         return cls(
@@ -154,6 +169,9 @@ class ExperimentConfig:
                 return {k: dataclass_to_dict(v) for k, v in obj.__dict__.items() if v is not None}
             elif isinstance(obj, list):
                 return [dataclass_to_dict(item) for item in obj]
+            elif isinstance(obj, Enum):
+                # Convert enum to its value
+                return obj.value
             else:
                 return obj
 

@@ -2,7 +2,7 @@
 
 import torch
 import numpy as np
-from typing import Dict
+from typing import Dict, Any
 
 from src.estimators.base import ValueEstimator
 
@@ -29,8 +29,21 @@ class MonteCarloEstimator(ValueEstimator):
             learning_rate: Learning rate
             device: Device to use
         """
-        super().__init__(obs_dim, hidden_sizes, activation, learning_rate, device)
-        self.discount_factor = discount_factor
+        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device)
+
+    @classmethod
+    def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
+        """Get method-specific parameters from config.
+
+        Monte Carlo estimator has no additional parameters beyond the base class.
+
+        Args:
+            method_config: MonteCarloConfig instance
+
+        Returns:
+            Empty dictionary (no method-specific params)
+        """
+        return {}
 
     def compute_returns(self, rewards: np.ndarray) -> np.ndarray:
         """Compute discounted returns from rewards.

@@ -33,34 +33,30 @@ data_generation:
 
 # Value estimator training
 value_estimators:
-  # Which methods to evaluate (only include methods you want to run)
-  methods: ["monte_carlo", "dqn"]
-  # Note: TD(λ) has been removed from the codebase
-
-  # NOTE: Only specify configuration for methods listed in 'methods' above.
-  # If a method is not listed in 'methods', its configuration can be omitted.
-
   # Shared training parameters
   training:
-    max_epochs: 3000
+    max_epochs: 80000
     batch_size: 256
     convergence_patience: 50  # early stopping if no improvement
     convergence_threshold: 1.0e-4
     eval_frequency: 10  # evaluate every N epochs
 
-  # Method-specific parameters (only include configs for methods in 'methods' list)
-  monte_carlo:
-    discount_factor: 0.99
-    learning_rate: 0.001
-    n_initializations: 5
+  # List of method configurations
+  # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)
+  method_configs:
+    - name: "monte_carlo"
+      type: "monte_carlo"
+      discount_factor: 0.99
+      learning_rate: 0.001
+      n_initializations: 5
 
-
-  dqn:
-    discount_factor: 0.99
-    learning_rate: 0.0003
-    n_initializations: 5
-    target_update_rate: 1.0e-3
-    double_dqn: true
+    - name: "dqn"
+      type: "dqn"
+      discount_factor: 0.99
+      learning_rate: 0.0003
+      n_initializations: 5
+      target_update_rate: 5.0e-2
+      double_dqn: true
 
 # Network architecture (will match SB3 critic architecture)
 network:

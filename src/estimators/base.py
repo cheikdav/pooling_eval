@@ -63,6 +63,7 @@ class ValueEstimator(ABC):
         self,
         obs_dim: int,
         hidden_sizes: list,
+        discount_factor: float,
         activation: str = "relu",
         learning_rate: float = 0.001,
         device: str = "auto"
@@ -72,12 +73,14 @@ class ValueEstimator(ABC):
         Args:
             obs_dim: Observation dimension
             hidden_sizes: List of hidden layer sizes
+            discount_factor: Discount factor (gamma) - common to all estimators
             activation: Activation function ('relu' or 'tanh')
             learning_rate: Learning rate for optimizer
             device: Device to use ('auto', 'cpu', or 'cuda')
         """
         self.obs_dim = obs_dim
         self.hidden_sizes = hidden_sizes
+        self.discount_factor = discount_factor
         self.activation = activation
         self.learning_rate = learning_rate
 
@@ -95,6 +98,47 @@ class ValueEstimator(ABC):
 
         # Training statistics
         self.training_step = 0
+
+    @classmethod
+    @abstractmethod
+    def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
+        """Get method-specific parameters from config.
+
+        Args:
+            method_config: Method-specific configuration
+
+        Returns:
+            Dictionary of method-specific parameters to pass to __init__
+        """
+        pass
+
+    @classmethod
+    def from_config(cls, method_config, network_config, obs_dim: int):
+        """Create estimator from configuration.
+
+        Args:
+            method_config: Method-specific configuration (BaseEstimatorConfig subclass)
+            network_config: Network configuration
+            obs_dim: Observation dimension
+
+        Returns:
+            Estimator instance
+        """
+        # Common parameters
+        common_params = {
+            'obs_dim': obs_dim,
+            'hidden_sizes': network_config.hidden_sizes,
+            'discount_factor': method_config.discount_factor,
+            'activation': network_config.activation,
+            'learning_rate': method_config.learning_rate,
+            'device': network_config.device,
+        }
+
+        # Get method-specific parameters
+        specific_params = cls._get_method_specific_params(method_config)
+
+        # Instantiate with all parameters
+        return cls(**common_params, **specific_params)
 
     def _format_batch(self, batch: Dict[str, np.ndarray]):
         return batch
