@@ -40,23 +40,21 @@ value_estimators:
     convergence_patience: 50  # early stopping if no improvement
     convergence_threshold: 1.0e-4
     eval_frequency: 10  # evaluate every N epochs
+    gamma: 0.99  # discount factor (shared by all methods)
 
   # List of method configurations
   # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)
   method_configs:
     - name: "monte_carlo"
       type: "monte_carlo"
-      discount_factor: 0.99
       learning_rate: 0.001
       n_initializations: 5
 
     - name: "dqn"
       type: "dqn"
-      discount_factor: 0.99
       learning_rate: 0.0003
       n_initializations: 5
       target_update_rate: 5.0e-2
-      double_dqn: true
 
 # Network architecture (will match SB3 critic architecture)
 network:

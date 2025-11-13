@@ -42,6 +42,7 @@ class ValueEstimatorTrainingConfig:
     convergence_patience: int = 50
     convergence_threshold: float = 1e-4
     eval_frequency: int = 10
+    gamma: float = 0.99  # Discount factor for value estimation (shared by all methods)
 
 
 class EstimatorType(str, Enum):
@@ -55,7 +56,6 @@ class BaseEstimatorConfig:
     """Base configuration with parameters common to all estimators."""
     name: str  # Name for this method config (used in output paths, logs, etc.)
     type: EstimatorType  # Method type
-    discount_factor: float = 0.99
     learning_rate: float = 0.001
     n_initializations: int = 1  # Number of random initializations to try
 
@@ -70,7 +70,6 @@ class MonteCarloConfig(BaseEstimatorConfig):
 class DQNConfig(BaseEstimatorConfig):
     """DQN estimator configuration."""
     target_update_rate: float = 1.0e-5
-    double_dqn: bool = True
 
 
 # Registry mapping EstimatorType to config class

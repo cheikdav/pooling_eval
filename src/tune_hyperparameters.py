@@ -65,7 +65,8 @@ def main():
         batch_path=batch_path,
         output_dir=output_dir,
         use_wandb=True,
-        save_model=False
+        save_model=False,
+        sweep_mode=True
     )
 
 

@@ -3,7 +3,6 @@
 #   1. wandb sweep configs/sweep_dqn.yaml
 #   2. wandb agent <sweep-id>
 
-project: pooling-eval
 program: uv
 command:
   - ${env}

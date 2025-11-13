@@ -6,7 +6,6 @@ from typing import Dict, Any, Optional
 import torch
 import torch.nn as nn
 import numpy as np
-from functools import wraps
 
 
 class ValueNetwork(nn.Module):
@@ -48,13 +47,6 @@ class ValueNetwork(nn.Module):
         """
         return self.network(x)
 
-def format_batch(func):
-    @wraps(func)
-    def wrapper(self, batch: Dict[str, np.ndarray], *args, **kwargs):
-        # Convert numpy arrays to torch tensors
-        batch = self._format_batch(batch)
-        return func(self, batch, *args, **kwargs)
-    return wrapper
 
 class ValueEstimator(ABC):
     """Base class for value function estimators."""
@@ -113,13 +105,14 @@ class ValueEstimator(ABC):
         pass
 
     @classmethod
-    def from_config(cls, method_config, network_config, obs_dim: int):
+    def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
         """Create estimator from configuration.
 
         Args:
             method_config: Method-specific configuration (BaseEstimatorConfig subclass)
             network_config: Network configuration
             obs_dim: Observation dimension
+            gamma: Discount factor (from training config, shared by all methods)
 
         Returns:
             Estimator instance
@@ -128,7 +121,7 @@ class ValueEstimator(ABC):
         common_params = {
             'obs_dim': obs_dim,
             'hidden_sizes': network_config.hidden_sizes,
-            'discount_factor': method_config.discount_factor,
+            'discount_factor': gamma,
             'activation': network_config.activation,
             'learning_rate': method_config.learning_rate,
             'device': network_config.device,
@@ -140,27 +133,28 @@ class ValueEstimator(ABC):
         # Instantiate with all parameters
         return cls(**common_params, **specific_params)
 
-    def _format_batch(self, batch: Dict[str, np.ndarray]):
-        return batch
-
     @abstractmethod
     def compute_targets(self, batch: Dict[str, np.ndarray]) -> torch.Tensor:
         """Compute target values for the batch.
 
         Args:
-            batch: Dictionary containing episode data
+            batch: Dictionary containing preprocessed transition data with fields:
+                - observations: (n_transitions, obs_dim) array
+                - next_observations: (n_transitions, obs_dim) array
+                - rewards: (n_transitions,) array
+                - dones: (n_transitions,) array
+                - mc_returns: (n_transitions,) array - precomputed Monte Carlo returns
 
         Returns:
-            Target values as torch tensor
+            Target values as torch tensor of shape (n_transitions,)
         """
         pass
 
-    @format_batch
     def train_step(self, batch: Dict[str, np.ndarray]) -> Dict[str, float]:
         """Perform a single training step.
 
         Args:
-            batch: Dictionary containing episode data
+            batch: Dictionary containing preprocessed transition data
 
         Returns:
             Dictionary of training metrics

@@ -69,51 +69,25 @@ class MonteCarloEstimator(ValueEstimator):
 
         Args:
             batch: Dictionary containing:
-                - observations: List of (T_i, obs_dim) arrays
-                - rewards: List of (T_i,) arrays
-                - ... (other fields not used here)
+                - mc_returns: (n_transitions,) array of precomputed Monte Carlo returns
 
         Returns:
             Target values as torch tensor
         """
-        all_returns = []
-
-        # Handle both list format (from full episodes) and array format (from batched data)
-        if isinstance(batch['rewards'], list):
-            # List of episodes
-            for rewards in batch['rewards']:
-                returns = self.compute_returns(rewards)
-                all_returns.append(returns)
-            all_returns = np.concatenate(all_returns)
-        else:
-            # Single flattened array (assume it's one episode or pre-flattened)
-            all_returns = self.compute_returns(batch['rewards'])
-
-        return torch.FloatTensor(all_returns).to(self.device)
+        # Use precomputed Monte Carlo returns from preprocessing
+        return torch.FloatTensor(batch['mc_returns']).to(self.device)
 
     def train_step(self, batch: Dict[str, np.ndarray]) -> Dict[str, float]:
         """Perform a single training step.
 
         Args:
-            batch: Dictionary containing episode data
+            batch: Dictionary containing preprocessed transition data
 
         Returns:
             Dictionary of training metrics
         """
-        # Flatten observations if needed
-        if isinstance(batch['observations'], list):
-            obs_array = np.concatenate(batch['observations'])
-        else:
-            obs_array = batch['observations']
-
-        # Create flattened batch for parent class
-        flat_batch = {
-            'observations': obs_array,
-            'rewards': batch['rewards'],  # Keep original format for compute_targets
-        }
-
-        metrics = super().train_step(flat_batch)
-        return metrics
+        # Data is already preprocessed (flattened), pass directly to parent
+        return super().train_step(batch)
 
     def get_config(self) -> Dict:
         """Get estimator configuration."""

@@ -10,15 +10,17 @@ import json
 
 from src.config import ExperimentConfig, BaseEstimatorConfig
 from src.estimators import ESTIMATOR_REGISTRY
+from src.data_preprocessing import preprocess_episodes
 
 
-def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int):
+def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float):
     """Create an estimator instance from configuration using registry.
 
     Args:
         method_config: Method-specific configuration
         network_config: Network configuration
         obs_dim: Observation dimension
+        gamma: Discount factor (from training config)
 
     Returns:
         Estimator instance
@@ -27,7 +29,7 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
     EstimatorClass = ESTIMATOR_REGISTRY[type(method_config)]
 
     # Use the from_config classmethod to create the estimator
-    return EstimatorClass.from_config(method_config, network_config, obs_dim)
+    return EstimatorClass.from_config(method_config, network_config, obs_dim, gamma)
 
 
 def load_batch_data(batch_path: Path) -> dict:
@@ -91,7 +93,8 @@ def train_single_initialization(
     method_name: str,
     batch_name: str,
     init_idx: int,
-    use_wandb: bool
+    use_wandb: bool,
+    sweep_mode: bool = False
 ):
     """Train a single initialization and return its final loss.
 
@@ -103,12 +106,13 @@ def train_single_initialization(
         batch_name: Batch name for logging
         init_idx: Initialization index
         use_wandb: Whether to use wandb
+        sweep_mode: If True, skip wandb.init() (run already initialized by sweep)
 
     Returns:
         Final loss value
     """
-    # Initialize wandb for this initialization
-    if use_wandb and config.logging.use_wandb:
+    # Initialize wandb for this initialization (unless in sweep mode)
+    if use_wandb and config.logging.use_wandb and not sweep_mode:
         run_name = f"{method_name}_{batch_name}_init{init_idx}"
         wandb.init(
             project=config.logging.wandb_project,
@@ -168,7 +172,8 @@ def train_estimator(
     batch_path: Path,
     output_dir: Path,
     use_wandb: bool = True,
-    save_model: bool = True
+    save_model: bool = True,
+    sweep_mode: bool = False
 ):
     """Train multiple estimator initializations and keep the best one.
 
@@ -179,6 +184,7 @@ def train_estimator(
         output_dir: Directory to save outputs
         use_wandb: Whether to use wandb logging
         save_model: Whether to save the trained model (default: True)
+        sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -193,8 +199,13 @@ def train_estimator(
     print(f"Loading batch data from {batch_path}")
     batch = load_batch_data(batch_path)
 
+    # Preprocess batch: flatten episodes and compute MC returns
+    gamma = config.value_estimators.training.gamma
+    print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
+    batch = preprocess_episodes(batch, gamma)
+
     # Get observation dimension and number of initializations
-    obs_dim = batch['observations'][0].shape[-1]
+    obs_dim = batch['observations'].shape[-1]
     n_inits = method_config.n_initializations
     batch_name = batch_path.stem
     method_name = method_config.name
@@ -213,11 +224,11 @@ def train_estimator(
         # Create fresh estimator with different random seed
         torch.manual_seed(config.seed + init_idx)
         np.random.seed(config.seed + init_idx)
-        estimator = create_estimator(method_config, config.network, obs_dim)
+        estimator = create_estimator(method_config, config.network, obs_dim, gamma)
 
         # Train this initialization
         final_loss = train_single_initialization(
-            estimator, batch, config, method_name, batch_name, init_idx, use_wandb
+            estimator, batch, config, method_name, batch_name, init_idx, use_wandb, sweep_mode
         )
 
         print(f"Init {init_idx}: final loss = {final_loss:.6f}")

@@ -3,7 +3,7 @@ name = "pooling-eval"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11, <3.12"
+requires-python = ">=3.11"
 dependencies = [
     "gymnasium[box2d,atari,mujoco]>=1.0.0",
     "ipykernel>=7.1.0",
@@ -16,5 +16,4 @@ dependencies = [
     "tqdm>=4.65.0",
     "matplotlib>=3.7.0",
     "weave>=0.52.14",
-    "seaborn>=0.13.2",
 ]
