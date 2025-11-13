@@ -13,7 +13,7 @@ command:
   - ${args}
 method: bayes  # bayes, grid, or random
 metric:
-  name: eval/mse
+  name: final/best_mc_loss
   goal: minimize
 
 # Termination conditions

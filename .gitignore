@@ -32,4 +32,7 @@ wandb/
 Thumbs.db
 core
 
+# UV log files
+uv.*
+
 test.py

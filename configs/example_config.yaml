@@ -48,13 +48,13 @@ value_estimators:
     - name: "monte_carlo"
       type: "monte_carlo"
       learning_rate: 0.001
-      n_initializations: 5
+      n_initializations: 2
 
     - name: "dqn"
       type: "dqn"
-      learning_rate: 0.0003
-      n_initializations: 5
-      target_update_rate: 5.0e-2
+      learning_rate: 0.003
+      n_initializations: 2
+      target_update_rate: 0.1
 
 # Network architecture (will match SB3 critic architecture)
 network:

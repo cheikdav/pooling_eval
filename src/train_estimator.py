@@ -96,7 +96,7 @@ def train_single_initialization(
     use_wandb: bool,
     sweep_mode: bool = False
 ):
-    """Train a single initialization and return its final loss.
+    """Train a single initialization and return its final MC loss.
 
     Args:
         estimator: Estimator instance to train
@@ -109,7 +109,7 @@ def train_single_initialization(
         sweep_mode: If True, skip wandb.init() (run already initialized by sweep)
 
     Returns:
-        Final loss value
+        Final MC loss value
     """
     # Initialize wandb for this initialization (unless in sweep mode)
     if use_wandb and config.logging.use_wandb and not sweep_mode:
@@ -130,15 +130,15 @@ def train_single_initialization(
         )
 
     training_config = config.value_estimators.training
-    loss_history = []
-    best_loss = float('inf')
+    mc_loss_history = []
+    best_mc_loss = float('inf')
 
     for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
         metrics = estimator.train_step(batch)
-        loss_history.append(metrics['loss'])
+        mc_loss_history.append(metrics['mc_loss'])
 
-        if metrics['loss'] < best_loss:
-            best_loss = metrics['loss']
+        if metrics['mc_loss'] < best_mc_loss:
+            best_mc_loss = metrics['mc_loss']
 
         # Logging
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
@@ -149,21 +149,22 @@ def train_single_initialization(
                 'train/mae': metrics['mae'],
                 'train/mean_value': metrics['mean_value'],
                 'train/mean_target': metrics['mean_target'],
-                'train/best_loss': best_loss,
+                'train/mc_loss': metrics['mc_loss'],
+                'train/best_mc_loss': best_mc_loss,
             })
 
-        # Check convergence
-        if check_convergence(loss_history, training_config.convergence_patience,
+        # Check convergence based on MC loss
+        if check_convergence(mc_loss_history, training_config.convergence_patience,
                            training_config.convergence_threshold):
             break
 
-    final_loss = loss_history[-1] if loss_history else float('inf')
+    final_mc_loss = mc_loss_history[-1] if mc_loss_history else float('inf')
 
     if use_wandb and config.logging.use_wandb:
-        wandb.log({'final/best_loss': best_loss})
+        wandb.log({'final/best_mc_loss': best_mc_loss})
         wandb.finish()
 
-    return final_loss
+    return final_mc_loss
 
 
 def train_estimator(
@@ -217,7 +218,7 @@ def train_estimator(
     print()
 
     # Train multiple initializations
-    best_loss = float('inf')
+    best_mc_loss = float('inf')
     best_estimator = None
 
     for init_idx in range(n_inits):
@@ -227,22 +228,22 @@ def train_estimator(
         estimator = create_estimator(method_config, config.network, obs_dim, gamma)
 
         # Train this initialization
-        final_loss = train_single_initialization(
+        final_mc_loss = train_single_initialization(
             estimator, batch, config, method_name, batch_name, init_idx, use_wandb, sweep_mode
         )
 
-        print(f"Init {init_idx}: final loss = {final_loss:.6f}")
+        print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
 
         # Keep track of best estimator
-        if final_loss < best_loss:
-            best_loss = final_loss
+        if final_mc_loss < best_mc_loss:
+            best_mc_loss = final_mc_loss
             best_estimator = estimator
             print(f"  -> New best!")
 
     # Save best model only if requested
     if save_model:
         checkpoint_path = output_dir / "estimator_final.pt"
-        print(f"\nSaving best estimator (loss={best_loss:.6f}) to {checkpoint_path}")
+        print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
         best_estimator.save(checkpoint_path)
 
         # Save training statistics
@@ -250,13 +251,13 @@ def train_estimator(
             'method': method_name,
             'batch_name': batch_name,
             'n_initializations': n_inits,
-            'best_loss': best_loss,
+            'best_mc_loss': best_mc_loss,
         }
 
         with open(output_dir / "training_stats.json", 'w') as f:
             json.dump(stats, f, indent=2)
     else:
-        print(f"\nSkipping model save (best loss: {best_loss:.6f})")
+        print(f"\nSkipping model save (best MC loss: {best_mc_loss:.6f})")
 
     print(f"Training complete for {method_name} {batch_name}")
 

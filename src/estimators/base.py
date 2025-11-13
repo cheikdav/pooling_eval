@@ -174,6 +174,10 @@ class ValueEstimator(ABC):
         with torch.no_grad():
             mae = torch.abs(values - targets).mean().item()
 
+            # Compute MC loss (against ground truth MC returns)
+            mc_returns = torch.FloatTensor(batch['mc_returns']).to(self.device)
+            mc_loss = nn.functional.mse_loss(values, mc_returns).item()
+
         # Backward pass
         self.optimizer.zero_grad()
         loss.backward()
@@ -186,6 +190,7 @@ class ValueEstimator(ABC):
             'mae': mae,
             'mean_value': values.mean().item(),
             'mean_target': targets.mean().item(),
+            'mc_loss': mc_loss,
         }
 
 
