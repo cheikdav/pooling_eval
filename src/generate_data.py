@@ -6,7 +6,7 @@ from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
 import gymnasium as gym
 from tqdm import tqdm
-from typing import Dict
+from typing import Dict, List
 
 from src.config import ExperimentConfig
 

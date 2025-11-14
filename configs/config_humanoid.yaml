@@ -1,0 +1,71 @@
+# Configuration for MuJoCo Humanoid-v4 environment
+# Humanoid is a high-dimensional continuous control task with 376 obs dims and 17 action dims
+
+experiment_id: "humanoid_baseline"
+seed: 42
+
+# Environment configuration
+environment:
+  name: "Humanoid-v4"
+
+# Policy training (Stable Baselines 3)
+# Humanoid requires significantly more training than simple environments
+policy:
+  algorithm: "PPO"  # PPO works well for continuous control
+  total_timesteps: 2000000  # Humanoid needs extensive training (2M steps is baseline)
+  learning_rate: 0.0003
+  n_steps: 2048  # for on-policy algorithms
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+
+# Data generation
+data_generation:
+  n_batches: 10  # number of independent batches
+  episodes_per_batch: 200  # Fewer episodes since each is longer for Humanoid
+  deterministic_policy: false  # whether to use deterministic actions
+
+  # Special batches for different purposes
+  tuning_episodes: 500  # For hyperparameter tuning (batch_tuning.npz)
+  ground_truth_episodes: 2000  # For training ground truth estimator (batch_ground_truth.npz)
+  eval_episodes: 500  # For final evaluation (batch_eval.npz)
+
+# Value estimator training
+value_estimators:
+  # Shared training parameters
+  training:
+    max_epochs: 100000  # More epochs for complex environment
+    batch_size: 512  # Larger batch size for stability with high-dim observations
+    convergence_patience: 100  # More patience for complex value landscape
+    convergence_threshold: 1.0e-4
+    eval_frequency: 20  # evaluate every N epochs
+    gamma: 0.99  # discount factor (shared by all methods)
+
+  # List of method configurations
+  # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)
+  method_configs:
+    - name: "monte_carlo"
+      type: "monte_carlo"
+      learning_rate: 0.0005  # Lower learning rate for stability
+      n_initializations: 3  # More initializations for robustness
+
+    - name: "dqn"
+      type: "dqn"
+      learning_rate: 0.001  # Lower learning rate for stability
+      n_initializations: 3
+      target_update_rate: 0.005  # Slower target updates for stability
+
+# Network architecture (larger for high-dimensional observations)
+# Humanoid has 376-dim observations, so we need larger networks
+network:
+  hidden_sizes: [256, 256, 128]  # Deeper and wider for complex state space
+  activation: "relu"
+  device: "auto"  # "cpu" for CPU-only, "auto" for GPU if available (otherwise CPU)
+
+# Logging
+logging:
+  use_wandb: true
+  wandb_project: "pooling-eval"
+  wandb_entity: null  # set to your wandb username/team
+  log_frequency: 20  # log every N training steps
