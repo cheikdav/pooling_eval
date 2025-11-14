@@ -16,4 +16,5 @@ dependencies = [
     "tqdm>=4.65.0",
     "matplotlib>=3.7.0",
     "weave>=0.52.14",
+    "seaborn>=0.13.2",
 ]
