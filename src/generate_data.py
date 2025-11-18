@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 import gymnasium as gym
 from tqdm import tqdm
 from typing import Dict, List
@@ -19,19 +20,21 @@ ALGORITHM_MAP = {
 }
 
 
-def collect_episode(env, model, deterministic: bool = False) -> Dict[str, np.ndarray]:
+def collect_episode(env, model, deterministic: bool = False,
+                    use_vec_normalize: bool = False) -> Dict[str, np.ndarray]:
     """Collect a single episode of data.
 
     Args:
-        env: Gymnasium environment
+        env: VecEnv (DummyVecEnv, optionally wrapped with VecNormalize)
         model: Trained SB3 model
         deterministic: Whether to use deterministic actions
+        use_vec_normalize: Whether VecNormalize is used (stores unnormalized observations)
 
     Returns:
-        Dictionary containing episode data:
+        Dictionary containing episode data (unnormalized obs if use_vec_normalize=True):
             - observations: (T, obs_dim) array
             - actions: (T,) or (T, act_dim) array
-            - rewards: (T,) array
+            - rewards: (T,) array (already unnormalized - we disabled norm_reward)
             - dones: (T,) array (terminal flags)
             - next_observations: (T, obs_dim) array
     """
@@ -41,21 +44,44 @@ def collect_episode(env, model, deterministic: bool = False) -> Dict[str, np.nda
     dones = []
     next_observations = []
 
-    obs, _ = env.reset()
+    # Reset returns (n_envs, obs_dim), extract first env
+    obs = env.reset()
+    if isinstance(obs, tuple):
+        obs = obs[0][0]
+    else:
+        obs = obs[0]
+
     done = False
 
     while not done:
-        observations.append(obs)
+        # Store unnormalized observation if using VecNormalize, else store as-is
+        if use_vec_normalize:
+            observations.append(env.get_original_obs()[0].copy())
+        else:
+            observations.append(obs.copy())
 
-        # Get action from policy
+        # Get action from policy (policy uses normalized obs)
         action, _ = model.predict(obs, deterministic=deterministic)
-        next_obs, reward, terminated, truncated, _ = env.step(action)
-        done = terminated or truncated
 
-        actions.append(action)
-        rewards.append(reward)
-        dones.append(done)
-        next_observations.append(next_obs)
+        # Step environment - VecEnv returns arrays of shape (n_envs, ...)
+        step_result = env.step(action)
+        next_obs = step_result[0][0]
+        reward = step_result[1][0]
+        done = step_result[2][0]
+
+        # Extract action (model.predict returns action for vectorized env)
+        if action.ndim > 1:
+            action = action[0]
+
+        actions.append(action.copy() if isinstance(action, np.ndarray) else action)
+        rewards.append(float(reward))  # Already unnormalized (norm_reward=False)
+        dones.append(bool(done))
+
+        # Store unnormalized next_obs if using VecNormalize, else store as-is
+        if use_vec_normalize:
+            next_observations.append(env.get_original_obs()[0].copy())
+        else:
+            next_observations.append(next_obs.copy())
 
         obs = next_obs
 
@@ -69,28 +95,29 @@ def collect_episode(env, model, deterministic: bool = False) -> Dict[str, np.nda
 
 
 def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
-                  batch_seed: int = None) -> Dict[str, List[np.ndarray]]:
+                  batch_seed: int = None, use_vec_normalize: bool = False) -> Dict[str, List[np.ndarray]]:
     """Collect a batch of episodes.
 
     Args:
-        env: Gymnasium environment
+        env: VecEnv (DummyVecEnv, optionally wrapped with VecNormalize)
         model: Trained SB3 model
         n_episodes: Number of episodes to collect
         deterministic: Whether to use deterministic actions
         batch_seed: Random seed for this batch
+        use_vec_normalize: Whether VecNormalize is used (stores unnormalized observations)
 
     Returns:
         Dictionary containing lists of arrays (one per episode):
-            - observations: List of (T_i, obs_dim) arrays
+            - observations: List of (T_i, obs_dim) arrays (unnormalized if VecNormalize)
             - actions: List of (T_i,) or (T_i, act_dim) arrays
-            - rewards: List of (T_i,) arrays
+            - rewards: List of (T_i,) arrays (unnormalized)
             - dones: List of (T_i,) arrays
-            - next_observations: List of (T_i, obs_dim) arrays
+            - next_observations: List of (T_i, obs_dim) arrays (unnormalized if VecNormalize)
             - episode_lengths: (n_episodes,) array of episode lengths
             - episode_returns: (n_episodes,) array of total returns
     """
     if batch_seed is not None:
-        env.reset(seed=batch_seed)
+        env.seed(batch_seed)
         np.random.seed(batch_seed)
 
     batch_data = {
@@ -104,7 +131,7 @@ def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
     }
 
     for _ in tqdm(range(n_episodes), desc="Collecting episodes", leave=False):
-        episode = collect_episode(env, model, deterministic)
+        episode = collect_episode(env, model, deterministic, use_vec_normalize)
 
         for key in episode:
             batch_data[key].append(np.array(episode[key]))
@@ -166,18 +193,32 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
     AlgorithmClass = ALGORITHM_MAP[config.policy.algorithm]
     model = AlgorithmClass.load(policy_path)
 
-    # Create environment
-    env = gym.make(config.environment.name)
+    # Create environment - always use VecEnv, optionally wrap with VecNormalize
+    def make_env():
+        return gym.make(config.environment.name)
+
+    env = DummyVecEnv([make_env])
+
+    use_vec_normalize = False
+    vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
+
+    if config.policy.use_vec_normalize and vec_normalize_path.exists():
+        print(f"Loading VecNormalize stats from {vec_normalize_path}")
+        env = VecNormalize.load(vec_normalize_path, env)
+        env.training = False
+        env.norm_reward = False
+        use_vec_normalize = True
 
     print(f"\nGenerating data using policy from {policy_path}")
     print(f"Environment: {config.environment.name}")
+    print(f"VecNormalize: {use_vec_normalize}")
     print(f"Deterministic policy: {config.data_generation.deterministic_policy}")
     print(f"Output directory: {output_dir}\n")
 
     all_batch_stats = []
     current_seed = config.seed
 
-    # Define all batches to generate
+
     batches_to_generate = []
 
     # Regular batches
@@ -201,7 +242,8 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
             model=model,
             n_episodes=n_episodes,
             deterministic=config.data_generation.deterministic_policy,
-            batch_seed=current_seed
+            batch_seed=current_seed,
+            use_vec_normalize=use_vec_normalize
         )
 
         stats = save_and_log_batch(batch_data, output_dir / f"{batch_name}.npz", batch_name)

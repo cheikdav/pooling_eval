@@ -22,6 +22,13 @@ class PolicyConfig:
     n_epochs: int = 10
     gamma: float = 0.99
     gae_lambda: float = 0.95
+    policy_kwargs: Dict[str, Any] = field(default_factory=dict)  # Network architecture and policy-specific settings
+    kwargs: Dict[str, Any] = field(default_factory=dict)  # Other algorithm-specific parameters
+    # VecNormalize settings
+    use_vec_normalize: bool = False  # Whether to use VecNormalize wrapper
+    normalize_obs: bool = True  # Normalize observations
+    normalize_reward: bool = True  # Normalize rewards
+    vec_normalize_kwargs: Dict[str, Any] = field(default_factory=dict)  # Additional VecNormalize parameters
 
 
 @dataclass

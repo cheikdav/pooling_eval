@@ -12,13 +12,23 @@ environment:
 # Humanoid requires significantly more training than simple environments
 policy:
   algorithm: "PPO"  # PPO works well for continuous control
-  total_timesteps: 2000000  # Humanoid needs extensive training (2M steps is baseline)
-  learning_rate: 0.0003
-  n_steps: 2048  # for on-policy algorithms
-  batch_size: 64
-  n_epochs: 10
-  gamma: 0.99
-  gae_lambda: 0.95
+  total_timesteps: 10000000  # Humanoid needs extensive training (2M steps is baseline)
+  learning_rate: 0.00003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 5
+  gamma: 0.95
+  gae_lambda: 0.9
+  policy_kwargs:
+    net_arch:
+      - pi: [256, 256]
+        vf: [256, 256]
+    activation_fn: tanh
+
+  # VecNormalize is crucial for Humanoid due to high-dimensional observations
+  use_vec_normalize: true
+  normalize_obs: true
+  normalize_reward: false
 
 # Data generation
 data_generation:
