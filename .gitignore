@@ -27,6 +27,10 @@ wandb/
 *.swo
 *~
 
+# LLM tools
+.claude
+.llm
+
 # OS
 .DS_Store
 Thumbs.db
