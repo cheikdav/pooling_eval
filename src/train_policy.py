@@ -5,13 +5,11 @@ import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3.common.monitor import Monitor
-import gymnasium as gym
 import torch
 import wandb
 
 from src.config import ExperimentConfig
+from src.env_utils import create_vec_env
 
 
 ALGORITHM_MAP = {
@@ -120,28 +118,8 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
 
-    # Create environment - always use VecEnv, optionally wrap with VecNormalize
-    # Wrap with Monitor to track episode statistics
-    def make_env():
-        env = gym.make(config.environment.name)
-        env = Monitor(env)
-        return env
-
-    env = DummyVecEnv([make_env])
-
-    if config.policy.use_vec_normalize:
-        # Apply VecNormalize
-        vec_normalize_kwargs = {
-            "norm_obs": config.policy.normalize_obs,
-            "norm_reward": config.policy.normalize_reward,
-            "gamma": config.policy.gamma,
-        }
-        # Add any additional kwargs from config
-        vec_normalize_kwargs.update(config.policy.vec_normalize_kwargs)
-
-        env = VecNormalize(env, **vec_normalize_kwargs)
-
-    env.seed(config.seed)
+    # Create environment
+    env, _ = create_vec_env(config, use_monitor=True)
 
     # Get algorithm class
     if config.policy.algorithm not in ALGORITHM_MAP:
