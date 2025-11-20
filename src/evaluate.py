@@ -29,27 +29,22 @@ def load_evaluation_batch(data_dir: Path) -> Dict:
     return dict(batch)
 
 
-def load_estimator_model(estimator_dir: Path, config: ExperimentConfig, device: str = "cpu"):
+def load_estimator_model(model_path: Path, config: ExperimentConfig, device: str = "cpu"):
     """Load a trained estimator model.
 
     Args:
-        estimator_dir: Directory containing trained estimator
+        model_path: Path to model file
         config: Experiment configuration
         device: Device to load model on
 
     Returns:
         Loaded value network
     """
-    model_path = estimator_dir / "estimator_final.pt"
     if not model_path.exists():
-        model_path = estimator_dir / "estimator_best.pt"
-        if not model_path.exists():
-            return None
+        return None
 
-    # Load checkpoint
     checkpoint = torch.load(model_path, map_location=device)
 
-    # Create network
     obs_dim = checkpoint['obs_dim']
     hidden_sizes = checkpoint['hidden_sizes']
     activation = checkpoint['activation']
@@ -73,19 +68,16 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
         device: Device to use for inference
 
     Returns:
-        DataFrame with columns: state_idx, method, batch_idx, predicted_value
+        DataFrame with columns: state_idx, method, batch_idx, n_episodes, predicted_value
     """
-    # Flatten evaluation batch observations
     eval_obs_list = eval_batch['observations']
     eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
     n_states = len(eval_obs_flat)
 
     print(f"\nGenerating predictions on {n_states} states from evaluation batch...")
 
-    # Convert observations to torch tensor
     eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
 
-    # Collect all predictions
     predictions = []
 
     for method_config in config.value_estimators.method_configs:
@@ -99,35 +91,50 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
                 print(f"    Batch {batch_idx}: Directory not found at {estimator_dir}, skipping")
                 continue
 
-            # Load model
-            value_net = load_estimator_model(estimator_dir, config, device)
-
-            if value_net is None:
-                print(f"    Batch {batch_idx}: Model not found at {estimator_dir.resolve()}, skipping")
+            model_files = list(estimator_dir.glob("estimator_*.pt"))
+            if not model_files:
+                print(f"    Batch {batch_idx}: No models found in {estimator_dir}, skipping")
                 continue
 
-            # Generate predictions
-            with torch.no_grad():
-                values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
+            for model_path in sorted(model_files):
+                model_name = model_path.stem
 
-            # Store predictions for each state
-            for state_idx in range(n_states):
-                predictions.append({
-                    'state_idx': state_idx,
-                    'method': method_name,
-                    'batch_idx': batch_idx,
-                    'predicted_value': values[state_idx]
-                })
+                if model_name.startswith("estimator_episodes_"):
+                    try:
+                        n_episodes = int(model_name.replace("estimator_episodes_", ""))
+                    except ValueError:
+                        print(f"    Batch {batch_idx}: Skipping invalid model name: {model_name}")
+                        continue
+                else:
+                    continue
 
-            print(f"    Batch {batch_idx}: Generated {n_states} predictions")
+                value_net = load_estimator_model(model_path, config, device)
 
-    # Create DataFrame
+                if value_net is None:
+                    print(f"    Batch {batch_idx}, {model_name}: Failed to load model")
+                    continue
+
+                with torch.no_grad():
+                    values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
+
+                for state_idx in range(n_states):
+                    predictions.append({
+                        'state_idx': state_idx,
+                        'method': method_name,
+                        'batch_idx': batch_idx,
+                        'n_episodes': n_episodes,
+                        'predicted_value': values[state_idx]
+                    })
+
+                print(f"    Batch {batch_idx}, episodes={n_episodes}: Generated {n_states} predictions")
+
     df = pd.DataFrame(predictions)
 
     print(f"\nTotal predictions: {len(df)}")
     print(f"Shape: {len(df['state_idx'].unique())} states × "
           f"{len(df['method'].unique())} methods × "
-          f"{len(df['batch_idx'].unique())} batches")
+          f"{len(df['batch_idx'].unique())} batches × "
+          f"{len(df['n_episodes'].unique())} episode subsets")
 
     return df
 

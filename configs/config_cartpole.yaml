@@ -1,4 +1,5 @@
 # Example configuration for pooling evaluation experiments
+# Demonstrates episode subset training: trains separate models on different amounts of data
 
 experiment_id: "cartpole_test"
 seed: 42
@@ -37,10 +38,11 @@ value_estimators:
   training:
     max_epochs: 80000
     batch_size: 256
-    convergence_patience: 50  # early stopping if no improvement
+    convergence_patience: 50
     convergence_threshold: 1.0e-4
-    eval_frequency: 10  # evaluate every N epochs
-    gamma: 0.99  # discount factor (shared by all methods)
+    eval_frequency: 10
+    gamma: 0.99
+    episode_subsets: [100, 250, 500]
 
   # List of method configurations
   # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)

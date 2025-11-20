@@ -32,23 +32,23 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
     return EstimatorClass.from_config(method_config, network_config, obs_dim, gamma)
 
 
-def load_batch_data(batch_path: Path) -> dict:
+def load_batch_data(batch_path: Path, max_episodes: int = None) -> dict:
     """Load batch data from NPZ file.
 
     Args:
         batch_path: Path to batch NPZ file
+        max_episodes: If specified, only load the first N episodes
 
     Returns:
         Dictionary containing batch data
     """
     data = np.load(batch_path, allow_pickle=True)
 
-    # Convert to dictionary and handle numpy arrays
     batch = {}
     for key in data.keys():
         if key in ['observations', 'actions', 'rewards', 'dones', 'next_observations']:
-            # These are lists of arrays (one per episode)
-            batch[key] = [arr for arr in data[key]]
+            batch[key] = ([arr for arr in data[key]] if max_episodes is None
+                         else [arr for arr in data[key]][:max_episodes])
         else:
             batch[key] = data[key]
 
@@ -189,77 +189,84 @@ def train_estimator(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check if already completed (only if we're saving models)
-    if save_model:
-        checkpoint_path = output_dir / "estimator_final.pt"
-        if checkpoint_path.exists():
-            print(f"Training already completed for {method_config.name} at {output_dir}. Skipping.")
-            return
-
-    # Load batch data
-    print(f"Loading batch data from {batch_path}")
-    batch = load_batch_data(batch_path)
-
-    # Preprocess batch: flatten episodes and compute MC returns
     gamma = config.value_estimators.training.gamma
-    print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
-    batch = preprocess_episodes(batch, gamma)
-
-    # Get observation dimension and number of initializations
-    obs_dim = batch['observations'].shape[-1]
-    n_inits = method_config.n_initializations
-    batch_name = batch_path.stem
+    episode_subsets = config.value_estimators.training.episode_subsets
     method_name = method_config.name
+    batch_name = batch_path.stem
 
-    print(f"\nTraining {n_inits} initialization(s) of {method_name} on {batch_name}")
-    print(f"Max epochs: {config.value_estimators.training.max_epochs}")
-    if not save_model:
-        print("Model saving disabled (tuning mode)")
-    print()
+    if not save_model or episode_subsets is None or len(episode_subsets) == 0:
+        episode_subsets = [None]
 
-    # Train multiple initializations
-    best_mc_loss = float('inf')
-    best_estimator = None
+    for n_episodes in episode_subsets:
+        print(f"Loading batch data from {batch_path}")
+        batch = load_batch_data(batch_path, max_episodes=n_episodes)
 
-    for init_idx in range(n_inits):
-        # Create fresh estimator with different random seed
-        torch.manual_seed(config.seed + init_idx)
-        np.random.seed(config.seed + init_idx)
-        estimator = create_estimator(method_config, config.network, obs_dim, gamma)
+        if n_episodes is None:
+            n_episodes = len(batch['observations'])
 
-        # Train this initialization
-        final_mc_loss = train_single_initialization(
-            estimator, batch, config, method_name, batch_name, init_idx, use_wandb, sweep_mode
-        )
+        model_suffix = f"episodes_{n_episodes}"
+        checkpoint_path = output_dir / f"estimator_{model_suffix}.pt"
 
-        print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
+        if save_model and checkpoint_path.exists():
+            print(f"Training already completed for {method_name} with {n_episodes} episodes at {checkpoint_path}. Skipping.")
+            continue
 
-        # Keep track of best estimator
-        if final_mc_loss < best_mc_loss:
-            best_mc_loss = final_mc_loss
-            best_estimator = estimator
-            print(f"  -> New best!")
+        print(f"\n{'='*80}")
+        print(f"Training {method_name} on {batch_name} with {n_episodes} episodes")
+        print(f"{'='*80}")
 
-    # Save best model only if requested
-    if save_model:
-        checkpoint_path = output_dir / "estimator_final.pt"
-        print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
-        best_estimator.save(checkpoint_path)
+        print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
+        batch = preprocess_episodes(batch, gamma)
 
-        # Save training statistics
-        stats = {
-            'method': method_name,
-            'batch_name': batch_name,
-            'n_initializations': n_inits,
-            'best_mc_loss': best_mc_loss,
-        }
+        obs_dim = batch['observations'].shape[-1]
+        n_inits = method_config.n_initializations
 
-        with open(output_dir / "training_stats.json", 'w') as f:
-            json.dump(stats, f, indent=2)
-    else:
-        print(f"\nSkipping model save (best MC loss: {best_mc_loss:.6f})")
+        print(f"\nTraining {n_inits} initialization(s) of {method_name} on {batch_name}")
+        print(f"Episodes used: {n_episodes}")
+        print(f"Max epochs: {config.value_estimators.training.max_epochs}")
+        if not save_model:
+            print("Model saving disabled (tuning mode)")
+        print()
 
-    print(f"Training complete for {method_name} {batch_name}")
+        best_mc_loss = float('inf')
+        best_estimator = None
+
+        for init_idx in range(n_inits):
+            torch.manual_seed(config.seed + init_idx)
+            np.random.seed(config.seed + init_idx)
+            estimator = create_estimator(method_config, config.network, obs_dim, gamma)
+
+            batch_label = f"{batch_name}_{n_episodes}_episodes"
+            final_mc_loss = train_single_initialization(
+                estimator, batch, config, method_name, batch_label, init_idx, use_wandb, sweep_mode
+            )
+
+            print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
+
+            if final_mc_loss < best_mc_loss:
+                best_mc_loss = final_mc_loss
+                best_estimator = estimator
+                print(f"  -> New best!")
+
+        if save_model:
+            print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
+            best_estimator.save(checkpoint_path)
+
+            stats = {
+                'method': method_name,
+                'batch_name': batch_name,
+                'n_episodes': n_episodes,
+                'n_initializations': n_inits,
+                'best_mc_loss': best_mc_loss,
+            }
+
+            stats_path = output_dir / f"training_stats_{model_suffix}.json"
+            with open(stats_path, 'w') as f:
+                json.dump(stats, f, indent=2)
+        else:
+            print(f"\nSkipping model save (best MC loss: {best_mc_loss:.6f})")
+
+        print(f"Training complete for {method_name} {batch_name} with {subset_desc}")
 
 
 def main():
