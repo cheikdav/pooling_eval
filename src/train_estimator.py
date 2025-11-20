@@ -47,10 +47,8 @@ def load_batch_data(batch_path: Path, max_episodes: int = None) -> dict:
     batch = {}
     for key in data.keys():
         if key in ['observations', 'actions', 'rewards', 'dones', 'next_observations']:
-            episode_list = [arr for arr in data[key]]
-            if max_episodes is not None:
-                episode_list = episode_list[:max_episodes]
-            batch[key] = episode_list
+            batch[key] = ([arr for arr in data[key]] if max_episodes is None
+                         else [arr for arr in data[key]][:max_episodes])
         else:
             batch[key] = data[key]
 
@@ -200,25 +198,22 @@ def train_estimator(
         episode_subsets = [None]
 
     for n_episodes in episode_subsets:
-        if n_episodes is None:
-            model_suffix = "final"
-            subset_desc = "all episodes"
-        else:
-            model_suffix = f"episodes_{n_episodes}"
-            subset_desc = f"{n_episodes} episodes"
+        print(f"Loading batch data from {batch_path}")
+        batch = load_batch_data(batch_path, max_episodes=n_episodes)
 
+        if n_episodes is None:
+            n_episodes = len(batch['observations'])
+
+        model_suffix = f"episodes_{n_episodes}"
         checkpoint_path = output_dir / f"estimator_{model_suffix}.pt"
 
         if save_model and checkpoint_path.exists():
-            print(f"Training already completed for {method_name} with {subset_desc} at {checkpoint_path}. Skipping.")
+            print(f"Training already completed for {method_name} with {n_episodes} episodes at {checkpoint_path}. Skipping.")
             continue
 
         print(f"\n{'='*80}")
-        print(f"Training {method_name} on {batch_name} with {subset_desc}")
+        print(f"Training {method_name} on {batch_name} with {n_episodes} episodes")
         print(f"{'='*80}")
-
-        print(f"Loading batch data from {batch_path}")
-        batch = load_batch_data(batch_path, max_episodes=n_episodes)
 
         print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
         batch = preprocess_episodes(batch, gamma)
@@ -227,7 +222,7 @@ def train_estimator(
         n_inits = method_config.n_initializations
 
         print(f"\nTraining {n_inits} initialization(s) of {method_name} on {batch_name}")
-        print(f"Episodes used: {subset_desc}")
+        print(f"Episodes used: {n_episodes}")
         print(f"Max epochs: {config.value_estimators.training.max_epochs}")
         if not save_model:
             print("Model saving disabled (tuning mode)")
@@ -241,7 +236,7 @@ def train_estimator(
             np.random.seed(config.seed + init_idx)
             estimator = create_estimator(method_config, config.network, obs_dim, gamma)
 
-            batch_label = f"{batch_name}_{subset_desc.replace(' ', '_')}"
+            batch_label = f"{batch_name}_{n_episodes}_episodes"
             final_mc_loss = train_single_initialization(
                 estimator, batch, config, method_name, batch_label, init_idx, use_wandb, sweep_mode
             )

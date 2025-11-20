@@ -99,9 +99,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
             for model_path in sorted(model_files):
                 model_name = model_path.stem
 
-                if model_name == "estimator_final":
-                    n_episodes = None
-                elif model_name.startswith("estimator_episodes_"):
+                if model_name.startswith("estimator_episodes_"):
                     try:
                         n_episodes = int(model_name.replace("estimator_episodes_", ""))
                     except ValueError:
@@ -128,8 +126,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
                         'predicted_value': values[state_idx]
                     })
 
-                episode_desc = "all" if n_episodes is None else str(n_episodes)
-                print(f"    Batch {batch_idx}, episodes={episode_desc}: Generated {n_states} predictions")
+                print(f"    Batch {batch_idx}, episodes={n_episodes}: Generated {n_states} predictions")
 
     df = pd.DataFrame(predictions)
 
