@@ -4,12 +4,11 @@ import argparse
 import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-import gymnasium as gym
 from tqdm import tqdm
 from typing import Dict, List
 
 from src.config import ExperimentConfig
+from src.env_utils import create_vec_env
 
 
 ALGORITHM_MAP = {
@@ -62,6 +61,10 @@ def collect_episode(env, model, deterministic: bool = False,
 
         # Get action from policy (policy uses normalized obs)
         action, _ = model.predict(obs, deterministic=deterministic)
+
+        # Ensure action is properly shaped for VecEnv (needs shape (n_envs,) or (n_envs, action_dim))
+        if action.ndim == 0:
+            action = np.array([action])
 
         # Step environment - VecEnv returns arrays of shape (n_envs, ...)
         step_result = env.step(action)
@@ -193,21 +196,16 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
     AlgorithmClass = ALGORITHM_MAP[config.policy.algorithm]
     model = AlgorithmClass.load(policy_path)
 
-    # Create environment - always use VecEnv, optionally wrap with VecNormalize
-    def make_env():
-        return gym.make(config.environment.name)
-
-    env = DummyVecEnv([make_env])
-
-    use_vec_normalize = False
+    # Create environment
     vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
+    env, use_vec_normalize = create_vec_env(
+        config,
+        use_monitor=False,
+        vec_normalize_path=vec_normalize_path
+    )
 
-    if config.policy.use_vec_normalize and vec_normalize_path.exists():
-        print(f"Loading VecNormalize stats from {vec_normalize_path}")
-        env = VecNormalize.load(vec_normalize_path, env)
-        env.training = False
-        env.norm_reward = False
-        use_vec_normalize = True
+    if use_vec_normalize:
+        print(f"Loaded VecNormalize stats from {vec_normalize_path}")
 
     print(f"\nGenerating data using policy from {policy_path}")
     print(f"Environment: {config.environment.name}")
