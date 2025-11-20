@@ -139,17 +139,19 @@ def main():
     parser.add_argument("--experiment-dir", type=Path, default=None,
                        help="Experiment directory (default: experiments/<experiment_id>)")
     parser.add_argument("--output-dir", type=Path, default=None,
-                       help="Output directory for results (default: <experiment_dir>/results)")
+                       help="Output directory (default: <experiment-dir>/results)")
     args = parser.parse_args()
 
     # Load configuration
     config = ExperimentConfig.from_yaml(args.config)
 
-    # Set default paths
+    # Determine paths with optional CLI overrides
     if args.experiment_dir is None:
         experiment_dir = Path("experiments") / config.experiment_id
     else:
         experiment_dir = args.experiment_dir
+
+    data_dir = experiment_dir / "data"
 
     if args.output_dir is None:
         output_dir = experiment_dir / "results"
@@ -160,11 +162,12 @@ def main():
 
     print(f"\nEvaluating experiment: {config.experiment_id}")
     print(f"Experiment directory: {experiment_dir}")
+    print(f"Data directory: {data_dir}")
+    print(f"Output directory: {output_dir}")
     print(f"Methods: {[mc.name for mc in config.value_estimators.method_configs]}")
     print(f"Batches: {config.data_generation.n_batches}\n")
 
     # Load evaluation batch
-    data_dir = experiment_dir / "data"
     print("Loading evaluation batch...")
     try:
         eval_batch = load_evaluation_batch(data_dir)
