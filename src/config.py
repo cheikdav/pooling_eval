@@ -49,7 +49,8 @@ class ValueEstimatorTrainingConfig:
     convergence_patience: int = 50
     convergence_threshold: float = 1e-4
     eval_frequency: int = 10
-    gamma: float = 0.99  # Discount factor for value estimation (shared by all methods)
+    gamma: float = 0.99
+    episode_subsets: Optional[List[int]] = None
 
 
 class EstimatorType(str, Enum):
