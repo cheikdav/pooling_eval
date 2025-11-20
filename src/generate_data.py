@@ -19,109 +19,120 @@ ALGORITHM_MAP = {
 }
 
 
-def collect_episode(env, model, deterministic: bool = False,
-                    use_vec_normalize: bool = False) -> Dict[str, np.ndarray]:
-    """Collect a single episode of data.
+def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool = False,
+                              use_vec_normalize: bool = False) -> List[Dict[str, np.ndarray]]:
+    """Collect multiple episodes in parallel using vectorized environments.
 
     Args:
-        env: VecEnv (DummyVecEnv, optionally wrapped with VecNormalize)
+        env: VecEnv with n_envs parallel environments
         model: Trained SB3 model
+        n_episodes: Total number of episodes to collect
         deterministic: Whether to use deterministic actions
-        use_vec_normalize: Whether VecNormalize is used (stores unnormalized observations)
+        use_vec_normalize: Whether VecNormalize is used
 
     Returns:
-        Dictionary containing episode data (unnormalized obs if use_vec_normalize=True):
+        List of episode dictionaries, each containing:
             - observations: (T, obs_dim) array
             - actions: (T,) or (T, act_dim) array
-            - rewards: (T,) array (already unnormalized - we disabled norm_reward)
-            - dones: (T,) array (terminal flags)
+            - rewards: (T,) array
+            - dones: (T,) array
             - next_observations: (T, obs_dim) array
     """
-    observations = []
-    actions = []
-    rewards = []
-    dones = []
-    next_observations = []
+    n_envs = env.num_envs
+    completed_episodes = []
 
-    # Reset returns (n_envs, obs_dim), extract first env
+    episode_data = {
+        i: {
+            'observations': [],
+            'actions': [],
+            'rewards': [],
+            'dones': [],
+            'next_observations': []
+        }
+        for i in range(n_envs)
+    }
+
     obs = env.reset()
     if isinstance(obs, tuple):
-        obs = obs[0][0]
-    else:
         obs = obs[0]
 
-    done = False
-
-    while not done:
-        # Store unnormalized observation if using VecNormalize, else store as-is
+    while len(completed_episodes) < n_episodes:
         if use_vec_normalize:
-            observations.append(env.get_original_obs()[0].copy())
+            original_obs = env.get_original_obs()
         else:
-            observations.append(obs.copy())
+            original_obs = obs
 
-        # Get action from policy (policy uses normalized obs)
+        for i in range(n_envs):
+            if len(completed_episodes) + sum(1 for ed in episode_data.values() if ed['observations']) < n_episodes:
+                episode_data[i]['observations'].append(original_obs[i].copy())
+
         action, _ = model.predict(obs, deterministic=deterministic)
 
-        # Ensure action is properly shaped for VecEnv (needs shape (n_envs,) or (n_envs, action_dim))
-        if action.ndim == 0:
-            action = np.array([action])
-
-        # Step environment - VecEnv returns arrays of shape (n_envs, ...)
         step_result = env.step(action)
-        next_obs = step_result[0][0]
-        reward = step_result[1][0]
-        done = step_result[2][0]
+        next_obs = step_result[0]
+        rewards = step_result[1]
+        dones = step_result[2]
 
-        # Extract action (model.predict returns action for vectorized env)
-        if action.ndim > 1:
-            action = action[0]
-
-        actions.append(action.copy() if isinstance(action, np.ndarray) else action)
-        rewards.append(float(reward))  # Already unnormalized (norm_reward=False)
-        dones.append(bool(done))
-
-        # Store unnormalized next_obs if using VecNormalize, else store as-is
         if use_vec_normalize:
-            next_observations.append(env.get_original_obs()[0].copy())
+            original_next_obs = env.get_original_obs()
         else:
-            next_observations.append(next_obs.copy())
+            original_next_obs = next_obs
+
+        for i in range(n_envs):
+            if episode_data[i]['observations']:
+                episode_data[i]['actions'].append(action[i].copy() if isinstance(action[i], np.ndarray) else action[i])
+                episode_data[i]['rewards'].append(float(rewards[i]))
+                episode_data[i]['dones'].append(bool(dones[i]))
+                episode_data[i]['next_observations'].append(original_next_obs[i].copy())
+
+                if dones[i] and len(completed_episodes) < n_episodes:
+                    completed_episodes.append({
+                        'observations': np.array(episode_data[i]['observations']),
+                        'actions': np.array(episode_data[i]['actions']),
+                        'rewards': np.array(episode_data[i]['rewards']),
+                        'dones': np.array(episode_data[i]['dones']),
+                        'next_observations': np.array(episode_data[i]['next_observations']),
+                    })
+
+                    episode_data[i] = {
+                        'observations': [],
+                        'actions': [],
+                        'rewards': [],
+                        'dones': [],
+                        'next_observations': []
+                    }
 
         obs = next_obs
 
-    return {
-        'observations': np.array(observations),
-        'actions': np.array(actions),
-        'rewards': np.array(rewards),
-        'dones': np.array(dones),
-        'next_observations': np.array(next_observations),
-    }
+    return completed_episodes[:n_episodes]
 
 
 def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
                   batch_seed: int = None, use_vec_normalize: bool = False) -> Dict[str, List[np.ndarray]]:
-    """Collect a batch of episodes.
+    """Collect a batch of episodes using parallel environments.
 
     Args:
-        env: VecEnv (DummyVecEnv, optionally wrapped with VecNormalize)
+        env: VecEnv (SubprocVecEnv, optionally wrapped with VecNormalize)
         model: Trained SB3 model
         n_episodes: Number of episodes to collect
         deterministic: Whether to use deterministic actions
         batch_seed: Random seed for this batch
-        use_vec_normalize: Whether VecNormalize is used (stores unnormalized observations)
+        use_vec_normalize: Whether VecNormalize is used
 
     Returns:
         Dictionary containing lists of arrays (one per episode):
-            - observations: List of (T_i, obs_dim) arrays (unnormalized if VecNormalize)
+            - observations: List of (T_i, obs_dim) arrays
             - actions: List of (T_i,) or (T_i, act_dim) arrays
-            - rewards: List of (T_i,) arrays (unnormalized)
+            - rewards: List of (T_i,) arrays
             - dones: List of (T_i,) arrays
-            - next_observations: List of (T_i, obs_dim) arrays (unnormalized if VecNormalize)
+            - next_observations: List of (T_i, obs_dim) arrays
             - episode_lengths: (n_episodes,) array of episode lengths
             - episode_returns: (n_episodes,) array of total returns
     """
     if batch_seed is not None:
-        env.seed(batch_seed)
         np.random.seed(batch_seed)
+
+    episodes = collect_episodes_parallel(env, model, n_episodes, deterministic, use_vec_normalize)
 
     batch_data = {
         'observations': [],
@@ -133,12 +144,9 @@ def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
         'episode_returns': [],
     }
 
-    for _ in tqdm(range(n_episodes), desc="Collecting episodes", leave=False):
-        episode = collect_episode(env, model, deterministic, use_vec_normalize)
-
+    for episode in episodes:
         for key in episode:
-            batch_data[key].append(np.array(episode[key]))
-        
+            batch_data[key].append(episode[key])
 
         batch_data['episode_lengths'].append(len(episode['rewards']))
         batch_data['episode_returns'].append(episode['rewards'].sum())
@@ -200,6 +208,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
     vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
     env, use_vec_normalize = create_vec_env(
         config,
+        n_envs=config.data_generation.n_envs,
         use_monitor=False,
         vec_normalize_path=vec_normalize_path
     )

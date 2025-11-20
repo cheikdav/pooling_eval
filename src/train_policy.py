@@ -119,7 +119,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     torch.manual_seed(config.seed)
 
     # Create environment
-    env, _ = create_vec_env(config, use_monitor=True)
+    env, _ = create_vec_env(config, n_envs=config.policy.n_envs, use_monitor=True)
 
     # Get algorithm class
     if config.policy.algorithm not in ALGORITHM_MAP:

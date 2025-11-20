@@ -22,13 +22,13 @@ class PolicyConfig:
     n_epochs: int = 10
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    policy_kwargs: Dict[str, Any] = field(default_factory=dict)  # Network architecture and policy-specific settings
-    kwargs: Dict[str, Any] = field(default_factory=dict)  # Other algorithm-specific parameters
-    # VecNormalize settings
-    use_vec_normalize: bool = False  # Whether to use VecNormalize wrapper
-    normalize_obs: bool = True  # Normalize observations
-    normalize_reward: bool = True  # Normalize rewards
-    vec_normalize_kwargs: Dict[str, Any] = field(default_factory=dict)  # Additional VecNormalize parameters
+    n_envs: int = 1
+    policy_kwargs: Dict[str, Any] = field(default_factory=dict)
+    kwargs: Dict[str, Any] = field(default_factory=dict)
+    use_vec_normalize: bool = False
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    vec_normalize_kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -36,10 +36,10 @@ class DataGenerationConfig:
     n_batches: int
     episodes_per_batch: int
     deterministic_policy: bool = False
-    # Special batches for different purposes
-    tuning_episodes: int = 0  # For hyperparameter tuning
-    ground_truth_episodes: int = 0  # For training ground truth estimator
-    eval_episodes: int = 0  # For final evaluation
+    n_envs: int = 1
+    tuning_episodes: int = 0
+    ground_truth_episodes: int = 0
+    eval_episodes: int = 0
 
 
 @dataclass
