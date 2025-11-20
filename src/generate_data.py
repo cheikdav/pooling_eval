@@ -63,8 +63,7 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
             original_obs = obs
 
         for i in range(n_envs):
-            if len(completed_episodes) + sum(1 for ed in episode_data.values() if ed['observations']) < n_episodes:
-                episode_data[i]['observations'].append(original_obs[i].copy())
+            episode_data[i]['observations'].append(original_obs[i].copy())
 
         action, _ = model.predict(obs, deterministic=deterministic)
 
