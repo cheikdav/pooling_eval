@@ -1,14 +1,15 @@
 """Minimal Streamlit dashboard for visualizing value estimator predictions."""
 
+import sys
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-from pathlib import Path
 import traceback
 
-from src.analysis.metrics import METRICS, compute_metric
+from metrics import METRICS, compute_metric
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
