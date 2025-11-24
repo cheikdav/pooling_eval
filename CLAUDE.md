@@ -70,8 +70,13 @@ python -m src.run_all_estimators --config configs/example_config.yaml --mode clu
 
 ### Evaluate Results
 ```bash
+# Generate predictions from trained models
 python -m src.evaluate --config configs/example_config.yaml
-# Generates: experiments/<exp_id>/results/evaluation_results.json + plots
+# Generates: experiments/<exp_id>/results/predictions.csv
+
+# Launch interactive dashboard for analysis
+uv run streamlit run src/analysis/app.py
+# Access at http://localhost:8501
 ```
 
 ### Disable Weights & Biases
@@ -106,6 +111,25 @@ wandb agent <sweep-id>
 - To tune additional hyperparameters, modify `src/tune_hyperparameters.py`
 
 ## Architecture
+
+### Project Structure
+
+The codebase is organized into two main parts:
+
+**Training Pipeline** (`src/`):
+- `config.py`: Configuration system
+- `train_policy.py`: Policy training with SB3
+- `generate_data.py`: Episode data generation
+- `train_estimator.py`: Value estimator training
+- `run_all_estimators.py`: Batch training orchestration
+- `tune_hyperparameters.py`: W&B hyperparameter sweeps
+- `evaluate.py`: Model evaluation and prediction generation
+- `estimators/`: Value estimator implementations (Monte Carlo, DQN, etc.)
+
+**Result Analysis** (`src/analysis/`):
+- `app.py`: Streamlit dashboard for interactive visualization
+- `metrics.py`: Metric definitions and computation functions
+- `analyze_variance_ratios.ipynb`: Jupyter notebook for variance analysis
 
 ### Configuration System (src/config.py)
 
@@ -256,6 +280,37 @@ When implementing `compute_targets()`, remember:
 - You'll often need to flatten: `np.concatenate(batch['observations'])`
 - Must return torch.Tensor of shape `(total_transitions,)` matching flattened observations
 - See existing estimators for examples of handling episode boundaries
+
+### Adding New Analysis Metrics
+
+To add a new metric for visualization in the Streamlit dashboard:
+
+1. Implement computation function in `src/analysis/metrics.py`:
+```python
+@st.cache_data
+def compute_my_metric(df, stats):
+    """Compute my custom metric."""
+    # df: raw predictions DataFrame
+    # stats: aggregated statistics DataFrame
+    result = stats.copy()
+    result['metric_value'] = # your computation here
+    return result
+```
+
+2. Add metric definition to METRICS dict in `src/analysis/metrics.py`:
+```python
+METRICS = {
+    'my_metric': {
+        'name': 'My Metric Name',
+        'description': 'Description shown in UI',
+        'reference_line': 1.0,  # Optional: value for reference line (or None)
+        'reference_label': 'Baseline',  # Optional: label for reference line (or None)
+        'compute_fn': compute_my_metric  # Reference to the computation function
+    }
+}
+```
+
+The dashboard will automatically make the new metric available in the metric selector. The `compute_fn` field links the metric to its computation function, eliminating the need to manually update a dispatcher.
 
 ### Device Management
 

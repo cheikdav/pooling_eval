@@ -7,7 +7,8 @@ import plotly.graph_objects as go
 import numpy as np
 from pathlib import Path
 import traceback
-import sys
+
+from .metrics import METRICS, compute_metric
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
@@ -29,47 +30,6 @@ def load_predictions(predictions_path):
     ).reset_index()
 
     return df, stats
-
-
-@st.cache_data
-def compute_variance_ratios(stats):
-    """Compute variance ratios relative to Monte Carlo with error handling."""
-    try:
-        mc_values = stats[stats['method'] == 'monte_carlo'][['state_idx', 'n_episodes', 'variance']]
-
-        if len(mc_values) == 0:
-            raise ValueError("No Monte Carlo method found in data. Cannot compute variance ratios.")
-
-        mc_values.columns = ['state_idx', 'n_episodes', 'mc_variance']
-
-        if (mc_values['mc_variance'] == 0).any():
-            zero_count = (mc_values['mc_variance'] == 0).sum()
-            st.warning(f"Found {zero_count} Monte Carlo variance values equal to 0. These will be replaced with epsilon=1e-10 to avoid division by zero.")
-            mc_values['mc_variance'] = mc_values['mc_variance'].replace(0, 1e-10)
-
-        merged = stats.merge(mc_values, on=['state_idx', 'n_episodes'])
-
-        merged['variance_ratio'] = merged['variance'] / merged['mc_variance']
-
-        if (merged['variance_ratio'] <= 0).any():
-            invalid_count = (merged['variance_ratio'] <= 0).sum()
-            st.warning(f"Found {invalid_count} variance ratios ≤ 0. Replacing with epsilon=1e-10 before log transform.")
-            merged['variance_ratio'] = merged['variance_ratio'].clip(lower=1e-10)
-
-        merged['log_variance_ratio'] = np.log(merged['variance_ratio'])
-
-        if merged['log_variance_ratio'].isnull().any():
-            null_count = merged['log_variance_ratio'].isnull().sum()
-            st.error(f"Found {null_count} NaN values in log_variance_ratio after computation!")
-            st.write("Debug info - First few problematic rows:")
-            st.write(merged[merged['log_variance_ratio'].isnull()].head())
-
-        return merged[merged['method'] != 'monte_carlo'].copy()
-
-    except Exception as e:
-        st.error(f"Error computing variance ratios: {str(e)}")
-        st.code(traceback.format_exc())
-        raise
 
 
 experiments_dir = Path("experiments")
@@ -130,6 +90,15 @@ selected_n_episodes = st.sidebar.multiselect(
     help="Choose which training data sizes to compare"
 )
 
+st.sidebar.markdown("---")
+
+metric_key = st.sidebar.selectbox(
+    "Select Metric",
+    options=list(METRICS.keys()),
+    format_func=lambda k: METRICS[k]['name'],
+    help="Choose which metric to visualize"
+)
+
 if not selected_methods:
     st.warning("Please select at least one method")
     st.stop()
@@ -138,23 +107,25 @@ if not selected_n_episodes:
     st.warning("Please select at least one episode count")
     st.stop()
 
-st.header("1. Variance Ratio Analysis")
-st.markdown("Histogram of log variance ratios: log(Method Variance / Monte Carlo Variance)")
+metric_info = METRICS[metric_key]
+
+st.header("1. Metric Analysis")
+st.markdown(f"**{metric_info['name']}**: {metric_info['description']}")
 
 try:
-    variance_ratios = compute_variance_ratios(stats)
-    st.success(f"✓ Computed variance ratios for {len(variance_ratios)} state-method-episode combinations")
+    metric_data = compute_metric(df, stats, metric_key)
+    st.success(f"✓ Computed {metric_info['name']} for {len(metric_data)} state-method-episode combinations")
 except Exception as e:
-    st.error(f"Failed to compute variance ratios: {str(e)}")
+    st.error(f"Failed to compute metric: {str(e)}")
     st.code(traceback.format_exc())
     st.stop()
 
-filtered_ratios = variance_ratios[
-    (variance_ratios['method'].isin(selected_methods)) &
-    (variance_ratios['n_episodes'].isin(selected_n_episodes))
+filtered_data = metric_data[
+    (metric_data['method'].isin(selected_methods)) &
+    (metric_data['n_episodes'].isin(selected_n_episodes))
 ]
 
-if len(filtered_ratios) == 0:
+if len(filtered_data) == 0:
     st.warning("No data available for selected filters")
     st.stop()
 
@@ -162,20 +133,22 @@ col1, col2 = st.columns([3, 1])
 
 with col1:
     try:
-        st.markdown(f"_Rendering histogram with {len(filtered_ratios)} data points..._")
+        st.markdown(f"_Rendering histogram with {len(filtered_data)} data points..._")
         fig = px.histogram(
-            filtered_ratios,
-            x='log_variance_ratio',
+            filtered_data,
+            x='metric_value',
             color='method',
             facet_col='n_episodes',
             nbins=40,
-            title="Log Variance Ratio Distribution by Method and Episode Count",
-            labels={'log_variance_ratio': 'Log Variance Ratio: log(Method / MC)', 'count': 'Frequency'},
+            title=f"{metric_info['name']} Distribution by Method and Episode Count",
+            labels={'metric_value': metric_info['name'], 'count': 'Frequency'},
             opacity=0.7,
             barmode='overlay'
         )
 
-        fig.add_vline(x=0, line_dash="dash", line_color="red", annotation_text="Equal to MC")
+        if metric_info['reference_line'] is not None:
+            fig.add_vline(x=metric_info['reference_line'], line_dash="dash", line_color="red",
+                         annotation_text=metric_info['reference_label'])
         fig.update_layout(height=500)
 
         st.plotly_chart(fig, use_container_width=True)
@@ -183,12 +156,12 @@ with col1:
         st.error(f"Error rendering histogram: {str(e)}")
         st.code(traceback.format_exc())
         st.write("Debug: First few rows of data being plotted:")
-        st.write(filtered_ratios.head(10))
+        st.write(filtered_data.head(10))
 
 with col2:
     st.markdown("**Statistics**")
     try:
-        summary = filtered_ratios.groupby(['method', 'n_episodes'])['log_variance_ratio'].agg(
+        summary = filtered_data.groupby(['method', 'n_episodes'])['metric_value'].agg(
             mean='mean',
             std='std'
         ).reset_index()
@@ -228,21 +201,21 @@ except Exception as e:
     st.error(f"Error rendering performance comparison: {str(e)}")
     st.code(traceback.format_exc())
 
-st.header("3. Variance Ratio vs Training Data Size")
-st.markdown("How does the variance ratio change with more training data?")
+st.header(f"3. {metric_info['name']} vs Training Data Size")
+st.markdown(f"How does the {metric_info['name'].lower()} change with more training data?")
 
 try:
-    ratio_summary = filtered_ratios.groupby(['method', 'n_episodes'])['log_variance_ratio'].agg(
+    metric_summary = filtered_data.groupby(['method', 'n_episodes'])['metric_value'].agg(
         mean='mean',
         std='std'
     ).reset_index()
 
-    st.markdown(f"_Rendering line plot with {len(ratio_summary)} data points across {len(selected_methods)} methods..._")
+    st.markdown(f"_Rendering line plot with {len(metric_summary)} data points across {len(selected_methods)} methods..._")
 
     fig3 = go.Figure()
 
     for method in selected_methods:
-        method_data = ratio_summary[ratio_summary['method'] == method]
+        method_data = metric_summary[metric_summary['method'] == method]
         fig3.add_trace(go.Scatter(
             x=method_data['n_episodes'],
             y=method_data['mean'],
@@ -252,17 +225,19 @@ try:
             marker=dict(size=10)
         ))
 
-    fig3.add_hline(y=0, line_dash="dash", line_color="red", annotation_text="Equal to MC")
+    if metric_info['reference_line'] is not None:
+        fig3.add_hline(y=metric_info['reference_line'], line_dash="dash", line_color="red",
+                      annotation_text=metric_info['reference_label'])
     fig3.update_layout(
-        title="Mean Log Variance Ratio vs Training Episodes",
+        title=f"Mean {metric_info['name']} vs Training Episodes",
         xaxis_title="Training Episodes",
-        yaxis_title="Mean Log Variance Ratio",
+        yaxis_title=f"Mean {metric_info['name']}",
         height=500
     )
 
     st.plotly_chart(fig3, use_container_width=True)
 except Exception as e:
-    st.error(f"Error rendering variance ratio vs training data plot: {str(e)}")
+    st.error(f"Error rendering metric vs training data plot: {str(e)}")
     st.code(traceback.format_exc())
 
 st.markdown("---")
