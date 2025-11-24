@@ -37,28 +37,37 @@ pip install -e .          # Alternative
 # Or run steps individually:
 python -m src.train_policy --config configs/example_config.yaml
 python -m src.generate_data --config configs/example_config.yaml
-python -m src.train_estimator --config configs/example_config.yaml --method monte_carlo --batch-idx 0
+python -m src.train_estimator --config configs/example_config.yaml --method monte_carlo --batch-idx 0 --no-overwrite
 ```
 
 ### Run All Estimators (Multiple Methods × Multiple Batches)
 ```bash
 # Sequential (simple, good for debugging)
-python -m src.run_all_estimators --config configs/example_config.yaml --mode sequential
+python -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --no-overwrite
 
 # Parallel across GPUs (local machine)
-python -m src.run_all_estimators --config configs/example_config.yaml --mode parallel
+python -m src.run_all_estimators --config configs/example_config.yaml --mode parallel --no-overwrite
 
 # Cluster mode (SGE array jobs)
-python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster
+python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster --no-overwrite
 
 # Cluster mode with custom settings
 python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster \
     --grid-mem 16g \
-    --max-concurrent 10
+    --max-concurrent 10 \
+    --no-overwrite
+
+# To overwrite existing models, use --overwrite instead of --no-overwrite
+python -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --overwrite
 
 # Or call the bash script directly for parallel mode
-./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,dqn 10
+./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,dqn 10 false
 ```
+
+**Overwrite Behavior:**
+- `--overwrite`: Always train estimators, overwriting existing models
+- `--no-overwrite`: Skip training if model file already exists (useful for resuming interrupted experiments)
+- **Required**: You must specify either `--overwrite` or `--no-overwrite` (no default)
 
 **Cluster Mode Details:**
 - Submits one SGE array job per method
@@ -348,12 +357,17 @@ python -c "import json; stats = json.load(open('training_stats.json')); print([s
 
 ### Resuming Interrupted Experiments
 
-The framework automatically skips completed jobs. Just re-run:
+Use `--no-overwrite` to skip already-trained models:
 ```bash
-python -m src.run_all_estimators --config config.yaml --mode sequential
+python -m src.run_all_estimators --config config.yaml --mode sequential --no-overwrite
 ```
 
-It checks for `estimator_final.pt` and skips training if found.
+The framework checks for existing `estimator_episodes_*.pt` files and skips training if found.
+
+To force retraining all models, use `--overwrite`:
+```bash
+python -m src.run_all_estimators --config config.yaml --mode sequential --overwrite
+```
 
 ## Supported Environments
 

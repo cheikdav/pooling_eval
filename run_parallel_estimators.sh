@@ -2,18 +2,26 @@
 set -e
 
 # Run all estimator training jobs in parallel across GPUs
-# Usage: ./run_parallel_estimators.sh <config_file> <methods> <n_batches>
+# Usage: ./run_parallel_estimators.sh <config_file> <methods> <n_batches> <overwrite>
 #   methods: comma-separated list (e.g., "monte_carlo,dqn")
+#   overwrite: "true" or "false"
 
-if [ $# -lt 3 ]; then
-    echo "Usage: $0 <config_file> <methods> <n_batches>"
-    echo "Example: $0 configs/example.yaml monte_carlo,dqn 10"
+if [ $# -lt 4 ]; then
+    echo "Usage: $0 <config_file> <methods> <n_batches> <overwrite>"
+    echo "Example: $0 configs/example.yaml monte_carlo,dqn 10 false"
     exit 1
 fi
 
 CONFIG="$1"
 METHODS="$2"
 N_BATCHES="$3"
+OVERWRITE="$4"
+
+if [ "$OVERWRITE" = "true" ]; then
+    OVERWRITE_FLAG="--overwrite"
+else
+    OVERWRITE_FLAG="--no-overwrite"
+fi
 
 if [ ! -f "$CONFIG" ]; then
     echo "Error: Config file not found: $CONFIG"
@@ -48,13 +56,15 @@ for method in "${METHOD_ARRAY[@]}"; do
             CUDA_VISIBLE_DEVICES=$gpu_idx python -m src.train_estimator \
                 --config "$CONFIG" \
                 --method "$method" \
-                --batch-idx "$batch_idx" &
+                --batch-idx "$batch_idx" \
+                $OVERWRITE_FLAG &
         else
             echo "Starting: method=$method batch=$batch_idx"
             python -m src.train_estimator \
                 --config "$CONFIG" \
                 --method "$method" \
-                --batch-idx "$batch_idx" &
+                --batch-idx "$batch_idx" \
+                $OVERWRITE_FLAG &
         fi
 
         job_count=$((job_count + 1))

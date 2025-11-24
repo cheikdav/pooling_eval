@@ -172,6 +172,7 @@ def train_estimator(
     method_config: BaseEstimatorConfig,
     batch_path: Path,
     output_dir: Path,
+    overwrite: bool,
     use_wandb: bool = True,
     save_model: bool = True,
     sweep_mode: bool = False
@@ -183,6 +184,7 @@ def train_estimator(
         method_config: Method-specific configuration
         batch_path: Path to batch data file
         output_dir: Directory to save outputs
+        overwrite: If True, overwrite existing models; if False, skip training if model exists
         use_wandb: Whether to use wandb logging
         save_model: Whether to save the trained model (default: True)
         sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
@@ -207,8 +209,8 @@ def train_estimator(
         model_suffix = f"episodes_{n_episodes}"
         checkpoint_path = output_dir / f"estimator_{model_suffix}.pt"
 
-        if save_model and checkpoint_path.exists():
-            print(f"Training already completed for {method_name} with {n_episodes} episodes at {checkpoint_path}. Skipping.")
+        if save_model and checkpoint_path.exists() and not overwrite:
+            print(f"Model exists at {checkpoint_path} and overwrite=False. Skipping.")
             continue
 
         print(f"\n{'='*80}")
@@ -276,6 +278,10 @@ def main():
                        help="Method name (corresponds to 'name' field in method config)")
     parser.add_argument("--batch-idx", type=int, required=False,
                        help="Batch index to train on (if not set, uses SGE_TASK_ID-1 from environment)")
+    parser.add_argument("--overwrite", action="store_true", required=True,
+                       help="Overwrite existing models (required flag: use --overwrite or --no-overwrite)")
+    parser.add_argument("--no-overwrite", dest="overwrite", action="store_false",
+                       help="Skip training if model already exists")
     parser.add_argument("--no-wandb", action="store_true",
                        help="Disable wandb logging")
     args = parser.parse_args()
@@ -319,6 +325,7 @@ def main():
         method_config=method_config,
         batch_path=batch_path,
         output_dir=output_dir,
+        overwrite=args.overwrite,
         use_wandb=not args.no_wandb
     )
 

@@ -7,14 +7,15 @@ from pathlib import Path
 from src.config import ExperimentConfig
 
 
-def run_sequential(config: ExperimentConfig, config_path: Path):
+def run_sequential(config: ExperimentConfig, config_path: Path, overwrite: bool):
     """Run all training jobs sequentially."""
     method_configs = config.value_estimators.method_configs
     n_batches = config.data_generation.n_batches
 
     print(f"Running {len(method_configs) * n_batches} jobs sequentially")
     print(f"Methods: {[mc.name for mc in method_configs]}")
-    print(f"Batches: {n_batches}\n")
+    print(f"Batches: {n_batches}")
+    print(f"Overwrite: {overwrite}\n")
 
     for method_config in method_configs:
         for batch_idx in range(n_batches):
@@ -22,11 +23,13 @@ def run_sequential(config: ExperimentConfig, config_path: Path):
             print(f"Training: method={method_config.name} batch={batch_idx}")
             print(f"{'='*60}\n")
 
+            overwrite_flag = "--overwrite" if overwrite else "--no-overwrite"
             subprocess.run([
                 "python", "-m", "src.train_estimator",
                 "--config", str(config_path),
                 "--method", method_config.name,
-                "--batch-idx", str(batch_idx)
+                "--batch-idx", str(batch_idx),
+                overwrite_flag
             ], check=True)
 
     print(f"\n{'='*60}")
@@ -34,10 +37,11 @@ def run_sequential(config: ExperimentConfig, config_path: Path):
     print(f"{'='*60}\n")
 
 
-def run_parallel(config: ExperimentConfig, config_path: Path):
+def run_parallel(config: ExperimentConfig, config_path: Path, overwrite: bool):
     """Run all training jobs in parallel using bash script."""
     method_names = ','.join([mc.name for mc in config.value_estimators.method_configs])
     n_batches = str(config.data_generation.n_batches)
+    overwrite_flag = "true" if overwrite else "false"
 
     script_path = Path(__file__).parent.parent / "run_parallel_estimators.sh"
 
@@ -45,11 +49,12 @@ def run_parallel(config: ExperimentConfig, config_path: Path):
         str(script_path),
         str(config_path),
         method_names,
-        n_batches
+        n_batches,
+        overwrite_flag
     ], check=True)
 
 
-def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g", max_concurrent: int = None):
+def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, memory: str = "8g", max_concurrent: int = None):
     """Run all training jobs on cluster using SGE array jobs.
 
     Submits one array job per method, where each array task trains one batch.
@@ -58,6 +63,7 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
     Args:
         config: Experiment configuration
         config_path: Path to config YAML file
+        overwrite: If True, overwrite existing models; if False, skip training if model exists
         memory: Memory per job (e.g., "8g", "16g")
         max_concurrent: Maximum number of jobs to run concurrently per method (optional)
     """
@@ -68,6 +74,7 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
     print(f"Methods: {[mc.name for mc in method_configs]}")
     print(f"Batches per method: {n_batches}")
     print(f"Memory per job: {memory}")
+    print(f"Overwrite: {overwrite}")
     if max_concurrent:
         print(f"Max concurrent per method: {max_concurrent}")
     print()
@@ -80,6 +87,7 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
 
     # Submit one array job per method
     job_ids = []
+    overwrite_flag = "--overwrite" if overwrite else "--no-overwrite"
     for method_config in method_configs:
         print(f"Submitting array job for {method_config.name} with array={array_spec}")
 
@@ -90,7 +98,8 @@ def run_cluster(config: ExperimentConfig, config_path: Path, memory: str = "8g",
             f"--grid_mem={memory}",
             "uv run", "-m", "src.train_estimator",
             "--config", str(config_path.absolute()),
-            "--method", method_config.name
+            "--method", method_config.name,
+            overwrite_flag
         ], check=True, capture_output=True, text=True)
 
         # Try to extract job ID from output
@@ -120,6 +129,10 @@ def main():
                        help="sequential: run jobs one by one, "
                             "parallel: run jobs in parallel across GPUs, "
                             "cluster: submit jobs to SGE cluster")
+    parser.add_argument("--overwrite", action="store_true", required=True,
+                       help="Overwrite existing models (required flag: use --overwrite or --no-overwrite)")
+    parser.add_argument("--no-overwrite", dest="overwrite", action="store_false",
+                       help="Skip training if model already exists")
     parser.add_argument("--grid-mem", type=str, default="8g",
                        help="Memory per job for cluster mode (e.g., '8g', '16g')")
     parser.add_argument("--max-concurrent", type=int, default=None,
@@ -129,11 +142,11 @@ def main():
     config = ExperimentConfig.from_yaml(args.config)
 
     if args.mode == 'sequential':
-        run_sequential(config, args.config)
+        run_sequential(config, args.config, args.overwrite)
     elif args.mode == 'parallel':
-        run_parallel(config, args.config)
+        run_parallel(config, args.config, args.overwrite)
     elif args.mode == 'cluster':
-        run_cluster(config, args.config, memory=args.grid_mem,
+        run_cluster(config, args.config, args.overwrite, memory=args.grid_mem,
                    max_concurrent=args.max_concurrent)
 
 
