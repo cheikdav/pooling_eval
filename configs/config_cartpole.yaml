@@ -24,10 +24,10 @@ policy:
 
 # Data generation
 data_generation:
-  n_batches: 10
-  episodes_per_batch: 500
+  n_batches: 80
+  episodes_per_batch: 1000
   deterministic_policy: false
-  n_envs: 4
+  n_envs: 64
   tuning_episodes: 1000
   ground_truth_episodes: 5000
   eval_episodes: 1000
@@ -42,7 +42,7 @@ value_estimators:
     convergence_threshold: 1.0e-4
     eval_frequency: 10
     gamma: 0.99
-    episode_subsets: [100, 250, 500]
+    episode_subsets: [100, 250, 500, 750, 1000]
 
   # List of method configurations
   # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)
