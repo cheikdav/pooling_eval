@@ -18,18 +18,78 @@ st.markdown("Compare variance and performance of different value estimation meth
 
 
 @st.cache_data
-def load_predictions(predictions_path):
-    """Load predictions CSV and compute statistics."""
+def load_predictions(predictions_path, s1_proportion=0.9, seed=42):
+    """Load predictions CSV and compute statistics.
+
+    Returns 4 (df, stats) pairs:
+    1. Full dataset
+    2. S1 partition (90% of episodes)
+    3. S2 partition (10% of episodes)
+    4. Differences (S1 states with paired S2 values)
+    """
     df = pd.read_csv(predictions_path)
 
-    stats = df.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
-    ).reset_index()
+    def compute_stats(dataframe):
+        """Helper to compute stats from a predictions dataframe."""
+        return dataframe.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
+            mean='mean',
+            variance='var',
+            std='std',
+            count='count'
+        ).reset_index()
 
-    return df, stats
+    # Full dataset stats
+    stats = compute_stats(df)
+
+    # Partition episodes into S1 and S2
+    np.random.seed(seed)
+    all_episodes = df['episode_idx'].unique()
+    n_s1 = int(len(all_episodes) * s1_proportion)
+
+    shuffled_episodes = np.random.permutation(all_episodes)
+    s1_episodes = set(shuffled_episodes[:n_s1])
+    s2_episodes = set(shuffled_episodes[n_s1:])
+
+    # Split dataframe by partition
+    df_s1 = df[df['episode_idx'].isin(s1_episodes)].copy()
+    df_s2 = df[df['episode_idx'].isin(s2_episodes)].copy()
+
+    stats_s1 = compute_stats(df_s1)
+    stats_s2 = compute_stats(df_s2)
+
+    # Create stable random pairings (state_idx in S1 -> state_idx in S2)
+    unique_s1_states = df_s1['state_idx'].unique()
+    unique_s2_states = df_s2['state_idx'].unique()
+
+    np.random.seed(seed + 1)
+    pairings = {
+        s: np.random.choice(unique_s2_states)
+        for s in unique_s1_states
+    }
+
+    # Add paired state column to S1 dataframe
+    df_s1['paired_state_idx'] = df_s1['state_idx'].map(pairings)
+
+    # Prepare S2 for merge
+    df_s2_renamed = df_s2.rename(columns={
+        'state_idx': 'paired_state_idx',
+        'predicted_value': 'paired_value'
+    })[['paired_state_idx', 'method', 'batch_idx', 'n_episodes', 'paired_value']]
+
+    # Merge to get paired values
+    df_merged = df_s1.merge(
+        df_s2_renamed,
+        on=['paired_state_idx', 'method', 'batch_idx', 'n_episodes'],
+        how='inner'
+    )
+
+    # Compute differences and rename to match other dataframes
+    df_merged['value_difference'] = df_merged['predicted_value'] - df_merged['paired_value']
+    df_merged['predicted_value'] = df_merged['value_difference']
+
+    stats_merged = compute_stats(df_merged)
+
+    return (df, stats), (df_s1, stats_s1), (df_s2, stats_s2), (df_merged, stats_merged)
 
 
 experiments_dir = Path("experiments")
@@ -60,8 +120,11 @@ if not predictions_file.exists():
     st.stop()
 
 try:
-    df, stats = load_predictions(str(predictions_file))
+    (df, stats), (df_s1, stats_s1), (df_s2, stats_s2), (df_merged, stats_merged) = load_predictions(str(predictions_file))
     st.sidebar.success(f"✓ Loaded {len(df)} predictions from {df['batch_idx'].nunique()} batches")
+    st.sidebar.markdown(f"- S1 episodes: {df_s1['episode_idx'].nunique()} ({len(df_s1)} states)")
+    st.sidebar.markdown(f"- S2 episodes: {df_s2['episode_idx'].nunique()} ({len(df_s2)} states)")
+    st.sidebar.markdown(f"- Paired states: {len(df_merged)}")
 except Exception as e:
     st.error(f"Failed to load predictions file: {str(e)}")
     st.code(traceback.format_exc())

@@ -68,13 +68,18 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
         device: Device to use for inference
 
     Returns:
-        DataFrame with columns: state_idx, method, batch_idx, n_episodes, predicted_value
+        DataFrame with columns: state_idx, episode_idx, method, batch_idx, n_episodes, predicted_value
     """
     eval_obs_list = eval_batch['observations']
     eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
     n_states = len(eval_obs_flat)
 
-    print(f"\nGenerating predictions on {n_states} states from evaluation batch...")
+    # Create episode index mapping for each state
+    episode_indices = []
+    for ep_idx, obs_array in enumerate(eval_obs_list):
+        episode_indices.extend([ep_idx] * len(obs_array))
+
+    print(f"\nGenerating predictions on {n_states} states from {len(eval_obs_list)} episodes...")
 
     eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
 
@@ -120,6 +125,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
                 for state_idx in range(n_states):
                     predictions.append({
                         'state_idx': state_idx,
+                        'episode_idx': episode_indices[state_idx],
                         'method': method_name,
                         'batch_idx': batch_idx,
                         'n_episodes': n_episodes,
