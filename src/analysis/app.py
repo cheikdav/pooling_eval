@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 import traceback
 
-from .metrics import METRICS, compute_metric
+from src.analysis.metrics import METRICS, compute_metric
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
