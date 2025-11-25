@@ -91,7 +91,8 @@ def train_single_initialization(
     batch: dict,
     config: ExperimentConfig,
     method_name: str,
-    batch_name: str,
+    batch_idx: int,
+    num_episodes: int,
     init_idx: int,
     use_wandb: bool,
     sweep_mode: bool = False
@@ -103,7 +104,8 @@ def train_single_initialization(
         batch: Batch data
         config: Experiment configuration
         method_name: Method name (from method_config.name)
-        batch_name: Batch name for logging
+        batch_idx: Batch index
+        num_episodes: Number of episodes in batch
         init_idx: Initialization index
         use_wandb: Whether to use wandb
         sweep_mode: If True, skip wandb.init() (run already initialized by sweep)
@@ -113,7 +115,7 @@ def train_single_initialization(
     """
     # Initialize wandb for this initialization (unless in sweep mode)
     if use_wandb and config.logging.use_wandb and not sweep_mode:
-        run_name = f"{method_name}_{batch_name}_init{init_idx}"
+        run_name = f"{method_name}_batch{batch_idx}_{num_episodes}ep_init{init_idx}"
         wandb.init(
             project=config.logging.wandb_project,
             entity=config.logging.wandb_entity,
@@ -121,12 +123,13 @@ def train_single_initialization(
             group=config.experiment_id,
             config={
                 'method': method_name,
-                'batch_name': batch_name,
+                'batch_idx': batch_idx,
+                'num_episodes': num_episodes,
                 'init_idx': init_idx,
                 'experiment_id': config.experiment_id,
                 **estimator.get_config(),
             },
-            tags=[method_name, batch_name, f"init{init_idx}"],
+            tags=[method_name, f"batch_{batch_idx}", f"{num_episodes}_episodes", f"init{init_idx}"],
         )
 
     training_config = config.value_estimators.training
@@ -196,6 +199,9 @@ def train_estimator(
     method_name = method_config.name
     batch_name = batch_path.stem
 
+    # Extract batch_idx from batch_name (e.g., "batch_0" -> 0)
+    batch_idx = int(batch_name.split('_')[1]) if '_' in batch_name else 0
+
     if not save_model or episode_subsets is None or len(episode_subsets) == 0:
         episode_subsets = [None]
 
@@ -238,9 +244,8 @@ def train_estimator(
             np.random.seed(config.seed + init_idx)
             estimator = create_estimator(method_config, config.network, obs_dim, gamma)
 
-            batch_label = f"{batch_name}_{n_episodes}_episodes"
             final_mc_loss = train_single_initialization(
-                estimator, batch, config, method_name, batch_label, init_idx, use_wandb, sweep_mode
+                estimator, batch, config, method_name, batch_idx, n_episodes, init_idx, use_wandb, sweep_mode
             )
 
             print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
