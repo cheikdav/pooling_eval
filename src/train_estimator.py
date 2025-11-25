@@ -268,7 +268,7 @@ def train_estimator(
         else:
             print(f"\nSkipping model save (best MC loss: {best_mc_loss:.6f})")
 
-        print(f"Training complete for {method_name} {batch_name} with {subset_desc}")
+        print(f"Training complete for {method_name} {batch_name} with {n_episodes} episodes.\n")
 
 
 def main():
