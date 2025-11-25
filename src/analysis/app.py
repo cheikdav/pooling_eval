@@ -156,6 +156,18 @@ selected_n_episodes = st.sidebar.multiselect(
 
 st.sidebar.markdown("---")
 
+dataset_key = st.sidebar.selectbox(
+    "Select Dataset",
+    options=['full', 's1', 's2', 'differences'],
+    format_func=lambda k: {
+        'full': 'Full Dataset',
+        's1': 'S1 Partition (90%)',
+        's2': 'S2 Partition (10%)',
+        'differences': 'Differences (S1 - S2)'
+    }[k],
+    help="Choose which dataset partition to analyze"
+)
+
 metric_key = st.sidebar.selectbox(
     "Select Metric",
     options=list(METRICS.keys()),
@@ -171,13 +183,23 @@ if not selected_n_episodes:
     st.warning("Please select at least one episode count")
     st.stop()
 
+# Select the appropriate dataset based on user choice
+dataset_map = {
+    'full': (df, stats),
+    's1': (df_s1, stats_s1),
+    's2': (df_s2, stats_s2),
+    'differences': (df_merged, stats_merged)
+}
+current_df, current_stats = dataset_map[dataset_key]
+
 metric_info = METRICS[metric_key]
 
 st.header("1. Metric Analysis")
 st.markdown(f"**{metric_info['name']}**: {metric_info['description']}")
+st.markdown(f"_Using dataset: **{dataset_key}** ({len(current_df)} predictions)_")
 
 try:
-    metric_data = compute_metric(df, stats, metric_key)
+    metric_data = compute_metric(current_df, current_stats, metric_key)
     st.success(f"✓ Computed {metric_info['name']} for {len(metric_data)} state-method-episode combinations")
 except Exception as e:
     st.error(f"Failed to compute metric: {str(e)}")
@@ -238,9 +260,9 @@ st.header("2. Performance Comparison")
 st.markdown("Average prediction variance across methods and episode counts")
 
 try:
-    perf_stats = stats[
-        (stats['method'].isin(selected_methods + ['monte_carlo'])) &
-        (stats['n_episodes'].isin(selected_n_episodes))
+    perf_stats = current_stats[
+        (current_stats['method'].isin(selected_methods + ['monte_carlo'])) &
+        (current_stats['n_episodes'].isin(selected_n_episodes))
     ]
 
     perf_summary = perf_stats.groupby(['method', 'n_episodes'])['variance'].mean().reset_index()
