@@ -129,9 +129,11 @@ def main():
                        help="sequential: run jobs one by one, "
                             "parallel: run jobs in parallel across GPUs, "
                             "cluster: submit jobs to SGE cluster")
-    parser.add_argument("--overwrite", action="store_true", required=True,
-                       help="Overwrite existing models (required flag: use --overwrite or --no-overwrite)")
-    parser.add_argument("--no-overwrite", dest="overwrite", action="store_false",
+
+    overwrite_group = parser.add_mutually_exclusive_group(required=True)
+    overwrite_group.add_argument("--overwrite", dest="overwrite", action="store_true",
+                       help="Overwrite existing models")
+    overwrite_group.add_argument("--no-overwrite", dest="overwrite", action="store_false",
                        help="Skip training if model already exists")
     parser.add_argument("--grid-mem", type=str, default="8g",
                        help="Memory per job for cluster mode (e.g., '8g', '16g')")
