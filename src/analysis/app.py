@@ -1,6 +1,5 @@
 """Minimal Streamlit dashboard for visualizing value estimator predictions."""
 
-import sys
 from pathlib import Path
 import streamlit as st
 import pandas as pd
@@ -20,7 +19,7 @@ st.markdown("Compare variance and performance of different value estimation meth
 
 @st.cache_data
 def load_predictions(predictions_path, s1_proportion=0.9, seed=42):
-    """Load predictions CSV and compute statistics.
+    """Load predictions parquet file and compute statistics.
 
     Returns 4 (df, stats) pairs:
     1. Full dataset
@@ -28,11 +27,11 @@ def load_predictions(predictions_path, s1_proportion=0.9, seed=42):
     3. S2 partition (10% of episodes)
     4. Differences (S1 states with paired S2 values)
     """
-    df = pd.read_csv(predictions_path)
+    df = pd.read_parquet(predictions_path)
 
     def compute_stats(dataframe):
         """Helper to compute stats from a predictions dataframe."""
-        return dataframe.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
+        return dataframe.groupby(['state_idx', 'method'])['predicted_value'].agg(
             mean='mean',
             variance='var',
             std='std',
@@ -113,12 +112,39 @@ selected_experiment = st.sidebar.selectbox(
     help="Choose which experiment to analyze"
 )
 
-predictions_file = experiments_dir / selected_experiment / "results" / "predictions.csv"
-
-if not predictions_file.exists():
-    st.error(f"Predictions file not found at {predictions_file}")
+# Discover available n_episodes files
+results_dir = experiments_dir / selected_experiment / "results"
+if not results_dir.exists():
+    st.error(f"Results directory not found at {results_dir}")
     st.info("Run: `python -m src.evaluate --config <your_config>.yaml`")
     st.stop()
+
+prediction_files = sorted(results_dir.glob("predictions_*.parquet"))
+if not prediction_files:
+    st.error(f"No prediction files found in {results_dir}")
+    st.info("Run: `python -m src.evaluate --config <your_config>.yaml`")
+    st.stop()
+
+# Extract n_episodes from filenames
+available_n_episodes = []
+for f in prediction_files:
+    try:
+        n_ep = int(f.stem.replace("predictions_", ""))
+        available_n_episodes.append(n_ep)
+    except ValueError:
+        continue
+
+if not available_n_episodes:
+    st.error("No valid prediction files found")
+    st.stop()
+
+selected_n_episodes_file = st.sidebar.selectbox(
+    "Select Training Data Size",
+    sorted(available_n_episodes),
+    help="Choose which training data size to analyze"
+)
+
+predictions_file = results_dir / f"predictions_{selected_n_episodes_file}.parquet"
 
 try:
     (df, stats), (df_s1, stats_s1), (df_s2, stats_s2), (df_merged, stats_merged) = load_predictions(str(predictions_file))
@@ -132,26 +158,18 @@ except Exception as e:
     st.stop()
 
 st.sidebar.markdown(f"**Data Summary**")
+st.sidebar.markdown(f"- Training episodes: {selected_n_episodes_file}")
 st.sidebar.markdown(f"- States: {df['state_idx'].nunique()}")
 st.sidebar.markdown(f"- Methods: {df['method'].nunique()}")
 st.sidebar.markdown(f"- Batches: {df['batch_idx'].nunique()}")
-st.sidebar.markdown(f"- Episode subsets: {df['n_episodes'].nunique()}")
 
-all_methods = sorted([m for m in df['method'].unique() if m != 'monte_carlo'])
-all_n_episodes = sorted(df['n_episodes'].unique())
+all_methods = sorted([m for m in df['method'].unique() if m != 'monte_carlo' and pd.notna(m)])
 
 selected_methods = st.sidebar.multiselect(
     "Select Methods",
     all_methods,
     default=all_methods,
     help="Choose which methods to compare"
-)
-
-selected_n_episodes = st.sidebar.multiselect(
-    "Select Episode Counts",
-    all_n_episodes,
-    default=all_n_episodes,
-    help="Choose which training data sizes to compare"
 )
 
 st.sidebar.markdown("---")
@@ -179,10 +197,6 @@ if not selected_methods:
     st.warning("Please select at least one method")
     st.stop()
 
-if not selected_n_episodes:
-    st.warning("Please select at least one episode count")
-    st.stop()
-
 # Select the appropriate dataset based on user choice
 dataset_map = {
     'full': (df, stats),
@@ -206,10 +220,7 @@ except Exception as e:
     st.code(traceback.format_exc())
     st.stop()
 
-filtered_data = metric_data[
-    (metric_data['method'].isin(selected_methods)) &
-    (metric_data['n_episodes'].isin(selected_n_episodes))
-]
+filtered_data = metric_data[metric_data['method'].isin(selected_methods)]
 
 if len(filtered_data) == 0:
     st.warning("No data available for selected filters")
@@ -224,9 +235,8 @@ with col1:
             filtered_data,
             x='metric_value',
             color='method',
-            facet_col='n_episodes',
             nbins=40,
-            title=f"{metric_info['name']} Distribution by Method and Episode Count",
+            title=f"{metric_info['name']} Distribution by Method (Training: {selected_n_episodes_file} episodes)",
             labels={'metric_value': metric_info['name'], 'count': 'Frequency'},
             opacity=0.7,
             barmode='overlay'
@@ -247,7 +257,7 @@ with col1:
 with col2:
     st.markdown("**Statistics**")
     try:
-        summary = filtered_data.groupby(['method', 'n_episodes'])['metric_value'].agg(
+        summary = filtered_data.groupby('method')['metric_value'].agg(
             mean='mean',
             std='std'
         ).reset_index()
@@ -257,27 +267,22 @@ with col2:
         st.code(traceback.format_exc())
 
 st.header("2. Performance Comparison")
-st.markdown("Average prediction variance across methods and episode counts")
+st.markdown(f"Average prediction variance across methods (Training: {selected_n_episodes_file} episodes)")
 
 try:
-    perf_stats = current_stats[
-        (current_stats['method'].isin(selected_methods + ['monte_carlo'])) &
-        (current_stats['n_episodes'].isin(selected_n_episodes))
-    ]
+    perf_stats = current_stats[current_stats['method'].isin(selected_methods + ['monte_carlo'])]
 
-    perf_summary = perf_stats.groupby(['method', 'n_episodes'])['variance'].mean().reset_index()
-    perf_summary.columns = ['method', 'n_episodes', 'avg_variance']
+    perf_summary = perf_stats.groupby('method')['variance'].mean().reset_index()
+    perf_summary.columns = ['method', 'avg_variance']
 
-    st.markdown(f"_Rendering bar chart with {len(perf_summary)} method-episode combinations..._")
+    st.markdown(f"_Rendering bar chart with {len(perf_summary)} methods..._")
 
     fig2 = px.bar(
         perf_summary,
         x='method',
         y='avg_variance',
-        color='n_episodes',
-        barmode='group',
-        title="Average Variance by Method and Training Data Size",
-        labels={'avg_variance': 'Average Variance', 'method': 'Method', 'n_episodes': 'Training Episodes'},
+        title=f"Average Variance by Method (Training: {selected_n_episodes_file} episodes)",
+        labels={'avg_variance': 'Average Variance', 'method': 'Method'},
         text_auto='.3f'
     )
     fig2.update_layout(height=500)
@@ -287,11 +292,35 @@ except Exception as e:
     st.error(f"Error rendering performance comparison: {str(e)}")
     st.code(traceback.format_exc())
 
-st.header(f"3. {metric_info['name']} vs Training Data Size")
-st.markdown(f"How does the {metric_info['name'].lower()} change with more training data?")
+st.header(f"3. Comparison Across Training Data Sizes")
+st.markdown(f"Compare performance across different training data sizes")
 
 try:
-    metric_summary = filtered_data.groupby(['method', 'n_episodes'])['metric_value'].agg(
+    # Load all available n_episodes files for comparison
+    comparison_data = []
+    for n_ep in available_n_episodes:
+        temp_file = results_dir / f"predictions_{n_ep}.parquet"
+        temp_df = pd.read_parquet(temp_file)
+        temp_df['n_episodes'] = n_ep
+        comparison_data.append(temp_df)
+
+    combined_df = pd.concat(comparison_data, ignore_index=True)
+
+    # Compute stats for combined data
+    combined_stats = combined_df.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
+        mean='mean',
+        variance='var',
+        std='std',
+        count='count'
+    ).reset_index()
+
+    # Compute metric across all n_episodes
+    combined_metric = compute_metric(combined_df, combined_stats, metric_key)
+
+    # Filter by selected methods
+    combined_filtered = combined_metric[combined_metric['method'].isin(selected_methods)]
+
+    metric_summary = combined_filtered.groupby(['method', 'n_episodes'])['metric_value'].agg(
         mean='mean',
         std='std'
     ).reset_index()

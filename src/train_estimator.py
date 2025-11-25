@@ -175,9 +175,9 @@ def train_estimator(
     method_config: BaseEstimatorConfig,
     batch_path: Path,
     output_dir: Path,
+    batch_idx: int,
     overwrite: bool,
     use_wandb: bool = True,
-    save_model: bool = True,
     sweep_mode: bool = False
 ):
     """Train multiple estimator initializations and keep the best one.
@@ -186,41 +186,32 @@ def train_estimator(
         config: Experiment configuration
         method_config: Method-specific configuration
         batch_path: Path to batch data file
-        output_dir: Directory to save outputs
+        output_dir: Base method directory (estimators/<method>)
+        batch_idx: Batch index
         overwrite: If True, overwrite existing models; if False, skip training if model exists
         use_wandb: Whether to use wandb logging
-        save_model: Whether to save the trained model (default: True)
         sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
-
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
     method_name = method_config.name
-    batch_name = batch_path.stem
-
-    # Extract batch_idx from batch_name (e.g., "batch_0" -> 0)
-    batch_idx = int(batch_name.split('_')[1]) if '_' in batch_name else 0
-
-    if not save_model or episode_subsets is None or len(episode_subsets) == 0:
-        episode_subsets = [None]
 
     for n_episodes in episode_subsets:
         print(f"Loading batch data from {batch_path}")
         batch = load_batch_data(batch_path, max_episodes=n_episodes)
 
-        if n_episodes is None:
-            n_episodes = len(batch['observations'])
+        # Directory structure: estimators/<method>/<n_episodes>/batch_<idx>
+        episodes_dir = output_dir / str(n_episodes) / f"batch_{batch_idx}"
+        episodes_dir.mkdir(parents=True, exist_ok=True)
 
-        model_suffix = f"episodes_{n_episodes}"
-        checkpoint_path = output_dir / f"estimator_{model_suffix}.pt"
+        checkpoint_path = episodes_dir / "estimator.pt"
 
-        if save_model and checkpoint_path.exists() and not overwrite:
+        if checkpoint_path.exists() and not overwrite:
             print(f"Model exists at {checkpoint_path} and overwrite=False. Skipping.")
             continue
 
         print(f"\n{'='*80}")
-        print(f"Training {method_name} on {batch_name} with {n_episodes} episodes")
+        print(f"Training {method_name} on batch_{batch_idx} with {n_episodes} episodes")
         print(f"{'='*80}")
 
         print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
@@ -229,11 +220,9 @@ def train_estimator(
         obs_dim = batch['observations'].shape[-1]
         n_inits = method_config.n_initializations
 
-        print(f"\nTraining {n_inits} initialization(s) of {method_name} on {batch_name}")
+        print(f"\nTraining {n_inits} initialization(s) of {method_name}")
         print(f"Episodes used: {n_episodes}")
         print(f"Max epochs: {config.value_estimators.training.max_epochs}")
-        if not save_model:
-            print("Model saving disabled (tuning mode)")
         print()
 
         best_mc_loss = float('inf')
@@ -255,25 +244,22 @@ def train_estimator(
                 best_estimator = estimator
                 print(f"  -> New best!")
 
-        if save_model:
-            print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
-            best_estimator.save(checkpoint_path)
+        print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
+        best_estimator.save(checkpoint_path)
 
-            stats = {
-                'method': method_name,
-                'batch_name': batch_name,
-                'n_episodes': n_episodes,
-                'n_initializations': n_inits,
-                'best_mc_loss': best_mc_loss,
-            }
+        stats = {
+            'method': method_name,
+            'batch_idx': batch_idx,
+            'n_episodes': n_episodes,
+            'n_initializations': n_inits,
+            'best_mc_loss': best_mc_loss,
+        }
 
-            stats_path = output_dir / f"training_stats_{model_suffix}.json"
-            with open(stats_path, 'w') as f:
-                json.dump(stats, f, indent=2)
-        else:
-            print(f"\nSkipping model save (best MC loss: {best_mc_loss:.6f})")
+        stats_path = episodes_dir / "training_stats.json"
+        with open(stats_path, 'w') as f:
+            json.dump(stats, f, indent=2)
 
-        print(f"Training complete for {method_name} {batch_name} with {n_episodes} episodes.\n")
+        print(f"Training complete for {method_name} batch_{batch_idx} with {n_episodes} episodes.\n")
 
 
 def main():
@@ -318,11 +304,11 @@ def main():
         available_methods = [mc.name for mc in config.value_estimators.method_configs]
         parser.error(f"Method '{args.method}' not found in config. Available methods: {available_methods}")
 
-    # Set paths based on batch index
+    # Set paths
     batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{batch_idx}.npz"
-    output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method / f"batch_{batch_idx}"
+    output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method
 
-    # Save config to output directory
+    # Save config to method directory
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 
@@ -332,6 +318,7 @@ def main():
         method_config=method_config,
         batch_path=batch_path,
         output_dir=output_dir,
+        batch_idx=batch_idx,
         overwrite=args.overwrite,
         use_wandb=not args.no_wandb
     )
