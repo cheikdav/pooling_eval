@@ -1,4 +1,4 @@
-"""Minimal Streamlit dashboard for visualizing value estimator predictions."""
+"""Streamlit dashboard for visualizing value estimator predictions using metadata."""
 
 from pathlib import Path
 import streamlit as st
@@ -9,6 +9,18 @@ import numpy as np
 import traceback
 
 from metrics import METRICS, compute_metric
+from metadata_discovery import (
+    discover_estimators,
+    get_selection_hierarchy,
+    filter_estimators
+)
+
+
+PRIMARY_SELECTION_KEYS = [
+    ('policy_environment', 'Environment'),
+    ('policy_display_name', 'Policy'),
+    ('n_episodes', 'Training Data Amount'),
+]
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
@@ -97,54 +109,113 @@ if not experiments_dir.exists():
     st.error(f"Experiments directory not found at {experiments_dir.absolute()}")
     st.stop()
 
-experiment_dirs = sorted([d for d in experiments_dir.iterdir() if d.is_dir()])
-experiment_names = [d.name for d in experiment_dirs]
-
-if not experiment_names:
-    st.error("No experiments found in experiments directory")
+try:
+    all_estimators = discover_estimators(experiments_dir)
+    if not all_estimators:
+        st.error("No estimators with metadata found in experiments directory")
+        st.info("Make sure you've run experiments with the updated code that generates metadata files.")
+        st.stop()
+except Exception as e:
+    st.error(f"Failed to discover estimators: {str(e)}")
+    st.code(traceback.format_exc())
     st.stop()
 
-st.sidebar.header("Filters")
+st.sidebar.header("Hierarchical Selection")
 
-selected_experiment = st.sidebar.selectbox(
-    "Select Experiment",
-    experiment_names,
-    help="Choose which experiment to analyze"
-)
+current_filters = {}
+primary_keys = [key for key, _ in PRIMARY_SELECTION_KEYS]
 
-# Discover available n_episodes files
-results_dir = experiments_dir / selected_experiment / "results"
+for step_num, (key, display_name) in enumerate(PRIMARY_SELECTION_KEYS, 1):
+    hierarchy = get_selection_hierarchy(all_estimators, primary_keys, current_filters)
+
+    if hierarchy['next_key'] != key:
+        continue
+
+    available_values = hierarchy['available_values']
+
+    if not available_values:
+        st.error(f"No values available for {display_name}")
+        st.stop()
+
+    format_func = None
+    if key == 'n_episodes':
+        format_func = lambda x: f"{x} episodes"
+
+    selected_value = st.sidebar.selectbox(
+        f"{step_num}. {display_name}",
+        available_values,
+        format_func=format_func,
+        help=f"Choose {display_name.lower()}"
+    )
+
+    current_filters[key] = selected_value
+
+    if key == 'policy_display_name':
+        filtered_estimators = hierarchy['current_estimators']
+        filtered_estimators = filter_estimators(filtered_estimators, key, selected_value)
+
+        if filtered_estimators:
+            sample_est = filtered_estimators[0]
+            with st.sidebar.expander("Policy Details"):
+                st.markdown(f"**Algorithm:** {sample_est.get('policy_algorithm')}")
+                st.markdown(f"**Seed:** {sample_est.get('policy_seed')}")
+                if sample_est.get('policy_average_reward') is not None:
+                    st.markdown(f"**Avg Reward:** {sample_est.get('policy_average_reward'):.2f}")
+                st.markdown(f"**Learning Rate:** {sample_est.get('policy_learning_rate')}")
+                st.markdown(f"**Gamma:** {sample_est.get('policy_gamma')}")
+                st.markdown(f"**Total Timesteps:** {sample_est.get('policy_total_timesteps')}")
+
+final_hierarchy = get_selection_hierarchy(all_estimators, primary_keys, current_filters)
+selected_estimators = final_hierarchy['current_estimators']
+
+if not selected_estimators:
+    st.error("No estimators found for the selected criteria")
+    st.stop()
+
+additional_params = final_hierarchy['additional_params']
+
+if additional_params:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Additional Parameters**")
+
+    additional_params = [p for p in additional_params if p['key'] not in ['method', 'batch_idx']]
+
+    if additional_params:
+        for param_info in additional_params:
+            param_key = param_info['key']
+            param_values = param_info['values']
+
+            display_key = param_key.replace('_', ' ').title()
+
+            selected_param_value = st.sidebar.selectbox(
+                display_key,
+                param_values,
+                help=f"Choose {display_key.lower()}"
+            )
+
+            selected_estimators = filter_estimators(selected_estimators, param_key, selected_param_value)
+
+if not selected_estimators:
+    st.error("No estimators remaining after filtering")
+    st.stop()
+
+sample_estimator = selected_estimators[0]
+experiment_id = sample_estimator['experiment_id']
+selected_env = sample_estimator['policy_environment']
+selected_policy_display = sample_estimator['policy_display_name']
+selected_n_episodes = sample_estimator['n_episodes']
+
+results_dir = experiments_dir / experiment_id / "results"
 if not results_dir.exists():
     st.error(f"Results directory not found at {results_dir}")
     st.info("Run: `python -m src.evaluate --config <your_config>.yaml`")
     st.stop()
 
-prediction_files = sorted(results_dir.glob("predictions_*.parquet"))
-if not prediction_files:
-    st.error(f"No prediction files found in {results_dir}")
+predictions_file = results_dir / f"predictions_{selected_n_episodes}.parquet"
+if not predictions_file.exists():
+    st.error(f"Predictions file not found: {predictions_file}")
     st.info("Run: `python -m src.evaluate --config <your_config>.yaml`")
     st.stop()
-
-# Extract n_episodes from filenames
-available_n_episodes = []
-for f in prediction_files:
-    try:
-        n_ep = int(f.stem.replace("predictions_", ""))
-        available_n_episodes.append(n_ep)
-    except ValueError:
-        continue
-
-if not available_n_episodes:
-    st.error("No valid prediction files found")
-    st.stop()
-
-selected_n_episodes_file = st.sidebar.selectbox(
-    "Select Training Data Size",
-    sorted(available_n_episodes),
-    help="Choose which training data size to analyze"
-)
-
-predictions_file = results_dir / f"predictions_{selected_n_episodes_file}.parquet"
 
 try:
     (df, stats), (df_s1, stats_s1), (df_s2, stats_s2), (df_merged, stats_merged) = load_predictions(str(predictions_file))
@@ -157,11 +228,8 @@ except Exception as e:
     st.code(traceback.format_exc())
     st.stop()
 
-st.sidebar.markdown(f"**Data Summary**")
-st.sidebar.markdown(f"- Training episodes: {selected_n_episodes_file}")
-st.sidebar.markdown(f"- States: {df['state_idx'].nunique()}")
-st.sidebar.markdown(f"- Methods: {df['method'].nunique()}")
-st.sidebar.markdown(f"- Batches: {df['batch_idx'].nunique()}")
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Visualization Options**")
 
 all_methods = sorted([m for m in df['method'].unique() if m != 'monte_carlo' and pd.notna(m)])
 
@@ -171,8 +239,6 @@ selected_methods = st.sidebar.multiselect(
     default=all_methods,
     help="Choose which methods to compare"
 )
-
-st.sidebar.markdown("---")
 
 dataset_key = st.sidebar.selectbox(
     "Select Dataset",
@@ -197,7 +263,6 @@ if not selected_methods:
     st.warning("Please select at least one method")
     st.stop()
 
-# Select the appropriate dataset based on user choice
 dataset_map = {
     'full': (df, stats),
     's1': (df_s1, stats_s1),
@@ -207,6 +272,19 @@ dataset_map = {
 current_df, current_stats = dataset_map[dataset_key]
 
 metric_info = METRICS[metric_key]
+
+st.markdown("### Current Selection")
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    st.metric("Environment", selected_env)
+with col2:
+    st.metric("Policy", selected_policy_display)
+with col3:
+    st.metric("Training Episodes", selected_n_episodes)
+with col4:
+    st.metric("Methods", len(selected_methods))
+
+st.markdown("---")
 
 st.header("1. Metric Analysis")
 st.markdown(f"**{metric_info['name']}**: {metric_info['description']}")
@@ -236,7 +314,7 @@ with col1:
             x='metric_value',
             color='method',
             nbins=40,
-            title=f"{metric_info['name']} Distribution by Method (Training: {selected_n_episodes_file} episodes)",
+            title=f"{metric_info['name']} Distribution by Method ({selected_policy_display}, {selected_n_episodes} episodes)",
             labels={'metric_value': metric_info['name'], 'count': 'Frequency'},
             opacity=0.7,
             barmode='overlay'
@@ -267,7 +345,7 @@ with col2:
         st.code(traceback.format_exc())
 
 st.header("2. Performance Comparison")
-st.markdown(f"Average prediction variance across methods (Training: {selected_n_episodes_file} episodes)")
+st.markdown(f"Average prediction variance across methods ({selected_policy_display}, {selected_n_episodes} episodes)")
 
 try:
     perf_stats = current_stats[current_stats['method'].isin(selected_methods + ['monte_carlo'])]
@@ -281,7 +359,7 @@ try:
         perf_summary,
         x='method',
         y='avg_variance',
-        title=f"Average Variance by Method (Training: {selected_n_episodes_file} episodes)",
+        title=f"Average Variance by Method ({selected_policy_display}, {selected_n_episodes} episodes)",
         labels={'avg_variance': 'Average Variance', 'method': 'Method'},
         text_auto='.3f'
     )
@@ -293,67 +371,73 @@ except Exception as e:
     st.code(traceback.format_exc())
 
 st.header(f"3. Comparison Across Training Data Sizes")
-st.markdown(f"Compare performance across different training data sizes")
+st.markdown(f"Compare performance across different training data sizes for {selected_policy_display}")
 
 try:
-    # Load all available n_episodes files for comparison
-    comparison_data = []
-    for n_ep in available_n_episodes:
-        temp_file = results_dir / f"predictions_{n_ep}.parquet"
-        temp_df = pd.read_parquet(temp_file)
-        temp_df['n_episodes'] = n_ep
-        comparison_data.append(temp_df)
+    policy_estimators = filter_estimators(all_estimators, 'policy_display_name', selected_policy_display)
+    available_n_eps = sorted(set(est['n_episodes'] for est in policy_estimators))
 
-    combined_df = pd.concat(comparison_data, ignore_index=True)
+    if len(available_n_eps) > 1:
+        comparison_data = []
+        for n_ep in available_n_eps:
+            temp_file = results_dir / f"predictions_{n_ep}.parquet"
+            if temp_file.exists():
+                temp_df = pd.read_parquet(temp_file)
+                temp_df['n_episodes'] = n_ep
+                comparison_data.append(temp_df)
 
-    # Compute stats for combined data
-    combined_stats = combined_df.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
-    ).reset_index()
+        if comparison_data:
+            combined_df = pd.concat(comparison_data, ignore_index=True)
 
-    # Compute metric across all n_episodes
-    combined_metric = compute_metric(combined_df, combined_stats, metric_key)
+            combined_stats = combined_df.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
+                mean='mean',
+                variance='var',
+                std='std',
+                count='count'
+            ).reset_index()
 
-    # Filter by selected methods
-    combined_filtered = combined_metric[combined_metric['method'].isin(selected_methods)]
+            combined_metric = compute_metric(combined_df, combined_stats, metric_key)
 
-    metric_summary = combined_filtered.groupby(['method', 'n_episodes'])['metric_value'].agg(
-        mean='mean',
-        std='std'
-    ).reset_index()
+            combined_filtered = combined_metric[combined_metric['method'].isin(selected_methods)]
 
-    st.markdown(f"_Rendering line plot with {len(metric_summary)} data points across {len(selected_methods)} methods..._")
+            metric_summary = combined_filtered.groupby(['method', 'n_episodes'])['metric_value'].agg(
+                mean='mean',
+                std='std'
+            ).reset_index()
 
-    fig3 = go.Figure()
+            st.markdown(f"_Rendering line plot with {len(metric_summary)} data points across {len(selected_methods)} methods..._")
 
-    for method in selected_methods:
-        method_data = metric_summary[metric_summary['method'] == method]
-        fig3.add_trace(go.Scatter(
-            x=method_data['n_episodes'],
-            y=method_data['mean'],
-            error_y=dict(type='data', array=method_data['std']),
-            mode='lines+markers',
-            name=method,
-            marker=dict(size=10)
-        ))
+            fig3 = go.Figure()
 
-    if metric_info['reference_line'] is not None:
-        fig3.add_hline(y=metric_info['reference_line'], line_dash="dash", line_color="red",
-                      annotation_text=metric_info['reference_label'])
-    fig3.update_layout(
-        title=f"Mean {metric_info['name']} vs Training Episodes",
-        xaxis_title="Training Episodes",
-        yaxis_title=f"Mean {metric_info['name']}",
-        height=500
-    )
+            for method in selected_methods:
+                method_data = metric_summary[metric_summary['method'] == method]
+                fig3.add_trace(go.Scatter(
+                    x=method_data['n_episodes'],
+                    y=method_data['mean'],
+                    error_y=dict(type='data', array=method_data['std']),
+                    mode='lines+markers',
+                    name=method,
+                    marker=dict(size=10)
+                ))
 
-    st.plotly_chart(fig3, use_container_width=True)
+            if metric_info['reference_line'] is not None:
+                fig3.add_hline(y=metric_info['reference_line'], line_dash="dash", line_color="red",
+                              annotation_text=metric_info['reference_label'])
+            fig3.update_layout(
+                title=f"Mean {metric_info['name']} vs Training Episodes ({selected_policy_display})",
+                xaxis_title="Training Episodes",
+                yaxis_title=f"Mean {metric_info['name']}",
+                height=500
+            )
+
+            st.plotly_chart(fig3, use_container_width=True)
+        else:
+            st.info("No comparison data available")
+    else:
+        st.info("Only one training data size available for this policy")
 except Exception as e:
     st.error(f"Error rendering metric vs training data plot: {str(e)}")
     st.code(traceback.format_exc())
 
 st.markdown("---")
-st.caption(f"Experiment: {selected_experiment} | Data: {predictions_file}")
+st.caption(f"Experiment: {experiment_id} | Policy: {selected_policy_display} | Training: {selected_n_episodes} episodes")

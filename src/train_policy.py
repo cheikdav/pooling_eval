@@ -1,6 +1,7 @@
 """Train a policy using Stable Baselines 3."""
 
 import argparse
+import json
 import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
@@ -19,7 +20,6 @@ ALGORITHM_MAP = {
     "TD3": TD3,
 }
 
-# Mapping from string names to PyTorch activation functions
 ACTIVATION_FN_MAP = {
     "relu": torch.nn.ReLU,
     "tanh": torch.nn.Tanh,
@@ -39,19 +39,15 @@ class WandbCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         """Called after each step."""
-        # Log every N calls (since this is called for each env step)
         if self.n_calls % self.log_frequency == 0:
             log_dict = {'timesteps': self.num_timesteps}
 
-            # Collect info from the training rollout
             if len(self.model.ep_info_buffer) > 0:
-                # Get episode statistics (returns, lengths)
                 ep_info = self.model.ep_info_buffer
                 if len(ep_info) > 0:
                     ep_returns = [info['r'] for info in ep_info]
                     ep_lengths = [info['l'] for info in ep_info]
 
-                    # Check if environment is wrapped with VecNormalize
                     from stable_baselines3.common.vec_env import VecNormalize
                     env = self.training_env
                     is_normalized = isinstance(env, VecNormalize)
@@ -63,7 +59,6 @@ class WandbCallback(BaseCallback):
                         'episode/max_reward': np.max(ep_returns),
                     })
 
-                    # If using VecNormalize, also log unnormalized rewards
                     if is_normalized and env.norm_reward:
                         unnormalized_returns = [env.unnormalize_reward(r) for r in ep_returns]
                         log_dict.update({
@@ -72,12 +67,8 @@ class WandbCallback(BaseCallback):
                             'episode/max_reward_unnormalized': np.max(unnormalized_returns),
                         })
 
-            # Log algorithm-specific metrics
             if hasattr(self.model, 'logger') and self.model.logger is not None:
-                # Try to get the loss values from the logger
                 try:
-                    # Get all metrics from SB3's logger and use them directly
-                    # (they already have proper prefixes like 'train/')
                     metric_keys = ['train/value_loss', 'train/explained_variance',
                                    'train/policy_loss', 'train/entropy_loss', 'train/loss',
                                    'train/policy_gradient_loss', 'train/clip_fraction',
@@ -85,14 +76,12 @@ class WandbCallback(BaseCallback):
 
                     for key in metric_keys:
                         if key in self.model.logger.name_to_value:
-                            # Use the key as-is (already has train/ prefix)
                             log_dict[key] = self.model.logger.name_to_value[key]
 
                 except Exception:
                     pass
 
-            # Only log if we have data
-            if len(log_dict) > 1:  # More than just timesteps
+            if len(log_dict) > 1:
                 wandb.log(log_dict)
 
         return True
@@ -108,7 +97,6 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize Weights & Biases
     if use_wandb and config.logging.use_wandb:
         wandb.init(
             project=config.logging.wandb_project,
@@ -128,21 +116,17 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
             tags=['policy_training', config.policy.algorithm, config.environment.name],
         )
 
-    # Set random seeds
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
 
-    # Create environment
     env, _ = create_vec_env(config, n_envs=config.policy.n_envs, use_monitor=True)
 
-    # Get algorithm class
     if config.policy.algorithm not in ALGORITHM_MAP:
         raise ValueError(f"Unknown algorithm: {config.policy.algorithm}. "
                         f"Available: {list(ALGORITHM_MAP.keys())}")
 
     AlgorithmClass = ALGORITHM_MAP[config.policy.algorithm]
 
-    # Prepare algorithm kwargs
     algo_kwargs = {
         "policy": "MlpPolicy",
         "env": env,
@@ -152,7 +136,6 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
         "seed": config.seed,
     }
 
-    # Add algorithm-specific parameters
     if config.policy.algorithm in ["PPO", "A2C"]:
         algo_kwargs.update({
             "n_steps": config.policy.n_steps,
@@ -161,11 +144,9 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
             "gae_lambda": config.policy.gae_lambda,
         })
 
-    # Add policy_kwargs (network architecture, etc.)
     if config.policy.policy_kwargs:
         policy_kwargs = config.policy.policy_kwargs.copy()
 
-        # Convert activation_fn string to actual PyTorch class
         if "activation_fn" in policy_kwargs:
             activation_fn = policy_kwargs["activation_fn"]
             if isinstance(activation_fn, str):
@@ -180,26 +161,20 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
 
         algo_kwargs["policy_kwargs"] = policy_kwargs
 
-    # Add any additional kwargs from config
     if config.policy.kwargs:
         algo_kwargs.update(config.policy.kwargs)
 
-    # Create model
     model = AlgorithmClass(**algo_kwargs)
 
-    # Setup checkpoint callback
     checkpoint_callback = CheckpointCallback(
         save_freq=max(config.policy.total_timesteps // 10, 1000),
         save_path=str(output_dir / "checkpoints"),
         name_prefix="policy"
     )
 
-    # Setup callbacks list
     callbacks = [checkpoint_callback]
 
-    # Add wandb callback if enabled
     if use_wandb and config.logging.use_wandb:
-        # Log every N steps (adjust based on total timesteps for reasonable frequency)
         wandb_log_freq = max(100, config.policy.total_timesteps // 1000)
         wandb_callback = WandbCallback(log_frequency=wandb_log_freq)
         callbacks.append(wandb_callback)
@@ -212,19 +187,13 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     else:
         print("W&B tracking disabled\n")
 
-    # Calculate log_interval based on expected iterations
-    # For on-policy algorithms (PPO/A2C), iterations = timesteps / n_steps
-    # We want to log ~10-15 times during training
     if config.policy.algorithm in ["PPO", "A2C"]:
         total_iterations = config.policy.total_timesteps / config.policy.n_steps
         log_interval = max(1, int(total_iterations / 15))
     else:
-        # For off-policy algorithms, estimate based on timesteps
-        # Assume ~1000 timesteps per iteration (conservative estimate)
         total_iterations = config.policy.total_timesteps / 1000
         log_interval = max(1, int(total_iterations / 15))
 
-    # Train the model
     model.learn(
         total_timesteps=config.policy.total_timesteps,
         callback=callbacks,
@@ -232,18 +201,51 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
         log_interval=log_interval
     )
 
-    # Save final model
     model_path = output_dir / "policy_final.zip"
     model.save(model_path)
     print(f"\nPolicy saved to {model_path}")
 
-    # Save VecNormalize statistics if used
     if config.policy.use_vec_normalize:
         vec_normalize_path = output_dir / "vec_normalize.pkl"
         env.save(vec_normalize_path)
         print(f"VecNormalize stats saved to {vec_normalize_path}")
 
-    # Save the critic network architecture info for later use
+    avg_reward = None
+    if len(model.ep_info_buffer) > 0:
+        ep_returns = [info['r'] for info in model.ep_info_buffer]
+        avg_reward = float(np.mean(ep_returns))
+
+    policy_metadata = {
+        'algorithm': config.policy.algorithm,
+        'environment': config.environment.name,
+        'total_timesteps': config.policy.total_timesteps,
+        'learning_rate': config.policy.learning_rate,
+        'gamma': config.policy.gamma,
+        'seed': config.seed,
+        'average_reward': avg_reward,
+        'n_envs': config.policy.n_envs,
+        'use_vec_normalize': config.policy.use_vec_normalize,
+    }
+
+    if config.policy.algorithm in ["PPO", "A2C"]:
+        policy_metadata.update({
+            'n_steps': config.policy.n_steps,
+            'batch_size': config.policy.batch_size,
+            'n_epochs': config.policy.n_epochs,
+            'gae_lambda': config.policy.gae_lambda,
+        })
+
+    if config.policy.policy_kwargs:
+        policy_metadata['policy_kwargs'] = {
+            k: (v if not isinstance(v, type) else v.__name__)
+            for k, v in config.policy.policy_kwargs.items()
+        }
+
+    metadata_path = output_dir / "policy_metadata.json"
+    with open(metadata_path, 'w') as f:
+        json.dump(policy_metadata, f, indent=2)
+    print(f"Policy metadata saved to {metadata_path}")
+
     try:
         if hasattr(model.policy, 'value_net'):
             critic_info = {
@@ -267,7 +269,6 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
 
     env.close()
 
-    # Finish wandb run
     if use_wandb and config.logging.use_wandb:
         wandb.finish()
 

@@ -25,10 +25,7 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
     Returns:
         Estimator instance
     """
-    # Look up estimator class from registry based on config type
     EstimatorClass = ESTIMATOR_REGISTRY[type(method_config)]
-
-    # Use the from_config classmethod to create the estimator
     return EstimatorClass.from_config(method_config, network_config, obs_dim, gamma)
 
 
@@ -84,8 +81,6 @@ def check_convergence(loss_history: list, patience: int, threshold: float) -> bo
     return relative_improvement < threshold
 
 
-
-
 def train_single_initialization(
     estimator,
     batch: dict,
@@ -113,7 +108,6 @@ def train_single_initialization(
     Returns:
         Final MC loss value
     """
-    # Initialize wandb for this initialization (unless in sweep mode)
     if use_wandb and config.logging.use_wandb and not sweep_mode:
         run_name = f"{method_name}_batch{batch_idx}_{num_episodes}ep_init{init_idx}"
         wandb.init(
@@ -143,7 +137,6 @@ def train_single_initialization(
         if metrics['mc_loss'] < best_mc_loss:
             best_mc_loss = metrics['mc_loss']
 
-        # Logging
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             wandb.log({
                 'epoch': epoch,
@@ -156,7 +149,6 @@ def train_single_initialization(
                 'train/best_mc_loss': best_mc_loss,
             })
 
-        # Check convergence based on MC loss
         if check_convergence(mc_loss_history, training_config.convergence_patience,
                            training_config.convergence_threshold):
             break
@@ -195,6 +187,12 @@ def train_estimator(
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
     method_name = method_config.name
+
+    data_metadata = {}
+    data_metadata_path = batch_path.parent / "data_metadata.json"
+    if data_metadata_path.exists():
+        with open(data_metadata_path, 'r') as f:
+            data_metadata = json.load(f)
 
     for n_episodes in episode_subsets:
         print(f"Loading batch data from {batch_path}")
@@ -258,6 +256,31 @@ def train_estimator(
         stats_path = episodes_dir / "training_stats.json"
         with open(stats_path, 'w') as f:
             json.dump(stats, f, indent=2)
+
+        # Save estimator metadata
+        estimator_metadata = {
+            'method': method_name,
+            'batch_idx': batch_idx,
+            'n_episodes': n_episodes,
+            'batch_path': str(batch_path),
+            'gamma': gamma,
+            'n_initializations': n_inits,
+            'best_mc_loss': best_mc_loss,
+            'seed': config.seed,
+            'max_epochs': config.value_estimators.training.max_epochs,
+            'convergence_threshold': config.value_estimators.training.convergence_threshold,
+            'convergence_patience': config.value_estimators.training.convergence_patience,
+            'estimator_config': method_config.__dict__,
+            'network_config': {
+                'hidden_sizes': config.network.hidden_sizes,
+                'activation': config.network.activation,
+            },
+            'data_metadata': data_metadata,
+        }
+
+        metadata_path = episodes_dir / "estimator_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(estimator_metadata, f, indent=2)
 
         print(f"Training complete for {method_name} batch_{batch_idx} with {n_episodes} episodes.\n")
 

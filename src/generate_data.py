@@ -1,6 +1,7 @@
 """Generate episode data using a trained policy."""
 
 import argparse
+import json
 import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
@@ -196,14 +197,18 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load trained policy
+    policy_metadata = {}
+    policy_metadata_path = policy_path.parent / "policy_metadata.json"
+    if policy_metadata_path.exists():
+        with open(policy_metadata_path, 'r') as f:
+            policy_metadata = json.load(f)
+
     if config.policy.algorithm not in ALGORITHM_MAP:
         raise ValueError(f"Unknown algorithm: {config.policy.algorithm}")
 
     AlgorithmClass = ALGORITHM_MAP[config.policy.algorithm]
     model = AlgorithmClass.load(policy_path)
 
-    # Create environment
     vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
     env, use_vec_normalize = create_vec_env(
         config,
@@ -268,6 +273,25 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
         config_seed=config.seed,
         total_episodes=total_episodes,
     )
+
+    # Save data generation metadata
+    data_metadata = {
+        'policy_path': str(policy_path),
+        'deterministic_policy': config.data_generation.deterministic_policy,
+        'total_episodes': int(total_episodes),
+        'n_batches': config.data_generation.n_batches,
+        'episodes_per_batch': config.data_generation.episodes_per_batch,
+        'tuning_episodes': config.data_generation.tuning_episodes,
+        'ground_truth_episodes': config.data_generation.ground_truth_episodes,
+        'eval_episodes': config.data_generation.eval_episodes,
+        'seed': config.seed,
+        'policy_metadata': policy_metadata,
+    }
+
+    metadata_path = output_dir / "data_metadata.json"
+    with open(metadata_path, 'w') as f:
+        json.dump(data_metadata, f, indent=2)
+    print(f"Data generation metadata saved to {metadata_path}")
 
     print(f"Data generation complete! Files saved to {output_dir}")
     print(f"Total episodes: {total_episodes}")
