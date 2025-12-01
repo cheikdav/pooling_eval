@@ -7,6 +7,7 @@ import pandas as pd
 import torch
 from pathlib import Path
 from typing import Dict
+from datetime import datetime
 
 from src.config import ExperimentConfig
 from src.estimators.base import ValueNetwork
@@ -54,18 +55,20 @@ def load_estimator_model(model_path: Path, device: str = "cpu"):
 
 
 def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
-                        eval_batch: Dict, output_dir: Path, device: str = "cpu"):
-    """Generate predictions from all trained models and save per n_episodes.
+                        eval_batch: Dict, results_dir: Path, device: str = "cpu"):
+    """Generate predictions from all trained models with metadata.
 
     Args:
         experiment_dir: Experiment directory
         config: Experiment configuration
         eval_batch: Evaluation batch data
-        output_dir: Directory to save prediction files
+        results_dir: Root results directory
         device: Device to use for inference
 
     Saves:
-        One parquet file per n_episodes value: predictions_<n_episodes>.parquet
+        For each method/n_episodes combination:
+        - results/<method>/<n_episodes>/predictions.parquet
+        - results/<method>/<n_episodes>/predictions_metadata.json
     """
     eval_obs_list = eval_batch['observations']
     eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
@@ -80,30 +83,36 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
 
     eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
 
-    # Organize predictions by n_episodes
-    predictions_by_n_episodes = {}
+    prediction_files_created = []
 
     for method_config in config.value_estimators.method_configs:
         method_name = method_config.name
         print(f"\n  Processing method: {method_name}")
 
-        # Get available n_episodes directories
-        method_dir = experiment_dir / "estimators" / method_name
-        if not method_dir.exists():
-            print(f"    Method directory not found: {method_dir}, skipping")
+        # Get available n_episodes directories from estimators
+        estimators_method_dir = experiment_dir / "estimators" / method_name
+        if not estimators_method_dir.exists():
+            print(f"    Method directory not found: {estimators_method_dir}, skipping")
             continue
 
-        n_episodes_dirs = [d for d in method_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+        n_episodes_dirs = [d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()]
 
         for n_ep_dir in n_episodes_dirs:
             n_episodes = int(n_ep_dir.name)
-
-            if n_episodes not in predictions_by_n_episodes:
-                predictions_by_n_episodes[n_episodes] = []
-
             print(f"    Processing n_episodes={n_episodes}")
 
-            # Iterate through batch directories
+            # Load metadata from first batch to get policy/data info
+            first_batch_metadata_path = n_ep_dir / "batch_0" / "estimator_metadata.json"
+            if not first_batch_metadata_path.exists():
+                print(f"      No metadata found at {first_batch_metadata_path}, skipping")
+                continue
+
+            with open(first_batch_metadata_path, 'r') as f:
+                sample_metadata = json.load(f)
+
+            # Collect predictions for this method/n_episodes combination
+            predictions = []
+
             for batch_idx in range(config.data_generation.n_batches):
                 batch_dir = n_ep_dir / f"batch_{batch_idx}"
 
@@ -111,7 +120,6 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
                     continue
 
                 model_path = batch_dir / "estimator.pt"
-
                 if not model_path.exists():
                     continue
 
@@ -121,28 +129,70 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
                     values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
 
                 for state_idx in range(n_states):
-                    predictions_by_n_episodes[n_episodes].append({
+                    predictions.append({
                         'state_idx': state_idx,
                         'episode_idx': episode_indices[state_idx],
-                        'method': method_name,
                         'batch_idx': batch_idx,
                         'predicted_value': values[state_idx]
                     })
 
-            print(f"      Batch {batch_idx}: Generated {n_states} predictions")
+            if not predictions:
+                print(f"      No predictions generated, skipping")
+                continue
 
-    # Save one file per n_episodes
-    print("\nSaving prediction files:")
-    for n_episodes, predictions in predictions_by_n_episodes.items():
-        df = pd.DataFrame(predictions)
-        output_file = output_dir / f"predictions_{n_episodes}.parquet"
-        df.to_parquet(output_file, index=False)
-        print(f"  {output_file.name}: {len(df)} predictions")
-        print(f"    ({len(df['state_idx'].unique())} states × "
-              f"{len(df['method'].unique())} methods × "
-              f"{len(df['batch_idx'].unique())} batches)")
+            # Create output directory mirroring estimators structure
+            output_method_dir = results_dir / method_name / str(n_episodes)
+            output_method_dir.mkdir(parents=True, exist_ok=True)
 
-    return predictions_by_n_episodes.keys()
+            # Save predictions
+            df = pd.DataFrame(predictions)
+            predictions_file = output_method_dir / "predictions.parquet"
+            df.to_parquet(predictions_file, index=False)
+
+            # Create metadata from estimator metadata
+            data_metadata = sample_metadata.get('data_metadata', {})
+            policy_metadata = data_metadata.get('policy_metadata', {})
+
+            predictions_metadata = {
+                'experiment_id': config.experiment_id,
+                'method': method_name,
+                'n_episodes': n_episodes,
+                'n_batches': len(df['batch_idx'].unique()),
+                'n_states': len(df['state_idx'].unique()),
+                'n_eval_episodes': len(eval_obs_list),
+                'created_at': datetime.now().isoformat(),
+
+                # Policy metadata
+                'policy_environment': policy_metadata.get('environment'),
+                'policy_algorithm': policy_metadata.get('algorithm'),
+                'policy_seed': policy_metadata.get('seed'),
+                'policy_learning_rate': policy_metadata.get('learning_rate'),
+                'policy_gamma': policy_metadata.get('gamma'),
+                'policy_total_timesteps': policy_metadata.get('total_timesteps'),
+                'policy_average_reward': policy_metadata.get('average_reward'),
+
+                # Estimator config
+                'estimator_config': sample_metadata.get('estimator_config', {}),
+                'network_config': sample_metadata.get('network_config', {}),
+
+                # Data metadata
+                'data_seed': data_metadata.get('seed'),
+            }
+
+            # Add policy_display_name (will be computed during discovery)
+            predictions_metadata['policy_display_name'] = None
+
+            metadata_file = output_method_dir / "predictions_metadata.json"
+            with open(metadata_file, 'w') as f:
+                json.dump(predictions_metadata, f, indent=2)
+
+            print(f"      Saved: {predictions_file.relative_to(results_dir)}")
+            print(f"        ({len(df)} predictions = {len(df['state_idx'].unique())} states × "
+                  f"{len(df['batch_idx'].unique())} batches)")
+
+            prediction_files_created.append(str(predictions_file.relative_to(results_dir)))
+
+    return prediction_files_created
 
 
 def main():
@@ -155,8 +205,8 @@ def main():
 
     experiment_dir = Path("experiments") / config.experiment_id
     data_dir = experiment_dir / "data"
-    output_dir = experiment_dir / "results"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    results_dir = experiment_dir / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nEvaluating experiment: {config.experiment_id}")
     print(f"Experiment directory: {experiment_dir}")
@@ -170,17 +220,19 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    n_episodes_list = generate_predictions(experiment_dir, config, eval_batch, output_dir, device)
+    prediction_files = generate_predictions(experiment_dir, config, eval_batch, results_dir, device)
 
-    results = {
-        'n_episodes_files': sorted(list(n_episodes_list)),
-        'n_files': len(n_episodes_list)
+    summary = {
+        'experiment_id': config.experiment_id,
+        'prediction_files': prediction_files,
+        'n_files': len(prediction_files),
+        'created_at': datetime.now().isoformat()
     }
 
-    results_file = output_dir / "evaluation_results.json"
-    with open(results_file, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nResults saved to {results_file}")
+    summary_file = results_dir / "evaluation_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+    print(f"\nSummary saved to {summary_file}")
 
     print("\nEvaluation complete!")
 

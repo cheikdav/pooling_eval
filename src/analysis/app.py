@@ -10,7 +10,7 @@ import traceback
 
 from metrics import METRICS, compute_metric
 from metadata_discovery import (
-    discover_estimators,
+    discover_predictions,
     get_selection_hierarchy,
     filter_estimators
 )
@@ -110,13 +110,13 @@ if not experiments_dir.exists():
     st.stop()
 
 try:
-    all_estimators = discover_estimators(experiments_dir)
-    if not all_estimators:
-        st.error("No estimators with metadata found in experiments directory")
-        st.info("Make sure you've run experiments with the updated code that generates metadata files.")
+    all_predictions = discover_predictions(experiments_dir)
+    if not all_predictions:
+        st.error("No predictions with metadata found in experiments directory")
+        st.info("Run: `python -m src.evaluate --config <your_config>.yaml` to generate predictions.")
         st.stop()
 except Exception as e:
-    st.error(f"Failed to discover estimators: {str(e)}")
+    st.error(f"Failed to discover predictions: {str(e)}")
     st.code(traceback.format_exc())
     st.stop()
 
@@ -126,7 +126,7 @@ current_filters = {}
 primary_keys = [key for key, _ in PRIMARY_SELECTION_KEYS]
 
 for step_num, (key, display_name) in enumerate(PRIMARY_SELECTION_KEYS, 1):
-    hierarchy = get_selection_hierarchy(all_estimators, primary_keys, current_filters)
+    hierarchy = get_selection_hierarchy(all_predictions, primary_keys, current_filters)
 
     if hierarchy['next_key'] != key:
         continue
@@ -151,25 +151,25 @@ for step_num, (key, display_name) in enumerate(PRIMARY_SELECTION_KEYS, 1):
     current_filters[key] = selected_value
 
     if key == 'policy_display_name':
-        filtered_estimators = hierarchy['current_estimators']
-        filtered_estimators = filter_estimators(filtered_estimators, key, selected_value)
+        filtered_predictions = hierarchy['current_estimators']
+        filtered_predictions = filter_estimators(filtered_predictions, key, selected_value)
 
-        if filtered_estimators:
-            sample_est = filtered_estimators[0]
+        if filtered_predictions:
+            sample_pred = filtered_predictions[0]
             with st.sidebar.expander("Policy Details"):
-                st.markdown(f"**Algorithm:** {sample_est.get('policy_algorithm')}")
-                st.markdown(f"**Seed:** {sample_est.get('policy_seed')}")
-                if sample_est.get('policy_average_reward') is not None:
-                    st.markdown(f"**Avg Reward:** {sample_est.get('policy_average_reward'):.2f}")
-                st.markdown(f"**Learning Rate:** {sample_est.get('policy_learning_rate')}")
-                st.markdown(f"**Gamma:** {sample_est.get('policy_gamma')}")
-                st.markdown(f"**Total Timesteps:** {sample_est.get('policy_total_timesteps')}")
+                st.markdown(f"**Algorithm:** {sample_pred.get('policy_algorithm')}")
+                st.markdown(f"**Seed:** {sample_pred.get('policy_seed')}")
+                if sample_pred.get('policy_average_reward') is not None:
+                    st.markdown(f"**Avg Reward:** {sample_pred.get('policy_average_reward'):.2f}")
+                st.markdown(f"**Learning Rate:** {sample_pred.get('policy_learning_rate')}")
+                st.markdown(f"**Gamma:** {sample_pred.get('policy_gamma')}")
+                st.markdown(f"**Total Timesteps:** {sample_pred.get('policy_total_timesteps')}")
 
-final_hierarchy = get_selection_hierarchy(all_estimators, primary_keys, current_filters)
-selected_estimators = final_hierarchy['current_estimators']
+final_hierarchy = get_selection_hierarchy(all_predictions, primary_keys, current_filters)
+selected_predictions = final_hierarchy['current_estimators']
 
-if not selected_estimators:
-    st.error("No estimators found for the selected criteria")
+if not selected_predictions:
+    st.error("No predictions found for the selected criteria")
     st.stop()
 
 additional_params = final_hierarchy['additional_params']
@@ -178,7 +178,7 @@ if additional_params:
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Additional Parameters**")
 
-    additional_params = [p for p in additional_params if p['key'] not in ['method', 'batch_idx']]
+    additional_params = [p for p in additional_params if p['key'] not in ['method', 'n_batches', 'n_states', 'n_eval_episodes', 'created_at']]
 
     if additional_params:
         for param_info in additional_params:
@@ -193,52 +193,115 @@ if additional_params:
                 help=f"Choose {display_key.lower()}"
             )
 
-            selected_estimators = filter_estimators(selected_estimators, param_key, selected_param_value)
+            selected_predictions = filter_estimators(selected_predictions, param_key, selected_param_value)
 
-if not selected_estimators:
-    st.error("No estimators remaining after filtering")
+if not selected_predictions:
+    st.error("No predictions remaining after filtering")
     st.stop()
 
-sample_estimator = selected_estimators[0]
-experiment_id = sample_estimator['experiment_id']
-selected_env = sample_estimator['policy_environment']
-selected_policy_display = sample_estimator['policy_display_name']
-selected_n_episodes = sample_estimator['n_episodes']
+sample_prediction = selected_predictions[0]
+experiment_id = sample_prediction['experiment_id']
+selected_env = sample_prediction['policy_environment']
+selected_policy_display = sample_prediction['policy_display_name']
+selected_n_episodes = sample_prediction['n_episodes']
 
-results_dir = experiments_dir / experiment_id / "results"
-if not results_dir.exists():
-    st.error(f"Results directory not found at {results_dir}")
-    st.info("Run: `python -m src.evaluate --config <your_config>.yaml`")
+# Get all available methods for this environment/policy/n_episodes combination
+available_methods = sorted(set(pred['method'] for pred in selected_predictions))
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("**Method Selection**")
+
+selected_methods = st.sidebar.multiselect(
+    "Select Methods to Compare",
+    available_methods,
+    default=available_methods,
+    help="Choose which methods to compare"
+)
+
+if not selected_methods:
+    st.warning("Please select at least one method")
     st.stop()
 
-predictions_file = results_dir / f"predictions_{selected_n_episodes}.parquet"
-if not predictions_file.exists():
-    st.error(f"Predictions file not found: {predictions_file}")
-    st.info("Run: `python -m src.evaluate --config <your_config>.yaml`")
-    st.stop()
-
+# Load and combine predictions from selected methods
 try:
-    (df, stats), (df_s1, stats_s1), (df_s2, stats_s2), (df_merged, stats_merged) = load_predictions(str(predictions_file))
-    st.sidebar.success(f"✓ Loaded {len(df)} predictions from {df['batch_idx'].nunique()} batches")
+    all_dfs = []
+    all_dfs_s1 = []
+    all_dfs_s2 = []
+    all_dfs_merged = []
+
+    for method in selected_methods:
+        # Find prediction file for this method
+        method_prediction = next((p for p in selected_predictions if p['method'] == method), None)
+        if not method_prediction:
+            st.warning(f"No predictions found for method: {method}")
+            continue
+
+        predictions_file = Path(method_prediction['predictions_path'])
+        if not predictions_file.exists():
+            st.warning(f"Predictions file not found: {predictions_file}")
+            continue
+
+        (df_method, stats_method), (df_s1_method, stats_s1_method), (df_s2_method, stats_s2_method), (df_merged_method, stats_merged_method) = load_predictions(str(predictions_file))
+
+        # Add method column
+        df_method['method'] = method
+        df_s1_method['method'] = method
+        df_s2_method['method'] = method
+        df_merged_method['method'] = method
+
+        all_dfs.append(df_method)
+        all_dfs_s1.append(df_s1_method)
+        all_dfs_s2.append(df_s2_method)
+        all_dfs_merged.append(df_merged_method)
+
+    # Combine all methods
+    df = pd.concat(all_dfs, ignore_index=True)
+    df_s1 = pd.concat(all_dfs_s1, ignore_index=True)
+    df_s2 = pd.concat(all_dfs_s2, ignore_index=True)
+    df_merged = pd.concat(all_dfs_merged, ignore_index=True)
+
+    # Recompute stats across all methods
+    stats = df.groupby(['state_idx', 'method'])['predicted_value'].agg(
+        mean='mean',
+        variance='var',
+        std='std',
+        count='count'
+    ).reset_index()
+
+    stats_s1 = df_s1.groupby(['state_idx', 'method'])['predicted_value'].agg(
+        mean='mean',
+        variance='var',
+        std='std',
+        count='count'
+    ).reset_index()
+
+    stats_s2 = df_s2.groupby(['state_idx', 'method'])['predicted_value'].agg(
+        mean='mean',
+        variance='var',
+        std='std',
+        count='count'
+    ).reset_index()
+
+    stats_merged = df_merged.groupby(['state_idx', 'method'])['predicted_value'].agg(
+        mean='mean',
+        variance='var',
+        std='std',
+        count='count'
+    ).reset_index()
+
+    st.sidebar.success(f"✓ Loaded predictions for {len(selected_methods)} method(s)")
+    st.sidebar.markdown(f"- Total predictions: {len(df)}")
+    st.sidebar.markdown(f"- Batches per method: {df.groupby('method')['batch_idx'].nunique().iloc[0]}")
     st.sidebar.markdown(f"- S1 episodes: {df_s1['episode_idx'].nunique()} ({len(df_s1)} states)")
     st.sidebar.markdown(f"- S2 episodes: {df_s2['episode_idx'].nunique()} ({len(df_s2)} states)")
-    st.sidebar.markdown(f"- Paired states: {len(df_merged)}")
+
 except Exception as e:
-    st.error(f"Failed to load predictions file: {str(e)}")
+    st.error(f"Failed to load predictions: {str(e)}")
     st.code(traceback.format_exc())
     st.stop()
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Visualization Options**")
-
-all_methods = sorted([m for m in df['method'].unique() if m != 'monte_carlo' and pd.notna(m)])
-
-selected_methods = st.sidebar.multiselect(
-    "Select Methods",
-    all_methods,
-    default=all_methods,
-    help="Choose which methods to compare"
-)
 
 dataset_key = st.sidebar.selectbox(
     "Select Dataset",
@@ -374,17 +437,22 @@ st.header(f"3. Comparison Across Training Data Sizes")
 st.markdown(f"Compare performance across different training data sizes for {selected_policy_display}")
 
 try:
-    policy_estimators = filter_estimators(all_estimators, 'policy_display_name', selected_policy_display)
-    available_n_eps = sorted(set(est['n_episodes'] for est in policy_estimators))
+    policy_predictions = filter_estimators(all_predictions, 'policy_display_name', selected_policy_display)
+    available_n_eps = sorted(set(pred['n_episodes'] for pred in policy_predictions))
 
     if len(available_n_eps) > 1:
         comparison_data = []
         for n_ep in available_n_eps:
-            temp_file = results_dir / f"predictions_{n_ep}.parquet"
-            if temp_file.exists():
-                temp_df = pd.read_parquet(temp_file)
-                temp_df['n_episodes'] = n_ep
-                comparison_data.append(temp_df)
+            # Load predictions for each n_episodes and selected methods
+            for method in selected_methods:
+                method_pred = next((p for p in policy_predictions if p['n_episodes'] == n_ep and p['method'] == method), None)
+                if method_pred:
+                    temp_file = Path(method_pred['predictions_path'])
+                    if temp_file.exists():
+                        temp_df = pd.read_parquet(temp_file)
+                        temp_df['n_episodes'] = n_ep
+                        temp_df['method'] = method
+                        comparison_data.append(temp_df)
 
         if comparison_data:
             combined_df = pd.concat(comparison_data, ignore_index=True)

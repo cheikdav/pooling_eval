@@ -5,8 +5,69 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 
+def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Dict[str, Any]]:
+    """Discover all predictions with metadata in the experiments/results directories.
+
+    Returns:
+        List of dictionaries containing all metadata for each predictions file.
+        Each dictionary includes flattened policy/estimator/network metadata,
+        plus a generated 'policy_display_name' field.
+    """
+    predictions_list = []
+
+    for exp_dir in experiments_dir.iterdir():
+        if not exp_dir.is_dir():
+            continue
+
+        results_dir = exp_dir / "results"
+        if not results_dir.exists():
+            continue
+
+        for metadata_path in results_dir.rglob("predictions_metadata.json"):
+            try:
+                with open(metadata_path, 'r') as f:
+                    pred_metadata = json.load(f)
+
+                predictions_file = metadata_path.parent / "predictions.parquet"
+                if not predictions_file.exists():
+                    print(f"Warning: Metadata found but predictions file missing: {predictions_file}")
+                    continue
+
+                prediction_record = {
+                    'predictions_path': str(predictions_file),
+                    'metadata_path': str(metadata_path),
+                }
+
+                # Flatten metadata structure
+                for k, v in pred_metadata.items():
+                    if k in ['estimator_config', 'network_config']:
+                        continue
+                    prediction_record[k] = v
+
+                # Flatten estimator_config
+                if 'estimator_config' in pred_metadata:
+                    for k, v in pred_metadata['estimator_config'].items():
+                        prediction_record[f'estimator_{k}'] = v
+
+                # Flatten network_config
+                if 'network_config' in pred_metadata:
+                    for k, v in pred_metadata['network_config'].items():
+                        prediction_record[f'network_{k}'] = v
+
+                predictions_list.append(prediction_record)
+
+            except Exception as e:
+                print(f"Warning: Could not load predictions metadata from {metadata_path}: {e}")
+
+    _add_policy_display_names(predictions_list)
+
+    return predictions_list
+
+
 def discover_estimators(experiments_dir: Path = Path("experiments")) -> List[Dict[str, Any]]:
     """Discover all estimators with metadata in the experiments directory.
+
+    DEPRECATED: Use discover_predictions() instead for analysis workflows.
 
     Returns:
         List of dictionaries containing all metadata for each estimator.
