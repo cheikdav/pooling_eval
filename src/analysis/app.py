@@ -30,28 +30,36 @@ st.markdown("Compare variance and performance of different value estimation meth
 
 
 @st.cache_data
-def load_predictions(predictions_path, s1_proportion=0.9, seed=42):
-    """Load predictions parquet file and compute statistics.
+def load_and_compute_stats(predictions_path, method, n_episodes, s1_proportion=0.9, seed=42):
+    """Load predictions file and compute statistics, discarding raw data.
 
-    Returns 4 (df, stats) pairs:
-    1. Full dataset
-    2. S1 partition (90% of episodes)
-    3. S2 partition (10% of episodes)
-    4. Differences (S1 states with paired S2 values)
+    Args:
+        predictions_path: Path to predictions parquet file
+        method: Method name to add to stats
+        n_episodes: Number of training episodes to add to stats
+        s1_proportion: Proportion of episodes for S1 partition
+        seed: Random seed for episode partitioning
+
+    Returns:
+        Tuple of 4 stats DataFrames: (stats_full, stats_s1, stats_s2, stats_merged)
+        Each stats DataFrame has columns: state_idx, method, n_episodes, mean, variance, std, count
     """
     df = pd.read_parquet(predictions_path)
 
-    def compute_stats(dataframe):
+    def compute_stats(dataframe, method_name, n_eps):
         """Helper to compute stats from a predictions dataframe."""
-        return dataframe.groupby(['state_idx', 'method'])['predicted_value'].agg(
+        stats = dataframe.groupby(['state_idx'])['predicted_value'].agg(
             mean='mean',
             variance='var',
             std='std',
             count='count'
         ).reset_index()
+        stats['method'] = method_name
+        stats['n_episodes'] = n_eps
+        return stats
 
     # Full dataset stats
-    stats = compute_stats(df)
+    stats = compute_stats(df, method, n_episodes)
 
     # Partition episodes into S1 and S2
     np.random.seed(seed)
@@ -66,8 +74,8 @@ def load_predictions(predictions_path, s1_proportion=0.9, seed=42):
     df_s1 = df[df['episode_idx'].isin(s1_episodes)].copy()
     df_s2 = df[df['episode_idx'].isin(s2_episodes)].copy()
 
-    stats_s1 = compute_stats(df_s1)
-    stats_s2 = compute_stats(df_s2)
+    stats_s1 = compute_stats(df_s1, method, n_episodes)
+    stats_s2 = compute_stats(df_s2, method, n_episodes)
 
     # Create stable random pairings (state_idx in S1 -> state_idx in S2)
     unique_s1_states = df_s1['state_idx'].unique()
@@ -82,26 +90,31 @@ def load_predictions(predictions_path, s1_proportion=0.9, seed=42):
     # Add paired state column to S1 dataframe
     df_s1['paired_state_idx'] = df_s1['state_idx'].map(pairings)
 
-    # Prepare S2 for merge
-    df_s2_renamed = df_s2.rename(columns={
-        'state_idx': 'paired_state_idx',
-        'predicted_value': 'paired_value'
-    })[['paired_state_idx', 'method', 'batch_idx', 'n_episodes', 'paired_value']]
+    # Prepare S2 for merge - only keep necessary columns
+    df_s2_for_merge = df_s2[['state_idx', 'batch_idx', 'predicted_value']].copy()
+    df_s2_for_merge.columns = ['paired_state_idx', 'batch_idx', 'paired_value']
 
     # Merge to get paired values
     df_merged = df_s1.merge(
-        df_s2_renamed,
-        on=['paired_state_idx', 'method', 'batch_idx', 'n_episodes'],
+        df_s2_for_merge,
+        on=['paired_state_idx', 'batch_idx'],
         how='inner'
     )
 
-    # Compute differences and rename to match other dataframes
+    # Compute differences
     df_merged['value_difference'] = df_merged['predicted_value'] - df_merged['paired_value']
-    df_merged['predicted_value'] = df_merged['value_difference']
 
-    stats_merged = compute_stats(df_merged)
+    # Compute stats on differences
+    stats_merged = df_merged.groupby(['state_idx'])['value_difference'].agg(
+        mean='mean',
+        variance='var',
+        std='std',
+        count='count'
+    ).reset_index()
+    stats_merged['method'] = method
+    stats_merged['n_episodes'] = n_episodes
 
-    return (df, stats), (df_s1, stats_s1), (df_s2, stats_s2), (df_merged, stats_merged)
+    return stats, stats_s1, stats_s2, stats_merged
 
 
 experiments_dir = Path("experiments")
@@ -205,95 +218,76 @@ selected_env = sample_prediction['policy_environment']
 selected_policy_display = sample_prediction['policy_display_name']
 selected_n_episodes = sample_prediction['n_episodes']
 
-# Get all available methods for this environment/policy/n_episodes combination
-available_methods = sorted(set(pred['method'] for pred in selected_predictions))
+# Get all available methods and n_episodes for this environment/policy
+all_methods_for_policy = sorted(set(pred['method'] for pred in selected_predictions))
+all_n_episodes_for_policy = sorted(set(pred['n_episodes'] for pred in selected_predictions))
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Method Selection**")
 
 selected_methods = st.sidebar.multiselect(
     "Select Methods to Compare",
-    available_methods,
-    default=available_methods,
-    help="Choose which methods to compare"
+    all_methods_for_policy,
+    default=all_methods_for_policy,
+    help="Choose which methods to compare against Monte Carlo"
 )
 
 if not selected_methods:
     st.warning("Please select at least one method")
     st.stop()
 
-# Load and combine predictions from selected methods
+# Load stats for ALL n_episodes and selected methods (memory efficient - stats only)
 try:
-    all_dfs = []
-    all_dfs_s1 = []
-    all_dfs_s2 = []
-    all_dfs_merged = []
+    all_stats = []
+    all_stats_s1 = []
+    all_stats_s2 = []
+    all_stats_merged = []
 
-    for method in selected_methods:
-        # Find prediction file for this method
-        method_prediction = next((p for p in selected_predictions if p['method'] == method), None)
-        if not method_prediction:
-            st.warning(f"No predictions found for method: {method}")
-            continue
+    total_files = len(all_n_episodes_for_policy) * (len(selected_methods) + 1)  # +1 for monte_carlo
+    progress_bar = st.sidebar.progress(0, text="Loading predictions...")
 
-        predictions_file = Path(method_prediction['predictions_path'])
-        if not predictions_file.exists():
-            st.warning(f"Predictions file not found: {predictions_file}")
-            continue
+    file_count = 0
+    for n_ep in all_n_episodes_for_policy:
+        # Always load Monte Carlo for comparison
+        methods_to_load = ['monte_carlo'] + selected_methods if 'monte_carlo' not in selected_methods else selected_methods
 
-        (df_method, stats_method), (df_s1_method, stats_s1_method), (df_s2_method, stats_s2_method), (df_merged_method, stats_merged_method) = load_predictions(str(predictions_file))
+        for method in methods_to_load:
+            method_prediction = next((p for p in selected_predictions
+                                     if p['method'] == method and p['n_episodes'] == n_ep), None)
+            if not method_prediction:
+                continue
 
-        # Add method column
-        df_method['method'] = method
-        df_s1_method['method'] = method
-        df_s2_method['method'] = method
-        df_merged_method['method'] = method
+            predictions_file = Path(method_prediction['predictions_path'])
+            if not predictions_file.exists():
+                continue
 
-        all_dfs.append(df_method)
-        all_dfs_s1.append(df_s1_method)
-        all_dfs_s2.append(df_s2_method)
-        all_dfs_merged.append(df_merged_method)
+            # Load and compute stats, discard raw dataframe immediately
+            stats, stats_s1, stats_s2, stats_merged = load_and_compute_stats(
+                str(predictions_file),
+                method,
+                n_ep
+            )
 
-    # Combine all methods
-    df = pd.concat(all_dfs, ignore_index=True)
-    df_s1 = pd.concat(all_dfs_s1, ignore_index=True)
-    df_s2 = pd.concat(all_dfs_s2, ignore_index=True)
-    df_merged = pd.concat(all_dfs_merged, ignore_index=True)
+            all_stats.append(stats)
+            all_stats_s1.append(stats_s1)
+            all_stats_s2.append(stats_s2)
+            all_stats_merged.append(stats_merged)
 
-    # Recompute stats across all methods
-    stats = df.groupby(['state_idx', 'method'])['predicted_value'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
-    ).reset_index()
+            file_count += 1
+            progress_bar.progress(file_count / total_files, text=f"Loading {method} ({n_ep} episodes)...")
 
-    stats_s1 = df_s1.groupby(['state_idx', 'method'])['predicted_value'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
-    ).reset_index()
+    progress_bar.empty()
 
-    stats_s2 = df_s2.groupby(['state_idx', 'method'])['predicted_value'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
-    ).reset_index()
+    # Combine all stats
+    stats_full = pd.concat(all_stats, ignore_index=True)
+    stats_s1_full = pd.concat(all_stats_s1, ignore_index=True)
+    stats_s2_full = pd.concat(all_stats_s2, ignore_index=True)
+    stats_merged_full = pd.concat(all_stats_merged, ignore_index=True)
 
-    stats_merged = df_merged.groupby(['state_idx', 'method'])['predicted_value'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
-    ).reset_index()
-
-    st.sidebar.success(f"✓ Loaded predictions for {len(selected_methods)} method(s)")
-    st.sidebar.markdown(f"- Total predictions: {len(df)}")
-    st.sidebar.markdown(f"- Batches per method: {df.groupby('method')['batch_idx'].nunique().iloc[0]}")
-    st.sidebar.markdown(f"- S1 episodes: {df_s1['episode_idx'].nunique()} ({len(df_s1)} states)")
-    st.sidebar.markdown(f"- S2 episodes: {df_s2['episode_idx'].nunique()} ({len(df_s2)} states)")
+    st.sidebar.success(f"✓ Loaded stats for {len(selected_methods)} method(s) across {len(all_n_episodes_for_policy)} n_episodes")
+    st.sidebar.markdown(f"- Total stats records: {len(stats_full)}")
+    st.sidebar.markdown(f"- Methods: {', '.join(stats_full['method'].unique())}")
+    st.sidebar.markdown(f"- n_episodes: {', '.join(map(str, sorted(stats_full['n_episodes'].unique())))}")
 
 except Exception as e:
     st.error(f"Failed to load predictions: {str(e)}")
@@ -315,197 +309,155 @@ dataset_key = st.sidebar.selectbox(
     help="Choose which dataset partition to analyze"
 )
 
-metric_key = st.sidebar.selectbox(
-    "Select Metric",
-    options=list(METRICS.keys()),
-    format_func=lambda k: METRICS[k]['name'],
-    help="Choose which metric to visualize"
-)
-
-if not selected_methods:
-    st.warning("Please select at least one method")
-    st.stop()
-
+# Map dataset selection to appropriate stats
 dataset_map = {
-    'full': (df, stats),
-    's1': (df_s1, stats_s1),
-    's2': (df_s2, stats_s2),
-    'differences': (df_merged, stats_merged)
+    'full': stats_full,
+    's1': stats_s1_full,
+    's2': stats_s2_full,
+    'differences': stats_merged_full
 }
-current_df, current_stats = dataset_map[dataset_key]
-
-metric_info = METRICS[metric_key]
+current_stats = dataset_map[dataset_key]
 
 st.markdown("### Current Selection")
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Environment", selected_env)
 with col2:
     st.metric("Policy", selected_policy_display)
 with col3:
-    st.metric("Training Episodes", selected_n_episodes)
-with col4:
     st.metric("Methods", len(selected_methods))
 
 st.markdown("---")
 
-st.header("1. Metric Analysis")
-st.markdown(f"**{metric_info['name']}**: {metric_info['description']}")
-st.markdown(f"_Using dataset: **{dataset_key}** ({len(current_df)} predictions)_")
+# Section 1: Analysis for specific n_episodes
+st.header("📊 Analysis for Specific Training Size")
+
+selected_n_ep_single = st.selectbox(
+    "Select training data size to analyze:",
+    all_n_episodes_for_policy,
+    format_func=lambda x: f"{x} episodes"
+)
+
+# Filter stats for selected n_episodes
+stats_single_n_ep = current_stats[current_stats['n_episodes'] == selected_n_ep_single]
+
+metric_key_single = st.selectbox(
+    "Select metric:",
+    list(METRICS.keys()),
+    format_func=lambda k: METRICS[k]['name'],
+    key="metric_single"
+)
+
+metric_info_single = METRICS[metric_key_single]
+
+st.markdown(f"**{metric_info_single['name']}**: {metric_info_single['description']}")
+st.markdown(f"_Using dataset: **{dataset_key}** | Training: **{selected_n_ep_single} episodes**_")
 
 try:
-    metric_data = compute_metric(current_df, current_stats, metric_key)
-    st.success(f"✓ Computed {metric_info['name']} for {len(metric_data)} state-method-episode combinations")
-except Exception as e:
-    st.error(f"Failed to compute metric: {str(e)}")
-    st.code(traceback.format_exc())
-    st.stop()
+    metric_data_single = compute_metric(stats_single_n_ep, metric_key_single)
+    filtered_single = metric_data_single[metric_data_single['method'].isin(selected_methods)]
 
-filtered_data = metric_data[metric_data['method'].isin(selected_methods)]
+    if len(filtered_single) == 0:
+        st.warning("No data available for selected filters")
+    else:
+        col1, col2 = st.columns([3, 1])
 
-if len(filtered_data) == 0:
-    st.warning("No data available for selected filters")
-    st.stop()
+        with col1:
+            fig1 = px.histogram(
+                filtered_single,
+                x='metric_value',
+                color='method',
+                nbins=40,
+                title=f"{metric_info_single['name']} Distribution ({selected_n_ep_single} episodes)",
+                labels={'metric_value': metric_info_single['name'], 'count': 'Frequency'},
+                opacity=0.7,
+                barmode='overlay'
+            )
 
-col1, col2 = st.columns([3, 1])
+            if metric_info_single['reference_line'] is not None:
+                fig1.add_vline(x=metric_info_single['reference_line'], line_dash="dash", line_color="red",
+                             annotation_text=metric_info_single['reference_label'])
+            fig1.update_layout(height=500)
+            st.plotly_chart(fig1, use_container_width=True)
 
-with col1:
-    try:
-        st.markdown(f"_Rendering histogram with {len(filtered_data)} data points..._")
-        fig = px.histogram(
-            filtered_data,
-            x='metric_value',
-            color='method',
-            nbins=40,
-            title=f"{metric_info['name']} Distribution by Method ({selected_policy_display}, {selected_n_episodes} episodes)",
-            labels={'metric_value': metric_info['name'], 'count': 'Frequency'},
-            opacity=0.7,
-            barmode='overlay'
-        )
-
-        if metric_info['reference_line'] is not None:
-            fig.add_vline(x=metric_info['reference_line'], line_dash="dash", line_color="red",
-                         annotation_text=metric_info['reference_label'])
-        fig.update_layout(height=500)
-
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.error(f"Error rendering histogram: {str(e)}")
-        st.code(traceback.format_exc())
-        st.write("Debug: First few rows of data being plotted:")
-        st.write(filtered_data.head(10))
-
-with col2:
-    st.markdown("**Statistics**")
-    try:
-        summary = filtered_data.groupby('method')['metric_value'].agg(
-            mean='mean',
-            std='std'
-        ).reset_index()
-        st.dataframe(summary, use_container_width=True, hide_index=True)
-    except Exception as e:
-        st.error(f"Error computing statistics: {str(e)}")
-        st.code(traceback.format_exc())
-
-st.header("2. Performance Comparison")
-st.markdown(f"Average prediction variance across methods ({selected_policy_display}, {selected_n_episodes} episodes)")
-
-try:
-    perf_stats = current_stats[current_stats['method'].isin(selected_methods + ['monte_carlo'])]
-
-    perf_summary = perf_stats.groupby('method')['variance'].mean().reset_index()
-    perf_summary.columns = ['method', 'avg_variance']
-
-    st.markdown(f"_Rendering bar chart with {len(perf_summary)} methods..._")
-
-    fig2 = px.bar(
-        perf_summary,
-        x='method',
-        y='avg_variance',
-        title=f"Average Variance by Method ({selected_policy_display}, {selected_n_episodes} episodes)",
-        labels={'avg_variance': 'Average Variance', 'method': 'Method'},
-        text_auto='.3f'
-    )
-    fig2.update_layout(height=500)
-
-    st.plotly_chart(fig2, use_container_width=True)
-except Exception as e:
-    st.error(f"Error rendering performance comparison: {str(e)}")
-    st.code(traceback.format_exc())
-
-st.header(f"3. Comparison Across Training Data Sizes")
-st.markdown(f"Compare performance across different training data sizes for {selected_policy_display}")
-
-try:
-    policy_predictions = filter_estimators(all_predictions, 'policy_display_name', selected_policy_display)
-    available_n_eps = sorted(set(pred['n_episodes'] for pred in policy_predictions))
-
-    if len(available_n_eps) > 1:
-        comparison_data = []
-        for n_ep in available_n_eps:
-            # Load predictions for each n_episodes and selected methods
-            for method in selected_methods:
-                method_pred = next((p for p in policy_predictions if p['n_episodes'] == n_ep and p['method'] == method), None)
-                if method_pred:
-                    temp_file = Path(method_pred['predictions_path'])
-                    if temp_file.exists():
-                        temp_df = pd.read_parquet(temp_file)
-                        temp_df['n_episodes'] = n_ep
-                        temp_df['method'] = method
-                        comparison_data.append(temp_df)
-
-        if comparison_data:
-            combined_df = pd.concat(comparison_data, ignore_index=True)
-
-            combined_stats = combined_df.groupby(['state_idx', 'method', 'n_episodes'])['predicted_value'].agg(
-                mean='mean',
-                variance='var',
-                std='std',
-                count='count'
-            ).reset_index()
-
-            combined_metric = compute_metric(combined_df, combined_stats, metric_key)
-
-            combined_filtered = combined_metric[combined_metric['method'].isin(selected_methods)]
-
-            metric_summary = combined_filtered.groupby(['method', 'n_episodes'])['metric_value'].agg(
+        with col2:
+            st.markdown("**Statistics**")
+            summary = filtered_single.groupby('method')['metric_value'].agg(
                 mean='mean',
                 std='std'
             ).reset_index()
+            st.dataframe(summary, use_container_width=True, hide_index=True)
 
-            st.markdown(f"_Rendering line plot with {len(metric_summary)} data points across {len(selected_methods)} methods..._")
-
-            fig3 = go.Figure()
-
-            for method in selected_methods:
-                method_data = metric_summary[metric_summary['method'] == method]
-                fig3.add_trace(go.Scatter(
-                    x=method_data['n_episodes'],
-                    y=method_data['mean'],
-                    error_y=dict(type='data', array=method_data['std']),
-                    mode='lines+markers',
-                    name=method,
-                    marker=dict(size=10)
-                ))
-
-            if metric_info['reference_line'] is not None:
-                fig3.add_hline(y=metric_info['reference_line'], line_dash="dash", line_color="red",
-                              annotation_text=metric_info['reference_label'])
-            fig3.update_layout(
-                title=f"Mean {metric_info['name']} vs Training Episodes ({selected_policy_display})",
-                xaxis_title="Training Episodes",
-                yaxis_title=f"Mean {metric_info['name']}",
-                height=500
-            )
-
-            st.plotly_chart(fig3, use_container_width=True)
-        else:
-            st.info("No comparison data available")
-    else:
-        st.info("Only one training data size available for this policy")
 except Exception as e:
-    st.error(f"Error rendering metric vs training data plot: {str(e)}")
+    st.error(f"Failed to compute metric: {str(e)}")
     st.code(traceback.format_exc())
 
 st.markdown("---")
-st.caption(f"Experiment: {experiment_id} | Policy: {selected_policy_display} | Training: {selected_n_episodes} episodes")
+
+# Section 2: Evolution across n_episodes
+st.header("📈 Evolution Across Training Sizes")
+
+metric_key_evolution = st.selectbox(
+    "Select metric for evolution:",
+    list(METRICS.keys()),
+    format_func=lambda k: METRICS[k]['name'],
+    key="metric_evolution"
+)
+
+metric_info_evolution = METRICS[metric_key_evolution]
+
+st.markdown(f"**{metric_info_evolution['name']}** evolution across training data sizes")
+st.markdown(f"_Using dataset: **{dataset_key}**_")
+
+try:
+    # Compute metric for all n_episodes
+    metric_data_all = compute_metric(current_stats, metric_key_evolution)
+    filtered_all = metric_data_all[metric_data_all['method'].isin(selected_methods)]
+
+    # Aggregate by method and n_episodes
+    evolution_summary = filtered_all.groupby(['method', 'n_episodes'])['metric_value'].agg(
+        mean='mean',
+        std='std'
+    ).reset_index()
+
+    fig_evolution = go.Figure()
+
+    for method in selected_methods:
+        method_data = evolution_summary[evolution_summary['method'] == method]
+        fig_evolution.add_trace(go.Scatter(
+            x=method_data['n_episodes'],
+            y=method_data['mean'],
+            error_y=dict(type='data', array=method_data['std']),
+            mode='lines+markers',
+            name=method,
+            marker=dict(size=10)
+        ))
+
+    if metric_info_evolution['reference_line'] is not None:
+        fig_evolution.add_hline(
+            y=metric_info_evolution['reference_line'],
+            line_dash="dash",
+            line_color="red",
+            annotation_text=metric_info_evolution['reference_label']
+        )
+
+    fig_evolution.update_layout(
+        title=f"Mean {metric_info_evolution['name']} vs Training Data Size",
+        xaxis_title="Training Episodes",
+        yaxis_title=f"Mean {metric_info_evolution['name']} (± std)",
+        height=500,
+        showlegend=True
+    )
+
+    st.plotly_chart(fig_evolution, use_container_width=True)
+
+    # Show data table
+    with st.expander("Show evolution data table"):
+        st.dataframe(evolution_summary, use_container_width=True)
+
+except Exception as e:
+    st.error(f"Failed to create evolution plot: {str(e)}")
+    st.code(traceback.format_exc())
+
+st.markdown("---")
+st.caption(f"Experiment: {experiment_id} | Policy: {selected_policy_display}")
