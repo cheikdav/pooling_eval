@@ -96,7 +96,8 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
     predictions = []
 
     for batch_idx in range(config.data_generation.n_batches):
-        batch_dir = n_ep_dir / f"batch_{batch_idx}"
+        batch_name = str(batch_idx)
+        batch_dir = n_ep_dir / f"batch_{batch_name}"
 
         if not batch_dir.exists():
             continue
@@ -115,7 +116,7 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
             predictions.append({
                 'state_idx': state_idx,
                 'episode_idx': episode_indices[state_idx],
-                'batch_idx': batch_idx,
+                'batch_name': batch_name,
                 'predicted_value': values[state_idx]
             })
 
@@ -144,7 +145,7 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
         'experiment_id': config.experiment_id,
         'method': method_name,
         'n_episodes': n_episodes,
-        'n_batches': len(df['batch_idx'].unique()),
+        'n_batches': len(df['batch_name'].unique()),
         'n_states': len(df['state_idx'].unique()),
         'n_eval_episodes': len(eval_obs_list),
         'created_at': datetime.now().isoformat(),
@@ -174,7 +175,7 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
 
     print(f"      Saved: {predictions_file.relative_to(results_dir)}")
     print(f"        ({len(df)} predictions = {len(df['state_idx'].unique())} states × "
-          f"{len(df['batch_idx'].unique())} batches)")
+          f"{len(df['batch_name'].unique())} batches)")
 
     # Free memory
     del df

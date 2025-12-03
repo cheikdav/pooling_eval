@@ -19,6 +19,7 @@ def main():
                        help="Method name (corresponds to 'name' field in method config)")
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--target-update-rate", type=float, default=None)
+    parser.add_argument("--num-episodes", type=int, default=None)
     args = parser.parse_args()
 
     # Initialize wandb (will pick up sweep config automatically)
@@ -48,6 +49,11 @@ def main():
     if target_update_rate is not None and hasattr(method_config, 'target_update_rate'):
         method_config.target_update_rate = target_update_rate
 
+    # Override num_episodes from wandb sweep or CLI
+    num_episodes = wandb.config.get('num_episodes', args.num_episodes)
+    if num_episodes is not None:
+        config.value_estimators.training.episode_subsets = [num_episodes]
+
     # Force single initialization for tuning
     method_config.n_initializations = 1
 
@@ -58,15 +64,15 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 
-    # Call core training (without saving model)
+    # Call core training
     train_estimator(
         config=config,
         method_config=method_config,
         batch_path=batch_path,
         output_dir=output_dir,
+        batch_name="tuning",
         overwrite=True,
         use_wandb=True,
-        save_model=False,
         sweep_mode=True
     )
 

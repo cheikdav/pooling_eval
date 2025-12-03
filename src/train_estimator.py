@@ -86,7 +86,7 @@ def train_single_initialization(
     batch: dict,
     config: ExperimentConfig,
     method_name: str,
-    batch_idx: int,
+    batch_name: str,
     num_episodes: int,
     init_idx: int,
     use_wandb: bool,
@@ -99,7 +99,7 @@ def train_single_initialization(
         batch: Batch data
         config: Experiment configuration
         method_name: Method name (from method_config.name)
-        batch_idx: Batch index
+        batch_name: Batch name (e.g., '0', '1', 'tuning', 'eval')
         num_episodes: Number of episodes in batch
         init_idx: Initialization index
         use_wandb: Whether to use wandb
@@ -109,7 +109,7 @@ def train_single_initialization(
         Final MC loss value
     """
     if use_wandb and config.logging.use_wandb and not sweep_mode:
-        run_name = f"{method_name}_batch{batch_idx}_{num_episodes}ep_init{init_idx}"
+        run_name = f"{method_name}_batch{batch_name}_{num_episodes}ep_init{init_idx}"
         wandb.init(
             project=config.logging.wandb_project,
             entity=config.logging.wandb_entity,
@@ -117,13 +117,13 @@ def train_single_initialization(
             group=config.experiment_id,
             config={
                 'method': method_name,
-                'batch_idx': batch_idx,
+                'batch_name': batch_name,
                 'num_episodes': num_episodes,
                 'init_idx': init_idx,
                 'experiment_id': config.experiment_id,
                 **estimator.get_config(),
             },
-            tags=[method_name, f"batch_{batch_idx}", f"{num_episodes}_episodes", f"init{init_idx}"],
+            tags=[method_name, f"batch_{batch_name}", f"{num_episodes}_episodes", f"init{init_idx}"],
         )
 
     training_config = config.value_estimators.training
@@ -167,7 +167,7 @@ def train_estimator(
     method_config: BaseEstimatorConfig,
     batch_path: Path,
     output_dir: Path,
-    batch_idx: int,
+    batch_name: str,
     overwrite: bool,
     use_wandb: bool = True,
     sweep_mode: bool = False
@@ -179,7 +179,7 @@ def train_estimator(
         method_config: Method-specific configuration
         batch_path: Path to batch data file
         output_dir: Base method directory (estimators/<method>)
-        batch_idx: Batch index
+        batch_name: Batch name (e.g., '0', '1', 'tuning', 'eval')
         overwrite: If True, overwrite existing models; if False, skip training if model exists
         use_wandb: Whether to use wandb logging
         sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
@@ -198,8 +198,8 @@ def train_estimator(
         print(f"Loading batch data from {batch_path}")
         batch = load_batch_data(batch_path, max_episodes=n_episodes)
 
-        # Directory structure: estimators/<method>/<n_episodes>/batch_<idx>
-        episodes_dir = output_dir / str(n_episodes) / f"batch_{batch_idx}"
+        # Directory structure: estimators/<method>/<n_episodes>/batch_<name>
+        episodes_dir = output_dir / str(n_episodes) / f"batch_{batch_name}"
         episodes_dir.mkdir(parents=True, exist_ok=True)
 
         checkpoint_path = episodes_dir / "estimator.pt"
@@ -209,7 +209,7 @@ def train_estimator(
             continue
 
         print(f"\n{'='*80}")
-        print(f"Training {method_name} on batch_{batch_idx} with {n_episodes} episodes")
+        print(f"Training {method_name} on batch_{batch_name} with {n_episodes} episodes")
         print(f"{'='*80}")
 
         print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
@@ -232,7 +232,7 @@ def train_estimator(
             estimator = create_estimator(method_config, config.network, obs_dim, gamma)
 
             final_mc_loss = train_single_initialization(
-                estimator, batch, config, method_name, batch_idx, n_episodes, init_idx, use_wandb, sweep_mode
+                estimator, batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
             )
 
             print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
@@ -247,7 +247,7 @@ def train_estimator(
 
         stats = {
             'method': method_name,
-            'batch_idx': batch_idx,
+            'batch_name': batch_name,
             'n_episodes': n_episodes,
             'n_initializations': n_inits,
             'best_mc_loss': best_mc_loss,
@@ -260,7 +260,7 @@ def train_estimator(
         # Save estimator metadata
         estimator_metadata = {
             'method': method_name,
-            'batch_idx': batch_idx,
+            'batch_name': batch_name,
             'n_episodes': n_episodes,
             'batch_path': str(batch_path),
             'gamma': gamma,
@@ -282,7 +282,7 @@ def train_estimator(
         with open(metadata_path, 'w') as f:
             json.dump(estimator_metadata, f, indent=2)
 
-        print(f"Training complete for {method_name} batch_{batch_idx} with {n_episodes} episodes.\n")
+        print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes.\n")
 
 
 def main():
@@ -328,7 +328,8 @@ def main():
         parser.error(f"Method '{args.method}' not found in config. Available methods: {available_methods}")
 
     # Set paths
-    batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{batch_idx}.npz"
+    batch_name = str(batch_idx)
+    batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{batch_name}.npz"
     output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method
 
     # Save config to method directory
@@ -341,7 +342,7 @@ def main():
         method_config=method_config,
         batch_path=batch_path,
         output_dir=output_dir,
-        batch_idx=batch_idx,
+        batch_name=batch_name,
         overwrite=args.overwrite,
         use_wandb=not args.no_wandb
     )

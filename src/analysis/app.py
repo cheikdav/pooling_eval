@@ -67,10 +67,10 @@ def compute_stats_from_predictions(predictions_path, method, n_episodes, s1_prop
     df_s1 = df_s1.copy()
     df_s1['paired_state_idx'] = df_s1['state_idx'].map(pairings)
 
-    df_s2_paired = df_s2[['state_idx', 'batch_idx', 'predicted_value']].copy()
-    df_s2_paired.columns = ['paired_state_idx', 'batch_idx', 'paired_value']
+    df_s2_paired = df_s2[['state_idx', 'batch_name', 'predicted_value']].copy()
+    df_s2_paired.columns = ['paired_state_idx', 'batch_name', 'paired_value']
 
-    df_merged = df_s1.merge(df_s2_paired, on=['paired_state_idx', 'batch_idx'], how='inner')
+    df_merged = df_s1.merge(df_s2_paired, on=['paired_state_idx', 'batch_name'], how='inner')
     df_merged['value_difference'] = df_merged['predicted_value'] - df_merged['paired_value']
 
     stats_diff = df_merged.groupby('state_idx')['value_difference'].agg(

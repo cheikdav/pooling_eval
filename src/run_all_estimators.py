@@ -19,8 +19,9 @@ def run_sequential(config: ExperimentConfig, config_path: Path, overwrite: bool)
 
     for method_config in method_configs:
         for batch_idx in range(n_batches):
+            batch_name = str(batch_idx)
             print(f"\n{'='*60}")
-            print(f"Training: method={method_config.name} batch={batch_idx}")
+            print(f"Training: method={method_config.name} batch={batch_name}")
             print(f"{'='*60}\n")
 
             overwrite_flag = "--overwrite" if overwrite else "--no-overwrite"
