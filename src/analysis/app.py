@@ -236,63 +236,57 @@ if not selected_methods:
     st.warning("Please select at least one method")
     st.stop()
 
-# Load stats for ALL n_episodes and selected methods (memory efficient - stats only)
-try:
+
+@st.cache_data
+def load_stats_for_n_episodes(selected_predictions_json, n_ep, methods):
+    """Load stats for a specific n_episodes value.
+
+    Args:
+        selected_predictions_json: JSON string of selected predictions (for cache key)
+        n_ep: Number of episodes to load
+        methods: List of methods to load
+
+    Returns:
+        Tuple of (stats, stats_s1, stats_s2, stats_merged) for this n_episodes
+    """
+    import json
+    selected_preds = json.loads(selected_predictions_json)
+
     all_stats = []
     all_stats_s1 = []
     all_stats_s2 = []
     all_stats_merged = []
 
-    total_files = len(all_n_episodes_for_policy) * (len(selected_methods) + 1)  # +1 for monte_carlo
-    progress_bar = st.sidebar.progress(0, text="Loading predictions...")
+    for method in methods:
+        method_prediction = next((p for p in selected_preds
+                                 if p['method'] == method and p['n_episodes'] == n_ep), None)
+        if not method_prediction:
+            continue
 
-    file_count = 0
-    for n_ep in all_n_episodes_for_policy:
-        # Always load Monte Carlo for comparison
-        methods_to_load = ['monte_carlo'] + selected_methods if 'monte_carlo' not in selected_methods else selected_methods
+        predictions_file = Path(method_prediction['predictions_path'])
+        if not predictions_file.exists():
+            continue
 
-        for method in methods_to_load:
-            method_prediction = next((p for p in selected_predictions
-                                     if p['method'] == method and p['n_episodes'] == n_ep), None)
-            if not method_prediction:
-                continue
+        stats, stats_s1, stats_s2, stats_merged = load_and_compute_stats(
+            str(predictions_file),
+            method,
+            n_ep
+        )
 
-            predictions_file = Path(method_prediction['predictions_path'])
-            if not predictions_file.exists():
-                continue
+        all_stats.append(stats)
+        all_stats_s1.append(stats_s1)
+        all_stats_s2.append(stats_s2)
+        all_stats_merged.append(stats_merged)
 
-            # Load and compute stats, discard raw dataframe immediately
-            stats, stats_s1, stats_s2, stats_merged = load_and_compute_stats(
-                str(predictions_file),
-                method,
-                n_ep
-            )
+    if not all_stats:
+        return None, None, None, None
 
-            all_stats.append(stats)
-            all_stats_s1.append(stats_s1)
-            all_stats_s2.append(stats_s2)
-            all_stats_merged.append(stats_merged)
-
-            file_count += 1
-            progress_bar.progress(file_count / total_files, text=f"Loading {method} ({n_ep} episodes)...")
-
-    progress_bar.empty()
-
-    # Combine all stats
-    stats_full = pd.concat(all_stats, ignore_index=True)
-    stats_s1_full = pd.concat(all_stats_s1, ignore_index=True)
-    stats_s2_full = pd.concat(all_stats_s2, ignore_index=True)
-    stats_merged_full = pd.concat(all_stats_merged, ignore_index=True)
-
-    st.sidebar.success(f"✓ Loaded stats for {len(selected_methods)} method(s) across {len(all_n_episodes_for_policy)} n_episodes")
-    st.sidebar.markdown(f"- Total stats records: {len(stats_full)}")
-    st.sidebar.markdown(f"- Methods: {', '.join(stats_full['method'].unique())}")
-    st.sidebar.markdown(f"- n_episodes: {', '.join(map(str, sorted(stats_full['n_episodes'].unique())))}")
-
-except Exception as e:
-    st.error(f"Failed to load predictions: {str(e)}")
-    st.code(traceback.format_exc())
-    st.stop()
+    return (
+        pd.concat(all_stats, ignore_index=True),
+        pd.concat(all_stats_s1, ignore_index=True),
+        pd.concat(all_stats_s2, ignore_index=True),
+        pd.concat(all_stats_merged, ignore_index=True)
+    )
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Visualization Options**")
@@ -308,15 +302,6 @@ dataset_key = st.sidebar.selectbox(
     }[k],
     help="Choose which dataset partition to analyze"
 )
-
-# Map dataset selection to appropriate stats
-dataset_map = {
-    'full': stats_full,
-    's1': stats_s1_full,
-    's2': stats_s2_full,
-    'differences': stats_merged_full
-}
-current_stats = dataset_map[dataset_key]
 
 st.markdown("### Current Selection")
 col1, col2, col3 = st.columns(3)
@@ -338,8 +323,35 @@ selected_n_ep_single = st.selectbox(
     format_func=lambda x: f"{x} episodes"
 )
 
-# Filter stats for selected n_episodes
-stats_single_n_ep = current_stats[current_stats['n_episodes'] == selected_n_ep_single]
+# Load stats for selected n_episodes only
+import json
+try:
+    methods_to_load = ['monte_carlo'] + selected_methods if 'monte_carlo' not in selected_methods else selected_methods
+    selected_predictions_json = json.dumps(selected_predictions)
+
+    stats_single, stats_s1_single, stats_s2_single, stats_merged_single = load_stats_for_n_episodes(
+        selected_predictions_json,
+        selected_n_ep_single,
+        methods_to_load
+    )
+
+    if stats_single is None:
+        st.error(f"No data available for {selected_n_ep_single} episodes")
+        st.stop()
+
+    # Map dataset selection to appropriate stats
+    dataset_map_single = {
+        'full': stats_single,
+        's1': stats_s1_single,
+        's2': stats_s2_single,
+        'differences': stats_merged_single
+    }
+    stats_single_n_ep = dataset_map_single[dataset_key]
+
+except Exception as e:
+    st.error(f"Failed to load stats for {selected_n_ep_single} episodes: {str(e)}")
+    st.code(traceback.format_exc())
+    st.stop()
 
 metric_key_single = st.selectbox(
     "Select metric:",
@@ -410,15 +422,53 @@ st.markdown(f"**{metric_info_evolution['name']}** evolution across training data
 st.markdown(f"_Using dataset: **{dataset_key}**_")
 
 try:
-    # Compute metric for all n_episodes
-    metric_data_all = compute_metric(current_stats, metric_key_evolution)
-    filtered_all = metric_data_all[metric_data_all['method'].isin(selected_methods)]
+    # Load stats incrementally for each n_episodes and compute evolution
+    evolution_data = []
 
-    # Aggregate by method and n_episodes
-    evolution_summary = filtered_all.groupby(['method', 'n_episodes'])['metric_value'].agg(
-        mean='mean',
-        std='std'
-    ).reset_index()
+    progress_bar = st.progress(0, text="Loading data for evolution plot...")
+
+    for idx, n_ep in enumerate(all_n_episodes_for_policy):
+        stats_full_ep, stats_s1_ep, stats_s2_ep, stats_merged_ep = load_stats_for_n_episodes(
+            selected_predictions_json,
+            n_ep,
+            methods_to_load
+        )
+
+        if stats_full_ep is None:
+            continue
+
+        dataset_map_ep = {
+            'full': stats_full_ep,
+            's1': stats_s1_ep,
+            's2': stats_s2_ep,
+            'differences': stats_merged_ep
+        }
+        current_stats_ep = dataset_map_ep[dataset_key]
+
+        # Compute metric for this n_episodes
+        metric_data_ep = compute_metric(current_stats_ep, metric_key_evolution)
+        filtered_ep = metric_data_ep[metric_data_ep['method'].isin(selected_methods)]
+
+        # Aggregate by method
+        summary_ep = filtered_ep.groupby(['method'])['metric_value'].agg(
+            mean='mean',
+            std='std'
+        ).reset_index()
+        summary_ep['n_episodes'] = n_ep
+
+        evolution_data.append(summary_ep)
+
+        progress_bar.progress((idx + 1) / len(all_n_episodes_for_policy),
+                            text=f"Loading {n_ep} episodes...")
+
+    progress_bar.empty()
+
+    if not evolution_data:
+        st.warning("No data available for evolution plot")
+        st.stop()
+
+    # Combine all evolution data
+    evolution_summary = pd.concat(evolution_data, ignore_index=True)
 
     fig_evolution = go.Figure()
 

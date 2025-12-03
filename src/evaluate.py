@@ -54,9 +54,140 @@ def load_estimator_model(model_path: Path, device: str = "cpu"):
     return value_net
 
 
+def generate_predictions_for_n_episodes(config: ExperimentConfig,
+                                        eval_batch: Dict, results_dir: Path,
+                                        method_name: str, n_episodes: int,
+                                        n_ep_dir: Path, device: str = "cpu"):
+    """Generate predictions for a single method/n_episodes combination.
+
+    Args:
+        config: Experiment configuration
+        eval_batch: Evaluation batch data
+        results_dir: Root results directory
+        method_name: Name of the method
+        n_episodes: Number of episodes used for training
+        n_ep_dir: Directory containing estimator models
+        device: Device to use for inference
+
+    Returns:
+        Path to saved predictions file (relative to results_dir), or None if no predictions
+    """
+    eval_obs_list = eval_batch['observations']
+    eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
+    n_states = len(eval_obs_flat)
+
+    # Create episode index mapping for each state
+    episode_indices = []
+    for ep_idx, obs_array in enumerate(eval_obs_list):
+        episode_indices.extend([ep_idx] * len(obs_array))
+
+    eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
+
+    # Load metadata from first batch
+    first_batch_metadata_path = n_ep_dir / "batch_0" / "estimator_metadata.json"
+    if not first_batch_metadata_path.exists():
+        print(f"      No metadata found at {first_batch_metadata_path}, skipping")
+        return None
+
+    with open(first_batch_metadata_path, 'r') as f:
+        sample_metadata = json.load(f)
+
+    # Collect predictions for this n_episodes (process batches one at a time)
+    predictions = []
+
+    for batch_idx in range(config.data_generation.n_batches):
+        batch_dir = n_ep_dir / f"batch_{batch_idx}"
+
+        if not batch_dir.exists():
+            continue
+
+        model_path = batch_dir / "estimator.pt"
+        if not model_path.exists():
+            continue
+
+        # Load model, generate predictions, then free memory
+        value_net = load_estimator_model(model_path, device)
+
+        with torch.no_grad():
+            values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
+
+        for state_idx in range(n_states):
+            predictions.append({
+                'state_idx': state_idx,
+                'episode_idx': episode_indices[state_idx],
+                'batch_idx': batch_idx,
+                'predicted_value': values[state_idx]
+            })
+
+        # Free memory
+        del value_net
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+
+    if not predictions:
+        print(f"      No predictions generated, skipping")
+        return None
+
+    # Create output directory
+    output_method_dir = results_dir / method_name / str(n_episodes)
+    output_method_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save predictions
+    df = pd.DataFrame(predictions)
+    predictions_file = output_method_dir / "predictions.parquet"
+    df.to_parquet(predictions_file, index=False)
+
+    # Create metadata
+    data_metadata = sample_metadata.get('data_metadata', {})
+    policy_metadata = data_metadata.get('policy_metadata', {})
+
+    predictions_metadata = {
+        'experiment_id': config.experiment_id,
+        'method': method_name,
+        'n_episodes': n_episodes,
+        'n_batches': len(df['batch_idx'].unique()),
+        'n_states': len(df['state_idx'].unique()),
+        'n_eval_episodes': len(eval_obs_list),
+        'created_at': datetime.now().isoformat(),
+
+        # Policy metadata
+        'policy_environment': policy_metadata.get('environment'),
+        'policy_algorithm': policy_metadata.get('algorithm'),
+        'policy_seed': policy_metadata.get('seed'),
+        'policy_learning_rate': policy_metadata.get('learning_rate'),
+        'policy_gamma': policy_metadata.get('gamma'),
+        'policy_total_timesteps': policy_metadata.get('total_timesteps'),
+        'policy_average_reward': policy_metadata.get('average_reward'),
+
+        # Estimator config
+        'estimator_config': sample_metadata.get('estimator_config', {}),
+        'network_config': sample_metadata.get('network_config', {}),
+
+        # Data metadata
+        'data_seed': data_metadata.get('seed'),
+    }
+
+    predictions_metadata['policy_display_name'] = None
+
+    metadata_file = output_method_dir / "predictions_metadata.json"
+    with open(metadata_file, 'w') as f:
+        json.dump(predictions_metadata, f, indent=2)
+
+    print(f"      Saved: {predictions_file.relative_to(results_dir)}")
+    print(f"        ({len(df)} predictions = {len(df['state_idx'].unique())} states × "
+          f"{len(df['batch_idx'].unique())} batches)")
+
+    # Free memory
+    del df
+    del predictions
+
+    return str(predictions_file.relative_to(results_dir))
+
+
 def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
                         eval_batch: Dict, results_dir: Path, device: str = "cpu"):
     """Generate predictions from all trained models with metadata.
+
+    Processes one n_episodes at a time to avoid memory issues.
 
     Args:
         experiment_dir: Experiment directory
@@ -74,14 +205,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
     eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
     n_states = len(eval_obs_flat)
 
-    # Create episode index mapping for each state
-    episode_indices = []
-    for ep_idx, obs_array in enumerate(eval_obs_list):
-        episode_indices.extend([ep_idx] * len(obs_array))
-
     print(f"\nGenerating predictions on {n_states} states from {len(eval_obs_list)} episodes...")
-
-    eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
 
     prediction_files_created = []
 
@@ -95,102 +219,21 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
             print(f"    Method directory not found: {estimators_method_dir}, skipping")
             continue
 
-        n_episodes_dirs = [d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()]
+        n_episodes_dirs = sorted([d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+                                key=lambda d: int(d.name))
 
         for n_ep_dir in n_episodes_dirs:
             n_episodes = int(n_ep_dir.name)
             print(f"    Processing n_episodes={n_episodes}")
 
-            # Load metadata from first batch to get policy/data info
-            first_batch_metadata_path = n_ep_dir / "batch_0" / "estimator_metadata.json"
-            if not first_batch_metadata_path.exists():
-                print(f"      No metadata found at {first_batch_metadata_path}, skipping")
-                continue
+            # Process this n_episodes and save immediately
+            predictions_file = generate_predictions_for_n_episodes(
+                experiment_dir, config, eval_batch, results_dir,
+                method_name, n_episodes, n_ep_dir, device
+            )
 
-            with open(first_batch_metadata_path, 'r') as f:
-                sample_metadata = json.load(f)
-
-            # Collect predictions for this method/n_episodes combination
-            predictions = []
-
-            for batch_idx in range(config.data_generation.n_batches):
-                batch_dir = n_ep_dir / f"batch_{batch_idx}"
-
-                if not batch_dir.exists():
-                    continue
-
-                model_path = batch_dir / "estimator.pt"
-                if not model_path.exists():
-                    continue
-
-                value_net = load_estimator_model(model_path, device)
-
-                with torch.no_grad():
-                    values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
-
-                for state_idx in range(n_states):
-                    predictions.append({
-                        'state_idx': state_idx,
-                        'episode_idx': episode_indices[state_idx],
-                        'batch_idx': batch_idx,
-                        'predicted_value': values[state_idx]
-                    })
-
-            if not predictions:
-                print(f"      No predictions generated, skipping")
-                continue
-
-            # Create output directory mirroring estimators structure
-            output_method_dir = results_dir / method_name / str(n_episodes)
-            output_method_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save predictions
-            df = pd.DataFrame(predictions)
-            predictions_file = output_method_dir / "predictions.parquet"
-            df.to_parquet(predictions_file, index=False)
-
-            # Create metadata from estimator metadata
-            data_metadata = sample_metadata.get('data_metadata', {})
-            policy_metadata = data_metadata.get('policy_metadata', {})
-
-            predictions_metadata = {
-                'experiment_id': config.experiment_id,
-                'method': method_name,
-                'n_episodes': n_episodes,
-                'n_batches': len(df['batch_idx'].unique()),
-                'n_states': len(df['state_idx'].unique()),
-                'n_eval_episodes': len(eval_obs_list),
-                'created_at': datetime.now().isoformat(),
-
-                # Policy metadata
-                'policy_environment': policy_metadata.get('environment'),
-                'policy_algorithm': policy_metadata.get('algorithm'),
-                'policy_seed': policy_metadata.get('seed'),
-                'policy_learning_rate': policy_metadata.get('learning_rate'),
-                'policy_gamma': policy_metadata.get('gamma'),
-                'policy_total_timesteps': policy_metadata.get('total_timesteps'),
-                'policy_average_reward': policy_metadata.get('average_reward'),
-
-                # Estimator config
-                'estimator_config': sample_metadata.get('estimator_config', {}),
-                'network_config': sample_metadata.get('network_config', {}),
-
-                # Data metadata
-                'data_seed': data_metadata.get('seed'),
-            }
-
-            # Add policy_display_name (will be computed during discovery)
-            predictions_metadata['policy_display_name'] = None
-
-            metadata_file = output_method_dir / "predictions_metadata.json"
-            with open(metadata_file, 'w') as f:
-                json.dump(predictions_metadata, f, indent=2)
-
-            print(f"      Saved: {predictions_file.relative_to(results_dir)}")
-            print(f"        ({len(df)} predictions = {len(df['state_idx'].unique())} states × "
-                  f"{len(df['batch_idx'].unique())} batches)")
-
-            prediction_files_created.append(str(predictions_file.relative_to(results_dir)))
+            if predictions_file:
+                prediction_files_created.append(predictions_file)
 
     return prediction_files_created
 
