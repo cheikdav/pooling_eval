@@ -1,4 +1,4 @@
-"""Streamlit dashboard for visualizing value estimator predictions using metadata."""
+"""Streamlit dashboard for value estimator analysis."""
 
 from pathlib import Path
 import streamlit as st
@@ -6,532 +6,210 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
-import traceback
 
 from metrics import METRICS, compute_metric
-from metadata_discovery import (
-    discover_predictions,
-    build_selection_tree,
-    SelectionTreeNode
-)
-
-
-PRIMARY_SELECTION_KEYS = [
-    ('policy_environment', 'Environment'),
-    ('policy_display_name', 'Policy'),
-    ('n_episodes', 'Training Data Amount'),
-]
-
-# Mapping of keys to display names
-KEY_DISPLAY_NAMES = {
-    'policy_environment': 'Environment',
-    'policy_display_name': 'Policy',
-    'n_episodes': 'Training Data Amount',
-}
+from metadata_discovery import discover_predictions
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
 
-st.title("Value Estimator Variance Analysis")
-st.markdown("Compare variance and performance of different value estimation methods")
+
+# Data Loading Functions
+
+@st.cache_data
+def load_predictions_data(experiments_dir):
+    """Load all prediction files with metadata."""
+    all_preds = discover_predictions(Path(experiments_dir))
+    if not all_preds:
+        return pd.DataFrame()
+    return pd.DataFrame(all_preds)
 
 
 @st.cache_data
-def load_and_compute_stats(predictions_path, method, n_episodes, s1_proportion=0.9, seed=42):
-    """Load predictions file and compute statistics, discarding raw data.
+def compute_stats_from_predictions(predictions_path, method, n_episodes, s1_proportion=0.9, seed=42):
+    """Load predictions and compute statistics.
 
-    Args:
-        predictions_path: Path to predictions parquet file
-        method: Method name to add to stats
-        n_episodes: Number of training episodes to add to stats
-        s1_proportion: Proportion of episodes for S1 partition
-        seed: Random seed for episode partitioning
-
-    Returns:
-        Tuple of 4 stats DataFrames: (stats_full, stats_s1, stats_s2, stats_merged)
-        Each stats DataFrame has columns: state_idx, method, n_episodes, mean, variance, std, count
+    Returns: (stats_full, stats_s1, stats_s2, stats_differences)
+    Each DataFrame has: state_idx, method, n_episodes, mean, variance, std, count
     """
-    print(f"[LOAD] Reading parquet: {predictions_path}")
     df = pd.read_parquet(predictions_path)
-    print(f"[LOAD] Loaded {len(df)} rows, {len(df['episode_idx'].unique())} episodes")
 
-    def compute_stats(dataframe, method_name, n_eps):
-        """Helper to compute stats from a predictions dataframe."""
-        stats = dataframe.groupby(['state_idx'])['predicted_value'].agg(
-            mean='mean',
-            variance='var',
-            std='std',
-            count='count'
+    def agg_stats(data, method_name, n_eps):
+        stats = data.groupby('state_idx')['predicted_value'].agg(
+            mean='mean', variance='var', std='std', count='count'
         ).reset_index()
         stats['method'] = method_name
         stats['n_episodes'] = n_eps
         return stats
 
-    # Full dataset stats
-    stats = compute_stats(df, method, n_episodes)
+    # Full dataset
+    stats_full = agg_stats(df, method, n_episodes)
 
-    # Partition episodes into S1 and S2
+    # Split into S1/S2 partitions
     np.random.seed(seed)
-    all_episodes = df['episode_idx'].unique()
-    n_s1 = int(len(all_episodes) * s1_proportion)
+    episodes = df['episode_idx'].unique()
+    n_s1 = int(len(episodes) * s1_proportion)
+    shuffled = np.random.permutation(episodes)
+    s1_eps, s2_eps = set(shuffled[:n_s1]), set(shuffled[n_s1:])
 
-    shuffled_episodes = np.random.permutation(all_episodes)
-    s1_episodes = set(shuffled_episodes[:n_s1])
-    s2_episodes = set(shuffled_episodes[n_s1:])
+    df_s1 = df[df['episode_idx'].isin(s1_eps)]
+    df_s2 = df[df['episode_idx'].isin(s2_eps)]
 
-    # Split dataframe by partition
-    df_s1 = df[df['episode_idx'].isin(s1_episodes)].copy()
-    df_s2 = df[df['episode_idx'].isin(s2_episodes)].copy()
+    stats_s1 = agg_stats(df_s1, method, n_episodes)
+    stats_s2 = agg_stats(df_s2, method, n_episodes)
 
-    stats_s1 = compute_stats(df_s1, method, n_episodes)
-    stats_s2 = compute_stats(df_s2, method, n_episodes)
-
-    # Create stable random pairings (state_idx in S1 -> state_idx in S2)
-    unique_s1_states = df_s1['state_idx'].unique()
-    unique_s2_states = df_s2['state_idx'].unique()
-
+    # Compute paired differences
     np.random.seed(seed + 1)
-    pairings = {
-        s: np.random.choice(unique_s2_states)
-        for s in unique_s1_states
-    }
+    s1_states = df_s1['state_idx'].unique()
+    s2_states = df_s2['state_idx'].unique()
+    pairings = {s: np.random.choice(s2_states) for s in s1_states}
 
-    # Add paired state column to S1 dataframe
+    df_s1 = df_s1.copy()
     df_s1['paired_state_idx'] = df_s1['state_idx'].map(pairings)
 
-    # Prepare S2 for merge - only keep necessary columns
-    df_s2_for_merge = df_s2[['state_idx', 'batch_idx', 'predicted_value']].copy()
-    df_s2_for_merge.columns = ['paired_state_idx', 'batch_idx', 'paired_value']
+    df_s2_paired = df_s2[['state_idx', 'batch_idx', 'predicted_value']].copy()
+    df_s2_paired.columns = ['paired_state_idx', 'batch_idx', 'paired_value']
 
-    # Merge to get paired values
-    df_merged = df_s1.merge(
-        df_s2_for_merge,
-        on=['paired_state_idx', 'batch_idx'],
-        how='inner'
-    )
-
-    # Compute differences
+    df_merged = df_s1.merge(df_s2_paired, on=['paired_state_idx', 'batch_idx'], how='inner')
     df_merged['value_difference'] = df_merged['predicted_value'] - df_merged['paired_value']
 
-    # Compute stats on differences
-    stats_merged = df_merged.groupby(['state_idx'])['value_difference'].agg(
-        mean='mean',
-        variance='var',
-        std='std',
-        count='count'
+    stats_diff = df_merged.groupby('state_idx')['value_difference'].agg(
+        mean='mean', variance='var', std='std', count='count'
     ).reset_index()
-    stats_merged['method'] = method
-    stats_merged['n_episodes'] = n_episodes
+    stats_diff['method'] = method
+    stats_diff['n_episodes'] = n_episodes
 
-    return stats, stats_s1, stats_s2, stats_merged
+    return stats_full, stats_s1, stats_s2, stats_diff
 
-
-experiments_dir = Path("experiments")
-if not experiments_dir.exists():
-    st.error(f"Experiments directory not found at {experiments_dir.absolute()}")
-    st.stop()
-
-print(f"[INIT] Discovering predictions in {experiments_dir.absolute()}")
-try:
-    all_predictions = discover_predictions(experiments_dir)
-    print(f"[INIT] Found {len(all_predictions)} prediction files")
-    if not all_predictions:
-        st.error("No predictions with metadata found in experiments directory")
-        st.info("Run: `python -m src.evaluate --config <your_config>.yaml` to generate predictions.")
-        st.stop()
-except Exception as e:
-    print(f"[ERROR] Failed to discover predictions: {str(e)}")
-    st.error(f"Failed to discover predictions: {str(e)}")
-    st.code(traceback.format_exc())
-    st.stop()
-
-# Build selection tree
-primary_keys = [key for key, _ in PRIMARY_SELECTION_KEYS]
-print(f"[INIT] Building selection tree with keys: {primary_keys}")
-selection_tree = build_selection_tree(all_predictions, primary_keys)
-
-# Initialize session state for selections
-if 'selections' not in st.session_state:
-    st.session_state.selections = {}
-if 'selection_depth' not in st.session_state:
-    st.session_state.selection_depth = 0
-
-st.sidebar.header("Hierarchical Selection")
-
-# Navigate down the tree based on current selections
-current_node = selection_tree
-selection_path = []
-selector_counter = 0
-
-# Keys to exclude from additional selectors
-exclude_keys = {'method', 'n_batches', 'n_states', 'n_eval_episodes', 'created_at', 'predictions_path', 'metadata_path'}
-
-while not current_node.is_leaf():
-    # Automatically navigate single branches
-    if current_node.has_single_branch():
-        value, child_node = current_node.get_single_child()
-        selection_path.append((current_node.branch_key, value))
-        current_node = child_node
-        continue
-
-    # Need user selection
-    branch_key = current_node.branch_key
-    available_values = sorted(current_node.children.keys())
-
-    # Get display name for this key
-    display_name = KEY_DISPLAY_NAMES.get(branch_key, branch_key.replace('_', ' ').title())
-
-    # Create unique key for this selector
-    selector_key = f"selector_{selector_counter}_{branch_key}"
-    selector_counter += 1
-
-    # Check if we need to reset selections (upstream change)
-    if selector_key not in st.session_state.selections:
-        # New selector - clear all downstream selections
-        keys_to_remove = [k for k in st.session_state.selections.keys()
-                         if k.startswith(f"selector_{selector_counter}")]
-        for k in keys_to_remove:
-            del st.session_state.selections[k]
-
-    # Get current selection or default to first value
-    current_selection = st.session_state.selections.get(selector_key, available_values[0])
-
-    # Handle special formatting
-    format_func = None
-    if branch_key == 'n_episodes':
-        format_func = lambda x: f"{x} episodes"
-
-    # Create selector
-    selectbox_kwargs = {
-        'label': f"{len(selection_path) + 1}. {display_name}",
-        'options': available_values,
-        'key': selector_key,
-        'help': f"Choose {display_name.lower()}"
-    }
-    if format_func:
-        selectbox_kwargs['format_func'] = format_func
-
-    selected_value = st.sidebar.selectbox(**selectbox_kwargs)
-
-    # Detect if selection changed
-    if selected_value != current_selection:
-        # Clear downstream selections
-        keys_to_remove = [k for k in st.session_state.selections.keys()
-                         if k.startswith(f"selector_{selector_counter}")]
-        for k in keys_to_remove:
-            del st.session_state.selections[k]
-
-    # Update session state
-    st.session_state.selections[selector_key] = selected_value
-
-    # Show policy details after policy selection
-    if branch_key == 'policy_display_name':
-        child_node = current_node.children[selected_value]
-        sample_idx = child_node.indices[0]
-        sample_pred = all_predictions[sample_idx]
-        with st.sidebar.expander("Policy Details"):
-            st.markdown(f"**Algorithm:** {sample_pred.get('policy_algorithm')}")
-            st.markdown(f"**Seed:** {sample_pred.get('policy_seed')}")
-            if sample_pred.get('policy_average_reward') is not None:
-                st.markdown(f"**Avg Reward:** {sample_pred.get('policy_average_reward'):.2f}")
-            st.markdown(f"**Learning Rate:** {sample_pred.get('policy_learning_rate')}")
-            st.markdown(f"**Gamma:** {sample_pred.get('policy_gamma')}")
-            st.markdown(f"**Total Timesteps:** {sample_pred.get('policy_total_timesteps')}")
-
-    # Move to next node
-    selection_path.append((branch_key, selected_value))
-    current_node = current_node.children[selected_value]
-
-# Get final predictions
-selected_predictions = [all_predictions[i] for i in current_node.indices]
-print(f"[SELECT] Selected {len(selected_predictions)} predictions after filtering")
-
-if not selected_predictions:
-    st.error("No predictions found for the selected criteria")
-    st.stop()
-
-# Extract selected values from selection path
-selected_values = {key: value for key, value in selection_path}
-
-sample_prediction = selected_predictions[0]
-experiment_id = sample_prediction['experiment_id']
-selected_env = selected_values.get('policy_environment', sample_prediction.get('policy_environment'))
-selected_policy_display = selected_values.get('policy_display_name', sample_prediction.get('policy_display_name'))
-selected_n_episodes = selected_values.get('n_episodes', sample_prediction.get('n_episodes'))
-
-# Get all available methods and n_episodes for this environment/policy
-all_methods_for_policy = sorted(set(pred['method'] for pred in selected_predictions))
-all_n_episodes_for_policy = sorted(set(pred['n_episodes'] for pred in selected_predictions))
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Method Selection**")
-
-selected_methods = st.sidebar.multiselect(
-    "Select Methods to Compare",
-    all_methods_for_policy,
-    default=all_methods_for_policy,
-    help="Choose which methods to compare against Monte Carlo"
-)
-
-if not selected_methods:
-    st.warning("Please select at least one method")
-    st.stop()
-
-print(f"[SELECT] Methods: {selected_methods}")
-
-# Always include Monte Carlo for metric computation (needed for ratio calculations)
-methods_to_load = list(set(['monte_carlo'] + selected_methods))
 
 @st.cache_data
-def load_stats_for_n_episodes(selected_predictions_json, n_ep, methods):
-    """Load stats for a specific n_episodes value.
+def load_all_stats(metadata_df, methods, n_episodes_list, dataset_type):
+    """Load stats for all method/n_episodes combinations.
 
     Args:
-        selected_predictions_json: JSON string of selected predictions (for cache key)
-        n_ep: Number of episodes to load
-        methods: List of methods to load
+        metadata_df: DataFrame with columns [method, n_episodes, predictions_path, ...]
+        methods: List of method names to load
+        n_episodes_list: List of n_episodes values to load
+        dataset_type: 'full', 's1', 's2', or 'differences'
 
     Returns:
-        Tuple of (stats, stats_s1, stats_s2, stats_merged) for this n_episodes
+        DataFrame with aggregated stats
     """
-    import json
-    selected_preds = json.loads(selected_predictions_json)
-    print(f"[STATS] Loading stats for n_episodes={n_ep}, methods={methods}")
-
+    dataset_idx = {'full': 0, 's1': 1, 's2': 2, 'differences': 3}[dataset_type]
     all_stats = []
-    all_stats_s1 = []
-    all_stats_s2 = []
-    all_stats_merged = []
 
-    for method in methods:
-        method_prediction = next((p for p in selected_preds
-                                 if p['method'] == method and p['n_episodes'] == n_ep), None)
-        if not method_prediction:
+    for _, row in metadata_df.iterrows():
+        if row['method'] not in methods or row['n_episodes'] not in n_episodes_list:
             continue
 
-        predictions_file = Path(method_prediction['predictions_path'])
-        if not predictions_file.exists():
-            continue
+        stats_tuple = compute_stats_from_predictions(
+            row['predictions_path'], row['method'], row['n_episodes']
+        )
+        all_stats.append(stats_tuple[dataset_idx])
 
-        stats, stats_s1, stats_s2, stats_merged = load_and_compute_stats(
-            str(predictions_file),
-            method,
-            n_ep
+    return pd.concat(all_stats, ignore_index=True) if all_stats else pd.DataFrame()
+
+
+# UI Helper Functions
+
+def show_selection_filters(metadata_df):
+    """Display sidebar filters and return filtered metadata."""
+    st.sidebar.header("Filters")
+
+    # Environment selection
+    envs = sorted(metadata_df['policy_environment'].unique())
+    selected_env = st.sidebar.selectbox("Environment", envs)
+
+    # Policy selection
+    env_df = metadata_df[metadata_df['policy_environment'] == selected_env]
+    policies = sorted(env_df['policy_display_name'].unique())
+    selected_policy = st.sidebar.selectbox("Policy", policies)
+
+    # Filter to selected env/policy
+    filtered = env_df[env_df['policy_display_name'] == selected_policy]
+
+    # Method selection
+    methods = sorted(filtered['method'].unique())
+    selected_methods = st.sidebar.multiselect(
+        "Methods", methods, default=methods
+    )
+
+    # Dataset type
+    st.sidebar.markdown("---")
+    dataset_type = st.sidebar.selectbox(
+        "Dataset",
+        ['full', 's1', 's2', 'differences'],
+        format_func=lambda x: {
+            'full': 'Full Dataset',
+            's1': 'S1 Partition (90%)',
+            's2': 'S2 Partition (10%)',
+            'differences': 'Differences (S1 - S2)'
+        }[x]
+    )
+
+    # Apply method filter
+    filtered = filtered[filtered['method'].isin(selected_methods + ['monte_carlo'])]
+
+    return filtered, selected_env, selected_policy, selected_methods, dataset_type
+
+
+def plot_metric_distribution(stats_df, metric_key, methods, n_episodes):
+    """Create histogram of metric values."""
+    metric_info = METRICS[metric_key]
+    metric_data = compute_metric(stats_df, metric_key)
+    filtered = metric_data[metric_data['method'].isin(methods)]
+
+    if filtered.empty:
+        st.warning("No data available")
+        return
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        fig = px.histogram(
+            filtered, x='metric_value', color='method',
+            nbins=40, opacity=0.7, barmode='overlay',
+            title=f"{metric_info['name']} Distribution ({n_episodes} episodes)",
+            labels={'metric_value': metric_info['name']}
         )
 
-        all_stats.append(stats)
-        all_stats_s1.append(stats_s1)
-        all_stats_s2.append(stats_s2)
-        all_stats_merged.append(stats_merged)
-
-    if not all_stats:
-        print(f"[STATS] No stats loaded for n_episodes={n_ep}")
-        return None, None, None, None
-
-    print(f"[STATS] Concatenating stats from {len(all_stats)} methods")
-    return (
-        pd.concat(all_stats, ignore_index=True),
-        pd.concat(all_stats_s1, ignore_index=True),
-        pd.concat(all_stats_s2, ignore_index=True),
-        pd.concat(all_stats_merged, ignore_index=True)
-    )
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Visualization Options**")
-
-dataset_key = st.sidebar.selectbox(
-    "Select Dataset",
-    options=['full', 's1', 's2', 'differences'],
-    format_func=lambda k: {
-        'full': 'Full Dataset',
-        's1': 'S1 Partition (90%)',
-        's2': 'S2 Partition (10%)',
-        'differences': 'Differences (S1 - S2)'
-    }[k],
-    help="Choose which dataset partition to analyze"
-)
-
-st.markdown("### Current Selection")
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Environment", selected_env)
-with col2:
-    st.metric("Policy", selected_policy_display)
-with col3:
-    st.metric("Methods", len(selected_methods))
-
-st.markdown("---")
-
-# Section 1: Analysis for specific n_episodes
-st.header("📊 Analysis for Specific Training Size")
-
-selected_n_ep_single = st.selectbox(
-    "Select training data size to analyze:",
-    all_n_episodes_for_policy,
-    format_func=lambda x: f"{x} episodes"
-)
-
-# Load stats for selected n_episodes only
-import json
-try:
-    selected_predictions_json = json.dumps(selected_predictions)
-
-    stats_single, stats_s1_single, stats_s2_single, stats_merged_single = load_stats_for_n_episodes(
-        selected_predictions_json,
-        selected_n_ep_single,
-        methods_to_load
-    )
-
-    if stats_single is None:
-        st.error(f"No data available for {selected_n_ep_single} episodes")
-        st.stop()
-
-    # Map dataset selection to appropriate stats
-    dataset_map_single = {
-        'full': stats_single,
-        's1': stats_s1_single,
-        's2': stats_s2_single,
-        'differences': stats_merged_single
-    }
-    stats_single_n_ep = dataset_map_single[dataset_key]
-
-except Exception as e:
-    print(f"[ERROR] Failed to load stats for {selected_n_ep_single} episodes")
-    print(f"[ERROR] Exception type: {type(e).__name__}")
-    print(f"[ERROR] Exception message: {str(e)}")
-    print(f"[ERROR] Full traceback:")
-    traceback.print_exc()
-    st.error(f"Failed to load stats for {selected_n_ep_single} episodes: {str(e)}")
-    st.code(traceback.format_exc())
-    st.stop()
-
-metric_key_single = st.selectbox(
-    "Select metric:",
-    list(METRICS.keys()),
-    format_func=lambda k: METRICS[k]['name'],
-    key="metric_single"
-)
-
-metric_info_single = METRICS[metric_key_single]
-
-st.markdown(f"**{metric_info_single['name']}**: {metric_info_single['description']}")
-st.markdown(f"_Using dataset: **{dataset_key}** | Training: **{selected_n_ep_single} episodes**_")
-
-try:
-    print(f"[METRIC] Computing metric '{metric_key_single}' for single n_episodes={selected_n_ep_single}")
-    print(f"[METRIC] Methods in stats: {stats_single_n_ep['method'].unique()}")
-    metric_data_single = compute_metric(stats_single_n_ep, metric_key_single)
-    filtered_single = metric_data_single[metric_data_single['method'].isin(selected_methods)]
-    print(f"[METRIC] Filtered to {len(filtered_single)} data points")
-
-    if len(filtered_single) == 0:
-        st.warning("No data available for selected filters")
-    else:
-        col1, col2 = st.columns([3, 1])
-
-        with col1:
-            fig1 = px.histogram(
-                filtered_single,
-                x='metric_value',
-                color='method',
-                nbins=40,
-                title=f"{metric_info_single['name']} Distribution ({selected_n_ep_single} episodes)",
-                labels={'metric_value': metric_info_single['name'], 'count': 'Frequency'},
-                opacity=0.7,
-                barmode='overlay'
+        if metric_info['reference_line'] is not None:
+            fig.add_vline(
+                x=metric_info['reference_line'], line_dash="dash", line_color="red",
+                annotation_text=metric_info['reference_label']
             )
 
-            if metric_info_single['reference_line'] is not None:
-                fig1.add_vline(x=metric_info_single['reference_line'], line_dash="dash", line_color="red",
-                             annotation_text=metric_info_single['reference_label'])
-            fig1.update_layout(height=500)
-            st.plotly_chart(fig1, use_container_width=True)
+        fig.update_layout(height=500)
+        st.plotly_chart(fig, use_container_width=True)
 
-        with col2:
-            st.markdown("**Statistics**")
-            summary = filtered_single.groupby('method')['metric_value'].agg(
-                mean='mean',
-                std='std'
-            ).reset_index()
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-
-except Exception as e:
-    st.error(f"Failed to compute metric: {str(e)}")
-    st.code(traceback.format_exc())
-
-st.markdown("---")
-
-# Section 2: Evolution across n_episodes
-st.header("📈 Evolution Across Training Sizes")
-
-metric_key_evolution = st.selectbox(
-    "Select metric for evolution:",
-    list(METRICS.keys()),
-    format_func=lambda k: METRICS[k]['name'],
-    key="metric_evolution"
-)
-
-metric_info_evolution = METRICS[metric_key_evolution]
-
-st.markdown(f"**{metric_info_evolution['name']}** evolution across training data sizes")
-st.markdown(f"_Using dataset: **{dataset_key}**_")
-
-try:
-    # Load stats incrementally for each n_episodes and compute evolution
-    print(f"[EVOLUTION] Computing evolution across {len(all_n_episodes_for_policy)} n_episodes values")
-    evolution_data = []
-
-    progress_bar = st.progress(0, text="Loading data for evolution plot...")
-
-    for idx, n_ep in enumerate(all_n_episodes_for_policy):
-        stats_full_ep, stats_s1_ep, stats_s2_ep, stats_merged_ep = load_stats_for_n_episodes(
-            selected_predictions_json,
-            n_ep,
-            methods_to_load
-        )
-
-        if stats_full_ep is None:
-            continue
-
-        dataset_map_ep = {
-            'full': stats_full_ep,
-            's1': stats_s1_ep,
-            's2': stats_s2_ep,
-            'differences': stats_merged_ep
-        }
-        current_stats_ep = dataset_map_ep[dataset_key]
-
-        # Compute metric for this n_episodes
-        print(f"[EVOLUTION] n_ep={n_ep}, Methods in stats: {current_stats_ep['method'].unique()}")
-        metric_data_ep = compute_metric(current_stats_ep, metric_key_evolution)
-        filtered_ep = metric_data_ep[metric_data_ep['method'].isin(selected_methods)]
-
-        # Aggregate by method
-        summary_ep = filtered_ep.groupby(['method'])['metric_value'].agg(
-            mean='mean',
-            std='std'
+    with col2:
+        st.markdown("**Statistics**")
+        summary = filtered.groupby('method')['metric_value'].agg(
+            mean='mean', std='std'
         ).reset_index()
-        summary_ep['n_episodes'] = n_ep
+        st.dataframe(summary, use_container_width=True, hide_index=True)
 
-        evolution_data.append(summary_ep)
 
-        progress_bar.progress((idx + 1) / len(all_n_episodes_for_policy),
-                            text=f"Loading {n_ep} episodes...")
+def plot_metric_evolution(all_stats_df, metric_key, methods):
+    """Create evolution plot across n_episodes."""
+    metric_info = METRICS[metric_key]
+    metric_data = compute_metric(all_stats_df, metric_key)
+    filtered = metric_data[metric_data['method'].isin(methods)]
 
-    progress_bar.empty()
+    if filtered.empty:
+        st.warning("No data available")
+        return
 
-    if not evolution_data:
-        st.warning("No data available for evolution plot")
-        st.stop()
+    # Aggregate by method and n_episodes
+    summary = filtered.groupby(['method', 'n_episodes'])['metric_value'].agg(
+        mean='mean', std='std'
+    ).reset_index()
 
-    # Combine all evolution data
-    evolution_summary = pd.concat(evolution_data, ignore_index=True)
+    fig = go.Figure()
 
-    fig_evolution = go.Figure()
-
-    for method in selected_methods:
-        method_data = evolution_summary[evolution_summary['method'] == method]
-        fig_evolution.add_trace(go.Scatter(
+    for method in methods:
+        method_data = summary[summary['method'] == method]
+        fig.add_trace(go.Scatter(
             x=method_data['n_episodes'],
             y=method_data['mean'],
             error_y=dict(type='data', array=method_data['std']),
@@ -540,31 +218,120 @@ try:
             marker=dict(size=10)
         ))
 
-    if metric_info_evolution['reference_line'] is not None:
-        fig_evolution.add_hline(
-            y=metric_info_evolution['reference_line'],
-            line_dash="dash",
-            line_color="red",
-            annotation_text=metric_info_evolution['reference_label']
+    if metric_info['reference_line'] is not None:
+        fig.add_hline(
+            y=metric_info['reference_line'], line_dash="dash", line_color="red",
+            annotation_text=metric_info['reference_label']
         )
 
-    fig_evolution.update_layout(
-        title=f"Mean {metric_info_evolution['name']} vs Training Data Size",
+    fig.update_layout(
+        title=f"{metric_info['name']} vs Training Data Size",
         xaxis_title="Training Episodes",
-        yaxis_title=f"Mean {metric_info_evolution['name']} (± std)",
-        height=500,
-        showlegend=True
+        yaxis_title=f"Mean {metric_info['name']} (± std)",
+        height=500
     )
 
-    st.plotly_chart(fig_evolution, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
-    # Show data table
-    with st.expander("Show evolution data table"):
-        st.dataframe(evolution_summary, use_container_width=True)
+    with st.expander("Show data table"):
+        st.dataframe(summary, use_container_width=True)
 
-except Exception as e:
-    st.error(f"Failed to create evolution plot: {str(e)}")
-    st.code(traceback.format_exc())
+
+# Main App
+
+st.title("Value Estimator Variance Analysis")
+st.markdown("Compare variance and performance of different value estimation methods")
+
+# Load data
+experiments_dir = Path("experiments")
+if not experiments_dir.exists():
+    st.error(f"Experiments directory not found: {experiments_dir.absolute()}")
+    st.stop()
+
+metadata_df = load_predictions_data(str(experiments_dir))
+if metadata_df.empty:
+    st.error("No predictions found. Run: `python -m src.evaluate --config <config>.yaml`")
+    st.stop()
+
+# Sidebar filters
+filtered_metadata, env, policy, methods, dataset_type = show_selection_filters(metadata_df)
+
+if not methods:
+    st.warning("Please select at least one method")
+    st.stop()
+
+# Show current selection
+st.markdown("### Current Selection")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Environment", env)
+with col2:
+    st.metric("Policy", policy)
+with col3:
+    st.metric("Methods", len(methods))
 
 st.markdown("---")
-st.caption(f"Experiment: {experiment_id} | Policy: {selected_policy_display}")
+
+# Section 1: Single n_episodes analysis
+st.header("📊 Analysis for Specific Training Size")
+
+n_episodes_values = sorted(filtered_metadata['n_episodes'].unique())
+selected_n_ep = st.selectbox(
+    "Training data size:",
+    n_episodes_values,
+    format_func=lambda x: f"{x} episodes"
+)
+
+# Load stats for selected n_episodes
+stats_single = load_all_stats(
+    filtered_metadata[filtered_metadata['n_episodes'] == selected_n_ep],
+    methods + ['monte_carlo'],
+    [selected_n_ep],
+    dataset_type
+)
+
+if stats_single.empty:
+    st.error(f"No data for {selected_n_ep} episodes")
+    st.stop()
+
+metric_key_single = st.selectbox(
+    "Metric:",
+    list(METRICS.keys()),
+    format_func=lambda k: METRICS[k]['name'],
+    key="metric_single"
+)
+
+st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
+plot_metric_distribution(stats_single, metric_key_single, methods, selected_n_ep)
+
+st.markdown("---")
+
+# Section 2: Evolution across n_episodes
+st.header("📈 Evolution Across Training Sizes")
+
+metric_key_evolution = st.selectbox(
+    "Metric:",
+    list(METRICS.keys()),
+    format_func=lambda k: METRICS[k]['name'],
+    key="metric_evolution"
+)
+
+st.markdown(f"**{METRICS[metric_key_evolution]['name']}** evolution across training data sizes")
+
+# Load stats for all n_episodes
+with st.spinner("Loading data..."):
+    stats_all = load_all_stats(
+        filtered_metadata,
+        methods + ['monte_carlo'],
+        n_episodes_values,
+        dataset_type
+    )
+
+if stats_all.empty:
+    st.error("No data available for evolution plot")
+    st.stop()
+
+plot_metric_evolution(stats_all, metric_key_evolution, methods)
+
+st.markdown("---")
+st.caption(f"Dataset: {dataset_type} | Policy: {policy}")
