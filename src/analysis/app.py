@@ -11,8 +11,8 @@ import traceback
 from metrics import METRICS, compute_metric
 from metadata_discovery import (
     discover_predictions,
-    get_selection_hierarchy,
-    filter_estimators
+    build_selection_tree,
+    SelectionTreeNode
 )
 
 
@@ -21,6 +21,13 @@ PRIMARY_SELECTION_KEYS = [
     ('policy_display_name', 'Policy'),
     ('n_episodes', 'Training Data Amount'),
 ]
+
+# Mapping of keys to display names
+KEY_DISPLAY_NAMES = {
+    'policy_environment': 'Environment',
+    'policy_display_name': 'Policy',
+    'n_episodes': 'Training Data Amount',
+}
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
@@ -133,90 +140,117 @@ except Exception as e:
     st.code(traceback.format_exc())
     st.stop()
 
+# Build selection tree
+primary_keys = [key for key, _ in PRIMARY_SELECTION_KEYS]
+selection_tree = build_selection_tree(all_predictions, primary_keys)
+
+# Initialize session state for selections
+if 'selections' not in st.session_state:
+    st.session_state.selections = {}
+if 'selection_depth' not in st.session_state:
+    st.session_state.selection_depth = 0
+
 st.sidebar.header("Hierarchical Selection")
 
-current_filters = {}
-primary_keys = [key for key, _ in PRIMARY_SELECTION_KEYS]
+# Navigate down the tree based on current selections
+current_node = selection_tree
+selection_path = []
+selector_counter = 0
 
-for step_num, (key, display_name) in enumerate(PRIMARY_SELECTION_KEYS, 1):
-    hierarchy = get_selection_hierarchy(all_predictions, primary_keys, current_filters)
+# Keys to exclude from additional selectors
+exclude_keys = {'method', 'n_batches', 'n_states', 'n_eval_episodes', 'created_at', 'predictions_path', 'metadata_path'}
 
-    if hierarchy['next_key'] != key:
+while not current_node.is_leaf():
+    # Automatically navigate single branches
+    if current_node.has_single_branch():
+        value, child_node = current_node.get_single_child()
+        selection_path.append((current_node.branch_key, value))
+        current_node = child_node
         continue
 
-    available_values = hierarchy['available_values']
+    # Need user selection
+    branch_key = current_node.branch_key
+    available_values = sorted(current_node.children.keys())
 
-    if not available_values:
-        st.error(f"No values available for {display_name}")
-        st.stop()
+    # Get display name for this key
+    display_name = KEY_DISPLAY_NAMES.get(branch_key, branch_key.replace('_', ' ').title())
 
+    # Create unique key for this selector
+    selector_key = f"selector_{selector_counter}_{branch_key}"
+    selector_counter += 1
+
+    # Check if we need to reset selections (upstream change)
+    if selector_key not in st.session_state.selections:
+        # New selector - clear all downstream selections
+        keys_to_remove = [k for k in st.session_state.selections.keys()
+                         if k.startswith(f"selector_{selector_counter}")]
+        for k in keys_to_remove:
+            del st.session_state.selections[k]
+
+    # Get current selection or default to first value
+    current_selection = st.session_state.selections.get(selector_key, available_values[0])
+
+    # Handle special formatting
+    format_func = None
+    if branch_key == 'n_episodes':
+        format_func = lambda x: f"{x} episodes"
+
+    # Create selector
     selectbox_kwargs = {
-        'label': f"{step_num}. {display_name}",
+        'label': f"{len(selection_path) + 1}. {display_name}",
         'options': available_values,
+        'key': selector_key,
         'help': f"Choose {display_name.lower()}"
     }
-
-    if key == 'n_episodes':
-        selectbox_kwargs['format_func'] = lambda x: f"{x} episodes"
+    if format_func:
+        selectbox_kwargs['format_func'] = format_func
 
     selected_value = st.sidebar.selectbox(**selectbox_kwargs)
 
-    current_filters[key] = selected_value
+    # Detect if selection changed
+    if selected_value != current_selection:
+        # Clear downstream selections
+        keys_to_remove = [k for k in st.session_state.selections.keys()
+                         if k.startswith(f"selector_{selector_counter}")]
+        for k in keys_to_remove:
+            del st.session_state.selections[k]
 
-    if key == 'policy_display_name':
-        filtered_predictions = hierarchy['current_estimators']
-        filtered_predictions = filter_estimators(filtered_predictions, key, selected_value)
+    # Update session state
+    st.session_state.selections[selector_key] = selected_value
 
-        if filtered_predictions:
-            sample_pred = filtered_predictions[0]
-            with st.sidebar.expander("Policy Details"):
-                st.markdown(f"**Algorithm:** {sample_pred.get('policy_algorithm')}")
-                st.markdown(f"**Seed:** {sample_pred.get('policy_seed')}")
-                if sample_pred.get('policy_average_reward') is not None:
-                    st.markdown(f"**Avg Reward:** {sample_pred.get('policy_average_reward'):.2f}")
-                st.markdown(f"**Learning Rate:** {sample_pred.get('policy_learning_rate')}")
-                st.markdown(f"**Gamma:** {sample_pred.get('policy_gamma')}")
-                st.markdown(f"**Total Timesteps:** {sample_pred.get('policy_total_timesteps')}")
+    # Show policy details after policy selection
+    if branch_key == 'policy_display_name':
+        child_node = current_node.children[selected_value]
+        sample_idx = child_node.indices[0]
+        sample_pred = all_predictions[sample_idx]
+        with st.sidebar.expander("Policy Details"):
+            st.markdown(f"**Algorithm:** {sample_pred.get('policy_algorithm')}")
+            st.markdown(f"**Seed:** {sample_pred.get('policy_seed')}")
+            if sample_pred.get('policy_average_reward') is not None:
+                st.markdown(f"**Avg Reward:** {sample_pred.get('policy_average_reward'):.2f}")
+            st.markdown(f"**Learning Rate:** {sample_pred.get('policy_learning_rate')}")
+            st.markdown(f"**Gamma:** {sample_pred.get('policy_gamma')}")
+            st.markdown(f"**Total Timesteps:** {sample_pred.get('policy_total_timesteps')}")
 
-final_hierarchy = get_selection_hierarchy(all_predictions, primary_keys, current_filters)
-selected_predictions = final_hierarchy['current_estimators']
+    # Move to next node
+    selection_path.append((branch_key, selected_value))
+    current_node = current_node.children[selected_value]
+
+# Get final predictions
+selected_predictions = [all_predictions[i] for i in current_node.indices]
 
 if not selected_predictions:
     st.error("No predictions found for the selected criteria")
     st.stop()
 
-additional_params = final_hierarchy['additional_params']
-
-if additional_params:
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Additional Parameters**")
-
-    additional_params = [p for p in additional_params if p['key'] not in ['method', 'n_batches', 'n_states', 'n_eval_episodes', 'created_at']]
-
-    if additional_params:
-        for param_info in additional_params:
-            param_key = param_info['key']
-            param_values = param_info['values']
-
-            display_key = param_key.replace('_', ' ').title()
-
-            selected_param_value = st.sidebar.selectbox(
-                display_key,
-                param_values,
-                help=f"Choose {display_key.lower()}"
-            )
-
-            selected_predictions = filter_estimators(selected_predictions, param_key, selected_param_value)
-
-if not selected_predictions:
-    st.error("No predictions remaining after filtering")
-    st.stop()
+# Extract selected values from selection path
+selected_values = {key: value for key, value in selection_path}
 
 sample_prediction = selected_predictions[0]
 experiment_id = sample_prediction['experiment_id']
-selected_env = sample_prediction['policy_environment']
-selected_policy_display = sample_prediction['policy_display_name']
-selected_n_episodes = sample_prediction['n_episodes']
+selected_env = selected_values.get('policy_environment', sample_prediction.get('policy_environment'))
+selected_policy_display = selected_values.get('policy_display_name', sample_prediction.get('policy_display_name'))
+selected_n_episodes = selected_values.get('n_episodes', sample_prediction.get('n_episodes'))
 
 # Get all available methods and n_episodes for this environment/policy
 all_methods_for_policy = sorted(set(pred['method'] for pred in selected_predictions))

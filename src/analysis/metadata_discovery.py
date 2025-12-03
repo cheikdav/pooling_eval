@@ -248,3 +248,125 @@ def get_selection_hierarchy(
     return result
 
 
+class SelectionTreeNode:
+    """Node in the selection tree for parameter filtering."""
+
+    def __init__(self, indices: List[int], branch_key: Optional[str] = None):
+        """Initialize a tree node.
+
+        Args:
+            indices: List of indices into all_predictions for this node
+            branch_key: The parameter key to branch on at this level (None for leaf)
+        """
+        self.indices = indices
+        self.branch_key = branch_key
+        self.children = {}  # Maps value -> child node
+
+    def is_leaf(self) -> bool:
+        """Check if this is a leaf node (single element or no branching)."""
+        return len(self.indices) <= 1 or not self.children
+
+    def has_single_branch(self) -> bool:
+        """Check if this node has exactly one child."""
+        return len(self.children) == 1
+
+    def get_single_child(self) -> tuple:
+        """Get the single child (value, node) if has_single_branch is True."""
+        if not self.has_single_branch():
+            raise ValueError("Node does not have exactly one child")
+        return next(iter(self.children.items()))
+
+
+def build_selection_tree(
+    all_predictions: List[Dict[str, Any]],
+    primary_keys: List[str]
+) -> SelectionTreeNode:
+    """Build a tree structure for parameter selection.
+
+    The tree branches on parameters in the following order:
+    1. First, branch on all primary_keys in order
+    2. Then, recursively branch on any remaining keys where values differ
+
+    Args:
+        all_predictions: List of all prediction metadata dicts
+        primary_keys: List of keys to branch on first (in order)
+
+    Returns:
+        Root node of the selection tree
+    """
+    root_indices = list(range(len(all_predictions)))
+    root = SelectionTreeNode(root_indices)
+
+    # Build tree recursively
+    _build_tree_recursive(root, all_predictions, primary_keys.copy())
+
+    return root
+
+
+def _build_tree_recursive(
+    node: SelectionTreeNode,
+    all_predictions: List[Dict[str, Any]],
+    remaining_primary_keys: List[str]
+):
+    """Recursively build the selection tree."""
+
+    # Base case: single element
+    if len(node.indices) <= 1:
+        return
+
+    # Get predictions for this node
+    node_predictions = [all_predictions[i] for i in node.indices]
+
+    # Determine which key to branch on
+    branch_key = None
+
+    # First try remaining primary keys
+    if remaining_primary_keys:
+        branch_key = remaining_primary_keys[0]
+        remaining_primary_keys = remaining_primary_keys[1:]
+    else:
+        # Find any key where values differ, excluding special keys
+        exclude_keys = {'predictions_path', 'metadata_path', 'created_at'}
+
+        for key in node_predictions[0].keys():
+            if key in exclude_keys or key.endswith('_path'):
+                continue
+
+            # Check if this key has different values
+            values = set()
+            for pred in node_predictions:
+                val = pred.get(key)
+                # Convert unhashable types to string
+                if isinstance(val, (dict, list)):
+                    val = str(val)
+                values.add(val)
+
+            if len(values) > 1:
+                branch_key = key
+                break
+
+    # If no key to branch on, this is a leaf
+    if branch_key is None:
+        return
+
+    node.branch_key = branch_key
+
+    # Group indices by value for this key
+    value_to_indices = {}
+    for idx in node.indices:
+        val = all_predictions[idx].get(branch_key)
+        # Convert unhashable types to string for dict key
+        if isinstance(val, (dict, list)):
+            val = str(val)
+
+        if val not in value_to_indices:
+            value_to_indices[val] = []
+        value_to_indices[val].append(idx)
+
+    # Create child nodes and recurse
+    for value, child_indices in value_to_indices.items():
+        child_node = SelectionTreeNode(child_indices)
+        node.children[value] = child_node
+        _build_tree_recursive(child_node, all_predictions, remaining_primary_keys.copy())
+
+
