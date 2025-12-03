@@ -279,6 +279,8 @@ if not selected_methods:
 
 print(f"[SELECT] Methods: {selected_methods}")
 
+# Always include Monte Carlo for metric computation (needed for ratio calculations)
+methods_to_load = list(set(['monte_carlo'] + selected_methods))
 
 @st.cache_data
 def load_stats_for_n_episodes(selected_predictions_json, n_ep, methods):
@@ -372,7 +374,6 @@ selected_n_ep_single = st.selectbox(
 # Load stats for selected n_episodes only
 import json
 try:
-    methods_to_load = ['monte_carlo'] + selected_methods if 'monte_carlo' not in selected_methods else selected_methods
     selected_predictions_json = json.dumps(selected_predictions)
 
     stats_single, stats_s1_single, stats_s2_single, stats_merged_single = load_stats_for_n_episodes(
@@ -418,6 +419,7 @@ st.markdown(f"_Using dataset: **{dataset_key}** | Training: **{selected_n_ep_sin
 
 try:
     print(f"[METRIC] Computing metric '{metric_key_single}' for single n_episodes={selected_n_ep_single}")
+    print(f"[METRIC] Methods in stats: {stats_single_n_ep['method'].unique()}")
     metric_data_single = compute_metric(stats_single_n_ep, metric_key_single)
     filtered_single = metric_data_single[metric_data_single['method'].isin(selected_methods)]
     print(f"[METRIC] Filtered to {len(filtered_single)} data points")
@@ -500,6 +502,7 @@ try:
         current_stats_ep = dataset_map_ep[dataset_key]
 
         # Compute metric for this n_episodes
+        print(f"[EVOLUTION] n_ep={n_ep}, Methods in stats: {current_stats_ep['method'].unique()}")
         metric_data_ep = compute_metric(current_stats_ep, metric_key_evolution)
         filtered_ep = metric_data_ep[metric_data_ep['method'].isin(selected_methods)]
 
