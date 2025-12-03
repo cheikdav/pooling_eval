@@ -150,16 +150,16 @@ for step_num, (key, display_name) in enumerate(PRIMARY_SELECTION_KEYS, 1):
         st.error(f"No values available for {display_name}")
         st.stop()
 
-    format_func = None
-    if key == 'n_episodes':
-        format_func = lambda x: f"{x} episodes"
+    selectbox_kwargs = {
+        'label': f"{step_num}. {display_name}",
+        'options': available_values,
+        'help': f"Choose {display_name.lower()}"
+    }
 
-    selected_value = st.sidebar.selectbox(
-        f"{step_num}. {display_name}",
-        available_values,
-        format_func=format_func,
-        help=f"Choose {display_name.lower()}"
-    )
+    if key == 'n_episodes':
+        selectbox_kwargs['format_func'] = lambda x: f"{x} episodes"
+
+    selected_value = st.sidebar.selectbox(**selectbox_kwargs)
 
     current_filters[key] = selected_value
 
