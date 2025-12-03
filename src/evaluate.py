@@ -228,7 +228,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
 
             # Process this n_episodes and save immediately
             predictions_file = generate_predictions_for_n_episodes(
-                experiment_dir, config, eval_batch, results_dir,
+                config, eval_batch, results_dir,
                 method_name, n_episodes, n_ep_dir, device
             )
 
