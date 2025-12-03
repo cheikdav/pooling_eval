@@ -395,6 +395,11 @@ try:
     stats_single_n_ep = dataset_map_single[dataset_key]
 
 except Exception as e:
+    print(f"[ERROR] Failed to load stats for {selected_n_ep_single} episodes")
+    print(f"[ERROR] Exception type: {type(e).__name__}")
+    print(f"[ERROR] Exception message: {str(e)}")
+    print(f"[ERROR] Full traceback:")
+    traceback.print_exc()
     st.error(f"Failed to load stats for {selected_n_ep_single} episodes: {str(e)}")
     st.code(traceback.format_exc())
     st.stop()
