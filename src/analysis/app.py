@@ -51,7 +51,9 @@ def load_and_compute_stats(predictions_path, method, n_episodes, s1_proportion=0
         Tuple of 4 stats DataFrames: (stats_full, stats_s1, stats_s2, stats_merged)
         Each stats DataFrame has columns: state_idx, method, n_episodes, mean, variance, std, count
     """
+    print(f"[LOAD] Reading parquet: {predictions_path}")
     df = pd.read_parquet(predictions_path)
+    print(f"[LOAD] Loaded {len(df)} rows, {len(df['episode_idx'].unique())} episodes")
 
     def compute_stats(dataframe, method_name, n_eps):
         """Helper to compute stats from a predictions dataframe."""
@@ -129,19 +131,23 @@ if not experiments_dir.exists():
     st.error(f"Experiments directory not found at {experiments_dir.absolute()}")
     st.stop()
 
+print(f"[INIT] Discovering predictions in {experiments_dir.absolute()}")
 try:
     all_predictions = discover_predictions(experiments_dir)
+    print(f"[INIT] Found {len(all_predictions)} prediction files")
     if not all_predictions:
         st.error("No predictions with metadata found in experiments directory")
         st.info("Run: `python -m src.evaluate --config <your_config>.yaml` to generate predictions.")
         st.stop()
 except Exception as e:
+    print(f"[ERROR] Failed to discover predictions: {str(e)}")
     st.error(f"Failed to discover predictions: {str(e)}")
     st.code(traceback.format_exc())
     st.stop()
 
 # Build selection tree
 primary_keys = [key for key, _ in PRIMARY_SELECTION_KEYS]
+print(f"[INIT] Building selection tree with keys: {primary_keys}")
 selection_tree = build_selection_tree(all_predictions, primary_keys)
 
 # Initialize session state for selections
@@ -238,6 +244,7 @@ while not current_node.is_leaf():
 
 # Get final predictions
 selected_predictions = [all_predictions[i] for i in current_node.indices]
+print(f"[SELECT] Selected {len(selected_predictions)} predictions after filtering")
 
 if not selected_predictions:
     st.error("No predictions found for the selected criteria")
@@ -270,6 +277,8 @@ if not selected_methods:
     st.warning("Please select at least one method")
     st.stop()
 
+print(f"[SELECT] Methods: {selected_methods}")
+
 
 @st.cache_data
 def load_stats_for_n_episodes(selected_predictions_json, n_ep, methods):
@@ -285,6 +294,7 @@ def load_stats_for_n_episodes(selected_predictions_json, n_ep, methods):
     """
     import json
     selected_preds = json.loads(selected_predictions_json)
+    print(f"[STATS] Loading stats for n_episodes={n_ep}, methods={methods}")
 
     all_stats = []
     all_stats_s1 = []
@@ -313,8 +323,10 @@ def load_stats_for_n_episodes(selected_predictions_json, n_ep, methods):
         all_stats_merged.append(stats_merged)
 
     if not all_stats:
+        print(f"[STATS] No stats loaded for n_episodes={n_ep}")
         return None, None, None, None
 
+    print(f"[STATS] Concatenating stats from {len(all_stats)} methods")
     return (
         pd.concat(all_stats, ignore_index=True),
         pd.concat(all_stats_s1, ignore_index=True),
@@ -400,8 +412,10 @@ st.markdown(f"**{metric_info_single['name']}**: {metric_info_single['description
 st.markdown(f"_Using dataset: **{dataset_key}** | Training: **{selected_n_ep_single} episodes**_")
 
 try:
+    print(f"[METRIC] Computing metric '{metric_key_single}' for single n_episodes={selected_n_ep_single}")
     metric_data_single = compute_metric(stats_single_n_ep, metric_key_single)
     filtered_single = metric_data_single[metric_data_single['method'].isin(selected_methods)]
+    print(f"[METRIC] Filtered to {len(filtered_single)} data points")
 
     if len(filtered_single) == 0:
         st.warning("No data available for selected filters")
@@ -457,6 +471,7 @@ st.markdown(f"_Using dataset: **{dataset_key}**_")
 
 try:
     # Load stats incrementally for each n_episodes and compute evolution
+    print(f"[EVOLUTION] Computing evolution across {len(all_n_episodes_for_policy)} n_episodes values")
     evolution_data = []
 
     progress_bar = st.progress(0, text="Loading data for evolution plot...")
