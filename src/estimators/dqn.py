@@ -83,6 +83,7 @@ class DQNEstimator(ValueEstimator):
         dones_tensor = torch.FloatTensor(batch['dones']).to(self.device)
 
         with torch.no_grad():
+            # Normalization happens inside target network
             next_values = self.target_net(next_obs_tensor).squeeze(-1)
             targets = rewards_tensor + self.discount_factor * next_values * (1 - dones_tensor)
 

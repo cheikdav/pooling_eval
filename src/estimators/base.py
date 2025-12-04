@@ -8,14 +8,73 @@ import torch.nn as nn
 import numpy as np
 
 
+class RunningNormalizer:
+    """Tracks running mean and std for online normalization."""
+
+    def __init__(self, epsilon: float = 1e-8):
+        self.epsilon = epsilon
+        self.mean = 0.0
+        self.var = 1.0
+        self.count = 0
+
+    def update(self, values: torch.Tensor):
+        """Update statistics with new batch of values."""
+        batch_mean = values.mean().item()
+        batch_var = values.var().item()
+        batch_count = values.numel()
+
+        delta = batch_mean - self.mean
+        total_count = self.count + batch_count
+
+        # Welford's online algorithm for running statistics
+        self.mean = self.mean + delta * batch_count / total_count
+        m_a = self.var * self.count
+        m_b = batch_var * batch_count
+        M2 = m_a + m_b + delta**2 * self.count * batch_count / total_count
+        self.var = M2 / total_count
+        self.count = total_count
+
+    def normalize(self, values: torch.Tensor) -> torch.Tensor:
+        """Normalize values using running statistics."""
+        std = np.sqrt(self.var + self.epsilon)
+        return (values - self.mean) / std
+
+    def denormalize(self, values: torch.Tensor) -> torch.Tensor:
+        """Denormalize values back to original scale."""
+        std = np.sqrt(self.var + self.epsilon)
+        return values * std + self.mean
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Get state for saving."""
+        return {
+            'mean': self.mean,
+            'var': self.var,
+            'count': self.count,
+            'epsilon': self.epsilon,
+        }
+
+    def load_state_dict(self, state: Dict[str, Any]):
+        """Load state from checkpoint."""
+        self.mean = state['mean']
+        self.var = state['var']
+        self.count = state['count']
+        self.epsilon = state['epsilon']
+
+
 class ValueNetwork(nn.Module):
     """Simple MLP for value function approximation."""
 
-    def __init__(self, input_dim: int, hidden_sizes: list, activation: str = "relu"):
+    def __init__(self, input_dim: int, hidden_sizes: list, activation: str = "relu", normalize_observations: bool = True):
         super().__init__()
 
         self.input_dim = input_dim
         self.hidden_sizes = hidden_sizes
+        self.normalize_observations = normalize_observations
+
+        if self.normalize_observations:
+            self.obs_normalizer = RunningNormalizer()
+        else:
+            self.obs_normalizer = None
 
         # Build network layers
         layers = []
@@ -45,6 +104,11 @@ class ValueNetwork(nn.Module):
         Returns:
             Value estimates of shape (batch_size, 1)
         """
+        if self.normalize_observations:
+            if self.training:
+                self.obs_normalizer.update(x)
+            x = self.obs_normalizer.normalize(x)
+
         return self.network(x)
 
 
@@ -58,7 +122,8 @@ class ValueEstimator(ABC):
         discount_factor: float,
         activation: str = "relu",
         learning_rate: float = 0.001,
-        device: str = "auto"
+        device: str = "auto",
+        normalize_observations: bool = True
     ):
         """Initialize value estimator.
 
@@ -69,26 +134,22 @@ class ValueEstimator(ABC):
             activation: Activation function ('relu' or 'tanh')
             learning_rate: Learning rate for optimizer
             device: Device to use ('auto', 'cpu', or 'cuda')
+            normalize_observations: Whether to normalize observations using running statistics
         """
         self.obs_dim = obs_dim
         self.hidden_sizes = hidden_sizes
         self.discount_factor = discount_factor
         self.activation = activation
         self.learning_rate = learning_rate
+        self.normalize_observations = normalize_observations
 
-        # Set device
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        # Create value network
-        self.value_net = ValueNetwork(obs_dim, hidden_sizes, activation).to(self.device)
-
-        # Create optimizer
+        self.value_net = ValueNetwork(obs_dim, hidden_sizes, activation, normalize_observations).to(self.device)
         self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=learning_rate)
-
-        # Training statistics
         self.training_step = 0
 
     @classmethod
@@ -161,24 +222,18 @@ class ValueEstimator(ABC):
         """
         self.value_net.train()
 
-        # Compute targets (method-specific)
-        targets = self.compute_targets(batch)
-
-        # Get observations
         obs = torch.FloatTensor(batch['observations']).to(self.device)
-        # Forward pass
+        targets = self.compute_targets(batch)
         values = self.value_net(obs).squeeze(-1)
 
-        # Compute loss
         loss = nn.functional.mse_loss(values, targets)
         with torch.no_grad():
             mae = torch.abs(values - targets).mean().item()
 
-            # Compute MC loss (against ground truth MC returns)
+            # Compute loss against ground truth MC returns
             mc_returns = torch.FloatTensor(batch['mc_returns']).to(self.device)
             mc_loss = nn.functional.mse_loss(values, mc_returns).item()
 
-        # Backward pass
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -224,6 +279,7 @@ class ValueEstimator(ABC):
             'hidden_sizes': self.hidden_sizes,
             'activation': self.activation,
             'learning_rate': self.learning_rate,
+            'normalize_observations': self.normalize_observations,
         }, path)
 
     def load(self, path: Path):
