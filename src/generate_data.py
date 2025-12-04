@@ -313,6 +313,8 @@ def main():
                        help="Path to trained policy (default: experiments/<experiment_id>/policy/policy_final.zip)")
     parser.add_argument("--output-dir", type=Path, default=None,
                        help="Output directory (default: experiments/<experiment_id>/data)")
+    parser.add_argument("--start-batch-idx", type=int, default=0,
+                       help="Skip batches before this index (for resuming interrupted runs)")
     args = parser.parse_args()
 
     # Load configuration
@@ -334,7 +336,7 @@ def main():
     config.save(output_dir / "config.yaml")
 
     # Generate data
-    generate_data(config, policy_path, output_dir)
+    generate_data(config, policy_path, output_dir, start_batch_idx=args.start_batch_idx)
 
 
 if __name__ == "__main__":
