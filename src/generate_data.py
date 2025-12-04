@@ -187,13 +187,14 @@ def save_and_log_batch(batch_data: dict, output_path: Path, batch_name: str) -> 
     }
 
 
-def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path):
+def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0):
     """Generate n batches of k episodes using trained policy.
 
     Args:
         config: Experiment configuration
         policy_path: Path to trained policy (.zip file)
         output_dir: Directory to save generated data
+        start_batch_idx: Skip batches before this index (for resuming interrupted runs)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -231,14 +232,17 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
 
 
     batches_to_generate = []
-
+    if config.data_generation.tuning_episodes > 0:
+        batches_to_generate.append(("batch_tuning", config.data_generation.tuning_episodes))
     # Regular batches
     for i in range(config.data_generation.n_batches):
+        if i < start_batch_idx:
+            batches_to_generate.append((f"skip", 0))
+            continue
         batches_to_generate.append((f"batch_{i}", config.data_generation.episodes_per_batch))
 
     # Special batches
-    if config.data_generation.tuning_episodes > 0:
-        batches_to_generate.append(("batch_tuning", config.data_generation.tuning_episodes))
+
     if config.data_generation.ground_truth_episodes > 0:
         batches_to_generate.append(("batch_ground_truth", config.data_generation.ground_truth_episodes))
     if config.data_generation.eval_episodes > 0:
@@ -247,7 +251,10 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path)
     # Generate all batches
     for batch_name, n_episodes in batches_to_generate:
         print(f"Collecting {batch_name} ({n_episodes} episodes)")
-
+        if batch_name == "skip":
+            print(f"  Skipping batch {batch_name}\n")
+            current_seed += 1
+            continue
         batch_data = collect_batch(
             env=env,
             model=model,
