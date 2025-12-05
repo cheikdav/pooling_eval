@@ -6,6 +6,7 @@ Uses batch_tuning.npz for all hyperparameter search.
 
 import argparse
 from pathlib import Path
+import sys
 import wandb
 
 from src.config import ExperimentConfig
@@ -25,6 +26,16 @@ def main():
 
     # Initialize wandb (will pick up sweep config automatically)
     wandb.init(tags=["hyperparameter-tuning", "sweep"])
+
+    # Redirect stdout/stderr to log file
+    log_dir = Path("experiments") / ExperimentConfig.from_yaml(args.config).experiment_id / "sweeps" / args.method / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{wandb.run.id}.log"
+
+    sys.stdout = open(log_file, 'w', buffering=1)
+    sys.stderr = sys.stdout
+
+    print(f"Sweep agent {wandb.run.id} starting - logging to {log_file}")
 
     # Load base config
     config = ExperimentConfig.from_yaml(args.config)
