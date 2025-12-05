@@ -38,6 +38,10 @@ class DQNEstimator(ValueEstimator):
         self.target_net = copy.deepcopy(self.value_net).to(self.device)
         self.target_net.eval()
 
+        # Share normalizer between value network and target network
+        if self.value_net.obs_normalizer is not None:
+            self.target_net.obs_normalizer = self.value_net.obs_normalizer
+
         # Track when to update target network
         self.steps_since_target_update = 0
 
@@ -80,8 +84,11 @@ class DQNEstimator(ValueEstimator):
         rewards = mini_batch['rewards'].to(self.device)
         dones = mini_batch['dones'].to(self.device)
 
+        # Ensure target network is in eval mode (won't update normalizer)
+        self.target_net.eval()
+
         with torch.no_grad():
-            # Normalization happens inside target network
+            # Normalization happens inside target network but won't update statistics
             next_values = self.target_net(next_obs).squeeze(-1)
             targets = rewards + self.discount_factor * next_values * (1 - dones)
 
