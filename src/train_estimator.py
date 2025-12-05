@@ -135,12 +135,15 @@ def train_single_initialization(
     final_mc_loss_test = float('inf')
     best_mc_loss = float('inf')
     use_test_set = test_batch is not None
+    converged = False
+    final_epoch = 0
 
     # Create dataset once
     dataset = TransitionDataset(train_batch)
     dataloader = None
 
     for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
+        final_epoch = epoch
         # Recreate dataloader when needed for shuffling
         if (dataloader is None or
             (training_config.shuffle_frequency > 0 and epoch % training_config.shuffle_frequency == 0)):
@@ -173,7 +176,7 @@ def train_single_initialization(
         loss_history.append(avg_metrics['loss'])
         final_mc_loss_train = avg_metrics['mc_loss']
 
-        # Compute test MC loss if test set available
+        # Compute test MC loss every epoch for model selection
         if use_test_set:
             estimator.value_net.eval()
             with torch.no_grad():
@@ -185,7 +188,6 @@ def train_single_initialization(
             # Use test MC loss for selecting best model
             current_mc_loss = final_mc_loss_test
         else:
-            final_mc_loss_test = float('inf')
             current_mc_loss = final_mc_loss_train
 
         if current_mc_loss < best_mc_loss:
@@ -203,12 +205,25 @@ def train_single_initialization(
                 'train/best_mc_loss': best_mc_loss,
             }
             if use_test_set:
-                log_dict['train/mc_loss_test'] = final_mc_loss_test
+                log_dict['test/mc_loss'] = final_mc_loss_test
             wandb.log(log_dict)
 
         if check_convergence(loss_history, training_config.convergence_patience,
                            training_config.convergence_threshold):
+            converged = True
             break
+
+    # Print training summary
+    print(f"\n  Init {init_idx} Summary:")
+    print(f"    Epochs: {final_epoch + 1}/{training_config.max_epochs}")
+    if converged:
+        print(f"    Stopped: Converged (loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
+    else:
+        print(f"    Stopped: Reached max epochs")
+    print(f"    Final train MC loss: {final_mc_loss_train:.6f}")
+    if use_test_set:
+        print(f"    Final test MC loss: {final_mc_loss_test:.6f}")
+    print(f"    Best MC loss: {best_mc_loss:.6f}")
 
     if use_wandb and config.logging.use_wandb:
         final_log = {'final/best_mc_loss': best_mc_loss}
@@ -309,8 +324,6 @@ def train_estimator(
             final_mc_loss = train_single_initialization(
                 estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
             )
-
-            print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
 
             if final_mc_loss < best_mc_loss:
                 best_mc_loss = final_mc_loss
