@@ -272,7 +272,7 @@ def train_estimator(
     # Load and preprocess test batch if test_episodes > 0
     test_batch = None
     if test_episodes > 0:
-        eval_batch_path = batch_path.parent / "batch_eval.npz"
+        eval_batch_path = batch_path.parent / "batch_ground_truth.npz"
         if eval_batch_path.exists():
             print(f"Loading test batch from {eval_batch_path}")
             eval_batch_raw = load_batch_data(eval_batch_path)
