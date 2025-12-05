@@ -20,6 +20,7 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--target-update-rate", type=float, default=None)
     parser.add_argument("--num-episodes", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
     args = parser.parse_args()
 
     # Initialize wandb (will pick up sweep config automatically)
@@ -53,6 +54,11 @@ def main():
     num_episodes = wandb.config.get('num_episodes', args.num_episodes)
     if num_episodes is not None:
         config.value_estimators.training.episode_subsets = [num_episodes]
+
+    # Override batch_size from wandb sweep or CLI
+    batch_size = wandb.config.get('batch_size', args.batch_size)
+    if batch_size is not None:
+        config.value_estimators.training.batch_size = batch_size
 
     # Force single initialization for tuning
     method_config.n_initializations = 1
