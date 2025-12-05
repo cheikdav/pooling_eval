@@ -1,7 +1,6 @@
 """DQN-style value estimator with target network."""
 
 import torch
-import numpy as np
 from typing import Dict, Any
 import copy
 
@@ -64,43 +63,41 @@ class DQNEstimator(ValueEstimator):
         self.target_net.load_state_dict(weight_dicts)
         self.steps_since_target_update = 0
 
-    def compute_targets(self, batch: Dict[str, np.ndarray]) -> torch.Tensor:
+    def compute_targets(self, mini_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Compute DQN targets using target network.
 
         Args:
-            batch: Dictionary containing preprocessed transition data:
-                - observations: (n_transitions, obs_dim) array
-                - next_observations: (n_transitions, obs_dim) array
-                - rewards: (n_transitions,) array
-                - dones: (n_transitions,) array
+            mini_batch: Dictionary containing mini-batch data (torch tensors):
+                - next_observations: (batch_size, obs_dim)
+                - rewards: (batch_size,)
+                - dones: (batch_size,)
 
         Returns:
             Target values as torch tensor
         """
-        # Convert to tensors
-        next_obs_tensor = torch.FloatTensor(batch['next_observations']).to(self.device)
-        rewards_tensor = torch.FloatTensor(batch['rewards']).to(self.device)
-        dones_tensor = torch.FloatTensor(batch['dones']).to(self.device)
+        # Move tensors to device
+        next_obs = mini_batch['next_observations'].to(self.device)
+        rewards = mini_batch['rewards'].to(self.device)
+        dones = mini_batch['dones'].to(self.device)
 
         with torch.no_grad():
             # Normalization happens inside target network
-            next_values = self.target_net(next_obs_tensor).squeeze(-1)
-            targets = rewards_tensor + self.discount_factor * next_values * (1 - dones_tensor)
+            next_values = self.target_net(next_obs).squeeze(-1)
+            targets = rewards + self.discount_factor * next_values * (1 - dones)
 
         return targets
 
-    def train_step(self, batch: Dict[str, np.ndarray], batch_size: int = None) -> Dict[str, float]:
-        """Perform a single training step.
+    def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """Perform a single training step on a mini-batch.
 
         Args:
-            batch: Dictionary containing preprocessed transition data
-            batch_size: Size of mini-batches. If None, use full batch.
+            mini_batch: Dictionary containing mini-batch data (torch tensors)
 
         Returns:
             Dictionary of training metrics
         """
         # Train and update target network
-        metrics = super().train_step(batch, batch_size=batch_size)
+        metrics = super().train_step(mini_batch)
 
         # Update target network
         self.update_target_network()

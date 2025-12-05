@@ -64,31 +64,18 @@ class MonteCarloEstimator(ValueEstimator):
 
         return returns
 
-    def compute_targets(self, batch: Dict[str, np.ndarray]) -> torch.Tensor:
+    def compute_targets(self, mini_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Compute Monte Carlo targets (discounted returns).
 
         Args:
-            batch: Dictionary containing:
-                - mc_returns: (n_transitions,) array of precomputed Monte Carlo returns
+            mini_batch: Dictionary containing:
+                - mc_returns: (batch_size,) tensor of precomputed Monte Carlo returns
 
         Returns:
             Target values as torch tensor
         """
         # Use precomputed Monte Carlo returns from preprocessing
-        return torch.FloatTensor(batch['mc_returns']).to(self.device)
-
-    def train_step(self, batch: Dict[str, np.ndarray], batch_size: int = None) -> Dict[str, float]:
-        """Perform a single training step.
-
-        Args:
-            batch: Dictionary containing preprocessed transition data
-            batch_size: Size of mini-batches. If None, use full batch.
-
-        Returns:
-            Dictionary of training metrics
-        """
-        # Data is already preprocessed (flattened), pass directly to parent
-        return super().train_step(batch, batch_size=batch_size)
+        return mini_batch['mc_returns'].to(self.device)
 
     def get_config(self) -> Dict:
         """Get estimator configuration."""

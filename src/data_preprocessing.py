@@ -1,6 +1,8 @@
 """Data preprocessing utilities for flattening episodes and computing targets."""
 
 import numpy as np
+import torch
+from torch.utils.data import Dataset
 from typing import Dict
 
 
@@ -92,3 +94,37 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     }
 
     return preprocessed
+
+
+class TransitionDataset(Dataset):
+    """PyTorch Dataset for transition data."""
+
+    def __init__(self, batch: Dict[str, np.ndarray]):
+        """Initialize dataset from preprocessed batch.
+
+        Args:
+            batch: Dictionary containing flattened transition data:
+                - observations: (n_transitions, obs_dim) array
+                - actions: (n_transitions, act_dim) or (n_transitions,) array
+                - rewards: (n_transitions,) array
+                - dones: (n_transitions,) array
+                - next_observations: (n_transitions, obs_dim) array
+                - mc_returns: (n_transitions,) array
+        """
+        self.observations = torch.FloatTensor(batch['observations'])
+        self.next_observations = torch.FloatTensor(batch['next_observations'])
+        self.rewards = torch.FloatTensor(batch['rewards'])
+        self.dones = torch.FloatTensor(batch['dones'])
+        self.mc_returns = torch.FloatTensor(batch['mc_returns'])
+
+    def __len__(self):
+        return len(self.observations)
+
+    def __getitem__(self, idx):
+        return {
+            'observations': self.observations[idx],
+            'next_observations': self.next_observations[idx],
+            'rewards': self.rewards[idx],
+            'dones': self.dones[idx],
+            'mc_returns': self.mc_returns[idx],
+        }

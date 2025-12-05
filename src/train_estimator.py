@@ -10,7 +10,8 @@ import json
 
 from src.config import ExperimentConfig, BaseEstimatorConfig
 from src.estimators import ESTIMATOR_REGISTRY
-from src.data_preprocessing import preprocess_episodes
+from src.data_preprocessing import preprocess_episodes, TransitionDataset
+from torch.utils.data import DataLoader
 
 
 def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float):
@@ -130,22 +131,49 @@ def train_single_initialization(
     mc_loss_history = []
     best_mc_loss = float('inf')
 
-    for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
-        metrics = estimator.train_step(batch, batch_size=training_config.batch_size)
-        mc_loss_history.append(metrics['mc_loss'])
+    # Create dataset and dataloader
+    dataset = TransitionDataset(batch)
+    dataloader = DataLoader(dataset, batch_size=training_config.batch_size, shuffle=True)
 
-        if metrics['mc_loss'] < best_mc_loss:
-            best_mc_loss = metrics['mc_loss']
+    for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
+        # Accumulate metrics across mini-batches
+        epoch_losses = []
+        epoch_maes = []
+        epoch_mc_losses = []
+        epoch_values = []
+        epoch_targets = []
+
+        for mini_batch in dataloader:
+            metrics = estimator.train_step(mini_batch)
+            epoch_losses.append(metrics['loss'])
+            epoch_maes.append(metrics['mae'])
+            epoch_mc_losses.append(metrics['mc_loss'])
+            epoch_values.append(metrics['mean_value'])
+            epoch_targets.append(metrics['mean_target'])
+
+        # Average metrics across mini-batches
+        avg_metrics = {
+            'loss': np.mean(epoch_losses),
+            'mae': np.mean(epoch_maes),
+            'mc_loss': np.mean(epoch_mc_losses),
+            'mean_value': np.mean(epoch_values),
+            'mean_target': np.mean(epoch_targets),
+        }
+
+        mc_loss_history.append(avg_metrics['mc_loss'])
+
+        if avg_metrics['mc_loss'] < best_mc_loss:
+            best_mc_loss = avg_metrics['mc_loss']
 
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             wandb.log({
                 'epoch': epoch,
-                'train/loss': metrics['loss'],
-                'train/mse': metrics['loss'],
-                'train/mae': metrics['mae'],
-                'train/mean_value': metrics['mean_value'],
-                'train/mean_target': metrics['mean_target'],
-                'train/mc_loss': metrics['mc_loss'],
+                'train/loss': avg_metrics['loss'],
+                'train/mse': avg_metrics['loss'],
+                'train/mae': avg_metrics['mae'],
+                'train/mean_value': avg_metrics['mean_value'],
+                'train/mean_target': avg_metrics['mean_target'],
+                'train/mc_loss': avg_metrics['mc_loss'],
                 'train/best_mc_loss': best_mc_loss,
             })
 
