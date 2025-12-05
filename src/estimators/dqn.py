@@ -89,19 +89,20 @@ class DQNEstimator(ValueEstimator):
 
         return targets
 
-    def train_step(self, batch: Dict[str, np.ndarray]) -> Dict[str, float]:
+    def train_step(self, batch: Dict[str, np.ndarray], batch_size: int = None) -> Dict[str, float]:
         """Perform a single training step.
 
         Args:
             batch: Dictionary containing preprocessed transition data
+            batch_size: Size of mini-batches. If None, use full batch.
 
         Returns:
             Dictionary of training metrics
         """
         # Train and update target network
-        metrics = super().train_step(batch)
+        metrics = super().train_step(batch, batch_size=batch_size)
 
-        # Update target network 
+        # Update target network
         self.update_target_network()
 
         return metrics

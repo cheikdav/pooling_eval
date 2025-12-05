@@ -131,7 +131,7 @@ def train_single_initialization(
     best_mc_loss = float('inf')
 
     for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
-        metrics = estimator.train_step(batch)
+        metrics = estimator.train_step(batch, batch_size=training_config.batch_size)
         mc_loss_history.append(metrics['mc_loss'])
 
         if metrics['mc_loss'] < best_mc_loss:

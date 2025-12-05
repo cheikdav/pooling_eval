@@ -211,8 +211,86 @@ class ValueEstimator(ABC):
         """
         pass
 
-    def train_step(self, batch: Dict[str, np.ndarray]) -> Dict[str, float]:
-        """Perform a single training step.
+    def train_step(self, batch: Dict[str, np.ndarray], batch_size: int = None) -> Dict[str, float]:
+        """Perform a single training step using mini-batches.
+
+        Args:
+            batch: Dictionary containing preprocessed transition data
+            batch_size: Size of mini-batches. If None, use full batch.
+
+        Returns:
+            Dictionary of training metrics (averaged over all mini-batches)
+        """
+        self.value_net.train()
+
+        n_samples = len(batch['observations'])
+
+        # If no batch_size specified or batch_size >= n_samples, use full batch
+        if batch_size is None or batch_size >= n_samples:
+            return self._train_step_single_batch(batch)
+
+        # Shuffle indices for mini-batching
+        indices = np.random.permutation(n_samples)
+
+        # Accumulate metrics across mini-batches
+        total_loss = 0.0
+        total_mae = 0.0
+        total_mc_loss = 0.0
+        all_values = []
+        all_targets = []
+        n_batches = 0
+
+        # Iterate over mini-batches
+        for start_idx in range(0, n_samples, batch_size):
+            end_idx = min(start_idx + batch_size, n_samples)
+            batch_indices = indices[start_idx:end_idx]
+
+            # Create mini-batch
+            mini_batch = {
+                'observations': batch['observations'][batch_indices],
+                'next_observations': batch['next_observations'][batch_indices],
+                'rewards': batch['rewards'][batch_indices],
+                'dones': batch['dones'][batch_indices],
+                'mc_returns': batch['mc_returns'][batch_indices],
+            }
+
+            # Forward pass
+            obs = torch.FloatTensor(mini_batch['observations']).to(self.device)
+            targets = self.compute_targets(mini_batch)
+            values = self.value_net(obs).squeeze(-1)
+
+            # Compute loss and backprop
+            loss = nn.functional.mse_loss(values, targets)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            # Accumulate metrics
+            with torch.no_grad():
+                mae = torch.abs(values - targets).mean().item()
+                mc_returns = torch.FloatTensor(mini_batch['mc_returns']).to(self.device)
+                mc_loss = nn.functional.mse_loss(values, mc_returns).item()
+
+                total_loss += loss.item()
+                total_mae += mae
+                total_mc_loss += mc_loss
+                all_values.append(values.mean().item())
+                all_targets.append(targets.mean().item())
+                n_batches += 1
+
+        self.training_step += 1
+
+        # Return averaged metrics
+        return {
+            'loss': total_loss / n_batches,
+            'mae': total_mae / n_batches,
+            'mean_value': np.mean(all_values),
+            'mean_target': np.mean(all_targets),
+            'mc_loss': total_mc_loss / n_batches,
+        }
+
+    def _train_step_single_batch(self, batch: Dict[str, np.ndarray]) -> Dict[str, float]:
+        """Perform a single training step on full batch (original implementation).
 
         Args:
             batch: Dictionary containing preprocessed transition data
@@ -220,8 +298,6 @@ class ValueEstimator(ABC):
         Returns:
             Dictionary of training metrics
         """
-        self.value_net.train()
-
         obs = torch.FloatTensor(batch['observations']).to(self.device)
         targets = self.compute_targets(batch)
         values = self.value_net(obs).squeeze(-1)
