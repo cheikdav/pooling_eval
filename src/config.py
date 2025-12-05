@@ -52,6 +52,7 @@ class ValueEstimatorTrainingConfig:
     gamma: float = 0.99
     episode_subsets: Optional[List[int]] = None
     shuffle_frequency: int = 100  # Re-shuffle DataLoader every N epochs (0 = never, 1 = every epoch)
+    test_episodes: int = 0  # Number of episodes to sample from eval batch for test set (0 = no test set)
 
 
 class EstimatorType(str, Enum):

@@ -10,7 +10,7 @@ import json
 
 from src.config import ExperimentConfig, BaseEstimatorConfig
 from src.estimators import ESTIMATOR_REGISTRY
-from src.data_preprocessing import preprocess_episodes, TransitionDataset
+from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset
 from torch.utils.data import DataLoader
 
 
@@ -84,7 +84,8 @@ def check_convergence(loss_history: list, patience: int, threshold: float) -> bo
 
 def train_single_initialization(
     estimator,
-    batch: dict,
+    train_batch: dict,
+    test_batch: dict,
     config: ExperimentConfig,
     method_name: str,
     batch_name: str,
@@ -97,7 +98,8 @@ def train_single_initialization(
 
     Args:
         estimator: Estimator instance to train
-        batch: Batch data
+        train_batch: Training batch data (preprocessed)
+        test_batch: Test batch data (preprocessed, None if no test set)
         config: Experiment configuration
         method_name: Method name (from method_config.name)
         batch_name: Batch name (e.g., '0', '1', 'tuning', 'eval')
@@ -107,7 +109,7 @@ def train_single_initialization(
         sweep_mode: If True, skip wandb.init() (run already initialized by sweep)
 
     Returns:
-        Final MC loss value
+        Final MC loss value (test set if available, otherwise train set)
     """
     if use_wandb and config.logging.use_wandb and not sweep_mode:
         run_name = f"{method_name}_batch{batch_name}_{num_episodes}ep_init{init_idx}"
@@ -128,11 +130,14 @@ def train_single_initialization(
         )
 
     training_config = config.value_estimators.training
-    mc_loss_history = []
+    loss_history = []
+    final_mc_loss_train = float('inf')
+    final_mc_loss_test = float('inf')
     best_mc_loss = float('inf')
+    use_test_set = test_batch is not None
 
     # Create dataset once
-    dataset = TransitionDataset(batch)
+    dataset = TransitionDataset(train_batch)
     dataloader = None
 
     for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
@@ -165,34 +170,55 @@ def train_single_initialization(
             'mean_target': np.mean(epoch_targets),
         }
 
-        mc_loss_history.append(avg_metrics['mc_loss'])
+        loss_history.append(avg_metrics['loss'])
+        final_mc_loss_train = avg_metrics['mc_loss']
 
-        if avg_metrics['mc_loss'] < best_mc_loss:
-            best_mc_loss = avg_metrics['mc_loss']
+        # Compute test MC loss if test set available
+        if use_test_set:
+            estimator.value_net.eval()
+            with torch.no_grad():
+                test_obs = torch.FloatTensor(test_batch['observations']).to(estimator.device)
+                test_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)
+                test_values = estimator.value_net(test_obs).squeeze(-1)
+                final_mc_loss_test = torch.nn.functional.mse_loss(test_values, test_mc_returns).item()
+
+            # Use test MC loss for selecting best model
+            current_mc_loss = final_mc_loss_test
+        else:
+            final_mc_loss_test = float('inf')
+            current_mc_loss = final_mc_loss_train
+
+        if current_mc_loss < best_mc_loss:
+            best_mc_loss = current_mc_loss
 
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
-            wandb.log({
+            log_dict = {
                 'epoch': epoch,
                 'train/loss': avg_metrics['loss'],
                 'train/mse': avg_metrics['loss'],
                 'train/mae': avg_metrics['mae'],
                 'train/mean_value': avg_metrics['mean_value'],
                 'train/mean_target': avg_metrics['mean_target'],
-                'train/mc_loss': avg_metrics['mc_loss'],
+                'train/mc_loss_train': final_mc_loss_train,
                 'train/best_mc_loss': best_mc_loss,
-            })
+            }
+            if use_test_set:
+                log_dict['train/mc_loss_test'] = final_mc_loss_test
+            wandb.log(log_dict)
 
-        if check_convergence(mc_loss_history, training_config.convergence_patience,
+        if check_convergence(loss_history, training_config.convergence_patience,
                            training_config.convergence_threshold):
             break
 
-    final_mc_loss = mc_loss_history[-1] if mc_loss_history else float('inf')
-
     if use_wandb and config.logging.use_wandb:
-        wandb.log({'final/best_mc_loss': best_mc_loss})
+        final_log = {'final/best_mc_loss': best_mc_loss}
+        if use_test_set:
+            final_log['final/mc_loss_train'] = final_mc_loss_train
+            final_log['final/mc_loss_test'] = final_mc_loss_test
+        wandb.log(final_log)
         wandb.finish()
 
-    return final_mc_loss
+    return best_mc_loss
 
 
 def train_estimator(
@@ -219,6 +245,7 @@ def train_estimator(
     """
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
+    test_episodes = config.value_estimators.training.test_episodes
     method_name = method_config.name
 
     data_metadata = {}
@@ -227,9 +254,24 @@ def train_estimator(
         with open(data_metadata_path, 'r') as f:
             data_metadata = json.load(f)
 
+    # Load and preprocess test batch if test_episodes > 0
+    test_batch = None
+    if test_episodes > 0:
+        eval_batch_path = batch_path.parent / "batch_eval.npz"
+        if eval_batch_path.exists():
+            print(f"Loading test batch from {eval_batch_path}")
+            eval_batch_raw = load_batch_data(eval_batch_path)
+            print(f"Sampling {test_episodes} episodes for test set")
+            test_batch_raw = sample_episodes(eval_batch_raw, test_episodes, seed=config.seed)
+            print(f"Preprocessing test batch (flattening episodes, computing MC returns with gamma={gamma})")
+            test_batch = preprocess_episodes(test_batch_raw, gamma)
+            print(f"Test batch: {len(test_batch['observations'])} transitions")
+        else:
+            print(f"Warning: test_episodes={test_episodes} but {eval_batch_path} not found. No test set will be used.")
+
     for n_episodes in episode_subsets:
-        print(f"Loading batch data from {batch_path}")
-        batch = load_batch_data(batch_path, max_episodes=n_episodes)
+        print(f"\nLoading training batch from {batch_path}")
+        train_batch_raw = load_batch_data(batch_path, max_episodes=n_episodes)
 
         # Directory structure: estimators/<method>/<n_episodes>/batch_<name>
         episodes_dir = output_dir / str(n_episodes) / f"batch_{batch_name}"
@@ -245,10 +287,10 @@ def train_estimator(
         print(f"Training {method_name} on batch_{batch_name} with {n_episodes} episodes")
         print(f"{'='*80}")
 
-        print(f"Preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
-        batch = preprocess_episodes(batch, gamma)
+        print(f"Preprocessing training batch (flattening episodes, computing MC returns with gamma={gamma})")
+        train_batch = preprocess_episodes(train_batch_raw, gamma)
 
-        obs_dim = batch['observations'].shape[-1]
+        obs_dim = train_batch['observations'].shape[-1]
         n_inits = method_config.n_initializations
 
         print(f"\nTraining {n_inits} initialization(s) of {method_name}")
@@ -265,7 +307,7 @@ def train_estimator(
             estimator = create_estimator(method_config, config.network, obs_dim, gamma)
 
             final_mc_loss = train_single_initialization(
-                estimator, batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
+                estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
             )
 
             print(f"Init {init_idx}: final MC loss = {final_mc_loss:.6f}")
