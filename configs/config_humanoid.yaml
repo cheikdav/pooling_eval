@@ -30,13 +30,13 @@ policy:
 
 # Data generation
 data_generation:
-  n_batches: 10
-  episodes_per_batch: 200
+  n_batches: 80
+  episodes_per_batch: 400
   deterministic_policy: false
-  n_envs: 8
-  tuning_episodes: 500
-  ground_truth_episodes: 2000
-  eval_episodes: 500
+  n_envs: 128
+  tuning_episodes: 400
+  ground_truth_episodes: 1000
+  eval_episodes: 200
 
 # Value estimator training
 value_estimators:
