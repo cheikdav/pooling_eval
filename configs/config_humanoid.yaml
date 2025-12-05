@@ -48,6 +48,7 @@ value_estimators:
     convergence_threshold: 1.0e-4
     eval_frequency: 20  # evaluate every N epochs
     gamma: 0.99  # discount factor (shared by all methods)
+    shuffle_frequency: 100  # Re-shuffle DataLoader every N epochs for efficiency
 
   # List of method configurations
   # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)

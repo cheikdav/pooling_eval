@@ -131,11 +131,16 @@ def train_single_initialization(
     mc_loss_history = []
     best_mc_loss = float('inf')
 
-    # Create dataset and dataloader
+    # Create dataset once
     dataset = TransitionDataset(batch)
-    dataloader = DataLoader(dataset, batch_size=training_config.batch_size, shuffle=True)
+    dataloader = None
 
     for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
+        # Recreate dataloader when needed for shuffling
+        if (dataloader is None or
+            (training_config.shuffle_frequency > 0 and epoch % training_config.shuffle_frequency == 0)):
+            dataloader = DataLoader(dataset, batch_size=training_config.batch_size, shuffle=True)
+
         # Accumulate metrics across mini-batches
         epoch_losses = []
         epoch_maes = []
