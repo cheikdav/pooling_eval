@@ -49,6 +49,7 @@ value_estimators:
     eval_frequency: 20  # evaluate every N epochs
     gamma: 0.99  # discount factor (shared by all methods)
     shuffle_frequency: 100  # Re-shuffle DataLoader every N epochs for efficiency
+    test_episodes: 100  # Number of episodes to sample from eval batch for test set (0 = no test set)
 
   # List of method configurations
   # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)

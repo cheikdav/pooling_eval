@@ -44,6 +44,7 @@ value_estimators:
     gamma: 0.99
     episode_subsets: [100, 250, 500, 750, 1000]
     shuffle_frequency: 100  # Re-shuffle DataLoader every N epochs for efficiency
+    test_episodes: 100  # Number of episodes to sample from eval batch for test set (0 = no test set)
 
   # List of method configurations
   # Each config must have a 'name' (used for output paths/logs) and 'type' (estimator type)
