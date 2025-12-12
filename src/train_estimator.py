@@ -185,10 +185,8 @@ def train_single_initialization(
                 test_values = estimator.value_net(test_obs).squeeze(-1)
                 final_mc_loss_test = torch.nn.functional.mse_loss(test_values, test_mc_returns).item()
 
-            # Use test MC loss for selecting best model
-            current_mc_loss = final_mc_loss_test
-        else:
-            current_mc_loss = final_mc_loss_train
+
+        current_mc_loss = final_mc_loss_train
 
         if current_mc_loss < best_mc_loss:
             best_mc_loss = current_mc_loss
