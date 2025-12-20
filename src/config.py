@@ -59,6 +59,8 @@ class EstimatorType(str, Enum):
     """Enum for estimator types."""
     MONTE_CARLO = "monte_carlo"
     DQN = "dqn"
+    LEAST_SQUARES_MC = "least_squares_mc"
+    LEAST_SQUARES_TD = "least_squares_td"
 
 
 @dataclass
@@ -82,10 +84,28 @@ class DQNConfig(BaseEstimatorConfig):
     target_update_rate: float = 1.0e-5
 
 
+@dataclass
+class LeastSquaresMCConfig(BaseEstimatorConfig):
+    """Least Squares Monte Carlo estimator configuration."""
+    policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
+    algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
+    ridge_lambda: float = 1e-6  # Ridge regularization parameter
+
+
+@dataclass
+class LeastSquaresTDConfig(BaseEstimatorConfig):
+    """Least Squares Temporal Difference estimator configuration."""
+    policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
+    algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
+    ridge_lambda: float = 1e-6  # Ridge regularization parameter
+
+
 # Registry mapping EstimatorType to config class
 ESTIMATOR_CONFIG_REGISTRY: Dict[EstimatorType, Type[BaseEstimatorConfig]] = {
     EstimatorType.MONTE_CARLO: MonteCarloConfig,
     EstimatorType.DQN: DQNConfig,
+    EstimatorType.LEAST_SQUARES_MC: LeastSquaresMCConfig,
+    EstimatorType.LEAST_SQUARES_TD: LeastSquaresTDConfig,
 }
 
 

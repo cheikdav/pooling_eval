@@ -8,13 +8,13 @@ from tqdm import tqdm
 import wandb
 import json
 
-from src.config import ExperimentConfig, BaseEstimatorConfig
+from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
 from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset
 from torch.utils.data import DataLoader
 
 
-def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float):
+def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, experiment_id: str = None):
     """Create an estimator instance from configuration using registry.
 
     Args:
@@ -22,10 +22,19 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
         network_config: Network configuration
         obs_dim: Observation dimension
         gamma: Discount factor (from training config)
+        experiment_id: Experiment ID (needed for auto-setting policy_path)
 
     Returns:
         Estimator instance
     """
+    # Auto-set policy_path for LeastSquares methods if not provided
+    if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and method_config.policy_path is None:
+        if experiment_id is None:
+            raise ValueError("experiment_id is required when policy_path is not set in LeastSquares config")
+        policy_path = Path("experiments") / experiment_id / "policy" / "policy_final.zip"
+        method_config.policy_path = str(policy_path)
+        print(f"Auto-set policy_path to: {policy_path}")
+
     EstimatorClass = ESTIMATOR_REGISTRY[type(method_config)]
     return EstimatorClass.from_config(method_config, network_config, obs_dim, gamma)
 
@@ -317,7 +326,7 @@ def train_estimator(
         for init_idx in range(n_inits):
             torch.manual_seed(config.seed + init_idx)
             np.random.seed(config.seed + init_idx)
-            estimator = create_estimator(method_config, config.network, obs_dim, gamma)
+            estimator = create_estimator(method_config, config.network, obs_dim, gamma, config.experiment_id)
 
             final_mc_loss = train_single_initialization(
                 estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode

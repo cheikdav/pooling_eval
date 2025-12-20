@@ -60,6 +60,22 @@ value_estimators:
       n_initializations: 2
       target_update_rate: 0.1
 
+    - name: "least_squares_mc"
+      type: "least_squares_mc"
+      learning_rate: 0.001  # Not used but required by base config
+      n_initializations: 1
+      policy_path: null  # Will be auto-set to experiments/<experiment_id>/policy/policy_final.zip
+      algorithm: "PPO"
+      ridge_lambda: 1.0e-6
+
+    - name: "least_squares_td"
+      type: "least_squares_td"
+      learning_rate: 0.001  # Not used but required by base config
+      n_initializations: 1
+      policy_path: null  # Will be auto-set to experiments/<experiment_id>/policy/policy_final.zip
+      algorithm: "PPO"
+      ridge_lambda: 1.0e-6
+
 # Network architecture (will match SB3 critic architecture)
 network:
   hidden_sizes: [64, 64]

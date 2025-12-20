@@ -7,7 +7,7 @@ from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 import torch
-import wandb
+import wandbNCa
 
 from src.config import ExperimentConfig
 from src.env_utils import create_vec_env
