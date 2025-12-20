@@ -95,6 +95,7 @@ class ValueNetwork(nn.Module):
 
         self.network = nn.Sequential(*layers)
 
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.
 
@@ -211,6 +212,14 @@ class ValueEstimator(ABC):
         """
         pass
 
+    def train(self):
+        """Set estimator to training mode."""
+        self.value_net.train()
+    
+    def eval(self):
+        """Set estimator to evaluation mode."""
+        self.value_net.eval()
+
     def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Perform a single training step on a mini-batch.
 
@@ -225,7 +234,7 @@ class ValueEstimator(ABC):
         Returns:
             Dictionary of training metrics
         """
-        self.value_net.train()
+        self.train()
 
         # Move tensors to device
         obs = mini_batch['observations'].to(self.device)
@@ -266,7 +275,7 @@ class ValueEstimator(ABC):
         Returns:
             Predicted values of shape (n,)
         """
-        self.value_net.eval()
+        self.eval()
 
         with torch.no_grad():
             obs = torch.FloatTensor(observations).to(self.device)

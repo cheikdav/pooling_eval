@@ -85,6 +85,12 @@ class LeastSquaresMCEstimator(ValueEstimator):
             'ridge_lambda': method_config.ridge_lambda,
         }
 
+    def train(self):
+        pass
+    
+    def eval(self):
+        pass
+
     def _update_woodbury(self, phi: torch.Tensor, targets: torch.Tensor):
         """Update A_inv and b using Woodbury matrix identity.
 
