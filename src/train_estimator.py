@@ -187,7 +187,7 @@ def train_single_initialization(
 
         # Compute test MC loss every epoch for model selection
         if use_test_set:
-            estimator.value_net.eval()
+            estimator.eval()
             with torch.no_grad():
                 test_obs = torch.FloatTensor(test_batch['observations']).to(estimator.device)
                 test_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)

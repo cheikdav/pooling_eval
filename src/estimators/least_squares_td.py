@@ -169,6 +169,12 @@ class LeastSquaresTDEstimator(ValueEstimator):
 
         return targets
 
+    def train(self):
+        pass
+    
+    def eval(self):
+        pass
+
     def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Incremental LSTD update using Woodbury formula."""
         self.repr_extractor.eval()
