@@ -4,10 +4,10 @@ import torch
 from typing import Dict, Any
 import copy
 
-from src.estimators.base import ValueEstimator
+from src.estimators.base import NeuralNetEstimator
 
 
-class DQNEstimator(ValueEstimator):
+class DQNEstimator(NeuralNetEstimator):
     """DQN-style value estimator with target network"""
 
     def __init__(
@@ -15,10 +15,11 @@ class DQNEstimator(ValueEstimator):
         obs_dim: int,
         hidden_sizes: list,
         discount_factor: float = 0.99,
-        target_update_rate: float = 1e-5,
         activation: str = "relu",
         learning_rate: float = 0.001,
-        device: str = "auto"
+        device: str = "auto",
+        normalize_observations: bool = True,
+        target_update_rate: float = 1e-5
     ):
         """Initialize DQN estimator.
 
@@ -26,12 +27,13 @@ class DQNEstimator(ValueEstimator):
             obs_dim: Observation dimension
             hidden_sizes: List of hidden layer sizes
             discount_factor: Discount factor (gamma)
-            target_update_rate: Polyak averaging coefficient for target network updates
             activation: Activation function
             learning_rate: Learning rate
             device: Device to use
+            normalize_observations: Whether to normalize observations
+            target_update_rate: Polyak averaging coefficient for target network updates
         """
-        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device)
+        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device, normalize_observations)
         self.target_update_rate = target_update_rate
 
         # Create target network (copy of value network)

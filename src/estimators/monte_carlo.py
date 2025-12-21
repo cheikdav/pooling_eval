@@ -4,32 +4,11 @@ import torch
 import numpy as np
 from typing import Dict, Any
 
-from src.estimators.base import ValueEstimator
+from src.estimators.base import NeuralNetEstimator
 
 
-class MonteCarloEstimator(ValueEstimator):
+class MonteCarloEstimator(NeuralNetEstimator):
     """Monte Carlo value estimator using full episode returns."""
-
-    def __init__(
-        self,
-        obs_dim: int,
-        hidden_sizes: list,
-        discount_factor: float = 0.99,
-        activation: str = "relu",
-        learning_rate: float = 0.001,
-        device: str = "auto"
-    ):
-        """Initialize Monte Carlo estimator.
-
-        Args:
-            obs_dim: Observation dimension
-            hidden_sizes: List of hidden layer sizes
-            discount_factor: Discount factor (gamma)
-            activation: Activation function
-            learning_rate: Learning rate
-            device: Device to use
-        """
-        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device)
 
     @classmethod
     def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:

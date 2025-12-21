@@ -30,6 +30,21 @@ def load_evaluation_batch(data_dir: Path) -> Dict:
     return dict(batch)
 
 
+class EstimatorWrapper:
+    """Simple wrapper to provide predict() interface for loaded models."""
+    def __init__(self, value_net, device):
+        self.value_net = value_net
+        self.device = device
+
+    def predict(self, observations):
+        """Predict values for observations."""
+        self.value_net.eval()
+        with torch.no_grad():
+            obs_tensor = torch.FloatTensor(observations).to(self.device)
+            values = self.value_net(obs_tensor).squeeze(-1)
+            return values.cpu().numpy()
+
+
 def load_estimator_model(model_path: Path, device: str = "cpu"):
     """Load a trained estimator model.
 
@@ -38,7 +53,7 @@ def load_estimator_model(model_path: Path, device: str = "cpu"):
         device: Device to load model on
 
     Returns:
-        Loaded value network
+        Estimator wrapper with predict() method
     """
     checkpoint = torch.load(model_path, map_location=device)
 
@@ -51,7 +66,7 @@ def load_estimator_model(model_path: Path, device: str = "cpu"):
     value_net.to(device)
     value_net.eval()
 
-    return value_net
+    return EstimatorWrapper(value_net, device)
 
 
 def generate_predictions_for_n_episodes(config: ExperimentConfig,
@@ -81,8 +96,6 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
     for ep_idx, obs_array in enumerate(eval_obs_list):
         episode_indices.extend([ep_idx] * len(obs_array))
 
-    eval_obs_tensor = torch.FloatTensor(eval_obs_flat).to(device)
-
     # Load metadata from first batch
     first_batch_metadata_path = n_ep_dir / "batch_0" / "estimator_metadata.json"
     if not first_batch_metadata_path.exists():
@@ -107,10 +120,10 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
             continue
 
         # Load model, generate predictions, then free memory
-        value_net = load_estimator_model(model_path, device)
+        estimator = load_estimator_model(model_path, device)
 
-        with torch.no_grad():
-            values = value_net(eval_obs_tensor).squeeze(-1).cpu().numpy()
+        # Use predict() method instead of direct value_net call
+        values = estimator.predict(eval_obs_flat)
 
         for state_idx in range(n_states):
             predictions.append({
@@ -121,7 +134,7 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
             })
 
         # Free memory
-        del value_net
+        del estimator
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     if not predictions:

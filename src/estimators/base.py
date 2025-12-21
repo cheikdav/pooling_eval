@@ -114,43 +114,29 @@ class ValueNetwork(nn.Module):
 
 
 class ValueEstimator(ABC):
-    """Base class for value function estimators."""
+    """Base class for all value function estimators."""
 
     def __init__(
         self,
         obs_dim: int,
-        hidden_sizes: list,
         discount_factor: float,
-        activation: str = "relu",
-        learning_rate: float = 0.001,
-        device: str = "auto",
-        normalize_observations: bool = True
+        device: str = "auto"
     ):
         """Initialize value estimator.
 
         Args:
             obs_dim: Observation dimension
-            hidden_sizes: List of hidden layer sizes
             discount_factor: Discount factor (gamma) - common to all estimators
-            activation: Activation function ('relu' or 'tanh')
-            learning_rate: Learning rate for optimizer
             device: Device to use ('auto', 'cpu', or 'cuda')
-            normalize_observations: Whether to normalize observations using running statistics
         """
         self.obs_dim = obs_dim
-        self.hidden_sizes = hidden_sizes
         self.discount_factor = discount_factor
-        self.activation = activation
-        self.learning_rate = learning_rate
-        self.normalize_observations = normalize_observations
 
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = torch.device(device)
 
-        self.value_net = ValueNetwork(obs_dim, hidden_sizes, activation, normalize_observations).to(self.device)
-        self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=learning_rate)
         self.training_step = 0
 
     @classmethod
@@ -165,6 +151,135 @@ class ValueEstimator(ABC):
             Dictionary of method-specific parameters to pass to __init__
         """
         pass
+
+    @classmethod
+    def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
+        """Create estimator from configuration.
+
+        Args:
+            method_config: Method-specific configuration (BaseEstimatorConfig subclass)
+            network_config: Network configuration
+            obs_dim: Observation dimension
+            gamma: Discount factor (from training config, shared by all methods)
+
+        Returns:
+            Estimator instance
+        """
+        raise NotImplementedError("Subclasses must implement from_config")
+
+    @abstractmethod
+    def compute_targets(self, batch: Dict[str, np.ndarray]) -> torch.Tensor:
+        """Compute target values for the batch.
+
+        Args:
+            batch: Dictionary containing preprocessed transition data with fields:
+                - observations: (n_transitions, obs_dim) array
+                - next_observations: (n_transitions, obs_dim) array
+                - rewards: (n_transitions,) array
+                - dones: (n_transitions,) array
+                - mc_returns: (n_transitions,) array - precomputed Monte Carlo returns
+
+        Returns:
+            Target values as torch tensor of shape (n_transitions,)
+        """
+        pass
+
+    @abstractmethod
+    def train(self):
+        """Set estimator to training mode."""
+        pass
+
+    @abstractmethod
+    def eval(self):
+        """Set estimator to evaluation mode."""
+        pass
+
+    @abstractmethod
+    def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """Perform a single training step on a mini-batch.
+
+        Args:
+            mini_batch: Dictionary containing mini-batch data (torch tensors):
+                - observations: (batch_size, obs_dim)
+                - next_observations: (batch_size, obs_dim)
+                - rewards: (batch_size,)
+                - dones: (batch_size,)
+                - mc_returns: (batch_size,)
+
+        Returns:
+            Dictionary of training metrics
+        """
+        pass
+
+    @abstractmethod
+    def predict(self, observations: np.ndarray) -> np.ndarray:
+        """Predict values for given observations.
+
+        Args:
+            observations: Array of shape (n, obs_dim)
+
+        Returns:
+            Predicted values of shape (n,)
+        """
+        pass
+
+    @abstractmethod
+    def save(self, path: Path):
+        """Save estimator to disk.
+
+        Args:
+            path: Path to save checkpoint
+        """
+        pass
+
+    @abstractmethod
+    def load(self, path: Path):
+        """Load estimator from disk.
+
+        Args:
+            path: Path to checkpoint
+        """
+        pass
+
+    @abstractmethod
+    def get_config(self) -> Dict[str, Any]:
+        """Get estimator configuration."""
+        pass
+
+
+class NeuralNetEstimator(ValueEstimator):
+    """Base class for neural network-based value estimators."""
+
+    def __init__(
+        self,
+        obs_dim: int,
+        hidden_sizes: list,
+        discount_factor: float,
+        activation: str = "relu",
+        learning_rate: float = 0.001,
+        device: str = "auto",
+        normalize_observations: bool = True
+    ):
+        """Initialize neural network estimator.
+
+        Args:
+            obs_dim: Observation dimension
+            hidden_sizes: List of hidden layer sizes
+            discount_factor: Discount factor (gamma)
+            activation: Activation function ('relu' or 'tanh')
+            learning_rate: Learning rate for optimizer
+            device: Device to use ('auto', 'cpu', or 'cuda')
+            normalize_observations: Whether to normalize observations using running statistics
+        """
+        super().__init__(obs_dim, discount_factor, device)
+
+        self.hidden_sizes = hidden_sizes
+        self.activation = activation
+        self.learning_rate = learning_rate
+        self.normalize_observations = normalize_observations
+
+        self.value_net = ValueNetwork(obs_dim, hidden_sizes, activation, normalize_observations).to(self.device)
+        self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=learning_rate)
 
     @classmethod
     def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
@@ -195,27 +310,10 @@ class ValueEstimator(ABC):
         # Instantiate with all parameters
         return cls(**common_params, **specific_params)
 
-    @abstractmethod
-    def compute_targets(self, batch: Dict[str, np.ndarray]) -> torch.Tensor:
-        """Compute target values for the batch.
-
-        Args:
-            batch: Dictionary containing preprocessed transition data with fields:
-                - observations: (n_transitions, obs_dim) array
-                - next_observations: (n_transitions, obs_dim) array
-                - rewards: (n_transitions,) array
-                - dones: (n_transitions,) array
-                - mc_returns: (n_transitions,) array - precomputed Monte Carlo returns
-
-        Returns:
-            Target values as torch tensor of shape (n_transitions,)
-        """
-        pass
-
     def train(self):
         """Set estimator to training mode."""
         self.value_net.train()
-    
+
     def eval(self):
         """Set estimator to evaluation mode."""
         self.value_net.eval()
@@ -264,7 +362,6 @@ class ValueEstimator(ABC):
             'mean_target': targets.mean().item(),
             'mc_loss': mc_loss,
         }
-
 
     def predict(self, observations: np.ndarray) -> np.ndarray:
         """Predict values for given observations.
@@ -318,4 +415,238 @@ class ValueEstimator(ABC):
             'activation': self.activation,
             'learning_rate': self.learning_rate,
             'training_step': self.training_step,
+        }
+
+
+class LeastSquaresEstimator(ValueEstimator):
+    """Base class for least squares value estimators using policy representations."""
+
+    def __init__(
+        self,
+        obs_dim: int,
+        discount_factor: float,
+        policy_path: str,
+        algorithm: str,
+        ridge_lambda: float = 1e-6,
+        device: str = "auto",
+        hidden_sizes: Optional[list] = None,
+        activation: str = "relu",
+        learning_rate: float = 0.001,
+        normalize_observations: bool = False
+    ):
+        """Initialize least squares estimator.
+
+        Args:
+            obs_dim: Observation dimension
+            discount_factor: Discount factor (gamma)
+            policy_path: Path to trained policy (.zip file)
+            algorithm: Policy algorithm (PPO, A2C, SAC, TD3)
+            ridge_lambda: Ridge regularization parameter
+            device: Device to use
+            hidden_sizes: Not used (kept for compatibility)
+            activation: Not used (kept for compatibility)
+            learning_rate: Not used (closed-form solution)
+            normalize_observations: Not used
+        """
+        super().__init__(obs_dim, discount_factor, device)
+
+        self.hidden_sizes = hidden_sizes or []
+        self.activation = activation
+        self.learning_rate = learning_rate
+        self.normalize_observations = normalize_observations
+        self.ridge_lambda = ridge_lambda
+        self.algorithm = algorithm
+
+        # Load policy and create representation extractor
+        if policy_path is None:
+            raise ValueError(f"policy_path is required for {self.__class__.__name__}")
+
+        from src.policy_representations import load_policy_representation_extractor
+        policy_path = Path(policy_path)
+        self.repr_extractor = load_policy_representation_extractor(policy_path, algorithm, device)
+        self.repr_dim = self.repr_extractor.output_dim
+
+        # Create a simple linear layer as value_net (repr_dim -> 1, with bias)
+        self.value_net = torch.nn.Linear(self.repr_dim, 1, bias=True).to(self.device)
+        # Initialize weights and bias to zero
+        torch.nn.init.zeros_(self.value_net.weight)
+        torch.nn.init.zeros_(self.value_net.bias)
+
+        # Incremental least squares matrices: A = Φ^T Φ + λI, b = Φ^T y
+        # Store A (not A_inv) for numerical stability
+        self.d = self.repr_dim + 1  # +1 for bias
+        self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)
+        self.b = torch.zeros(self.d, 1, device=self.device)
+        self.w = torch.zeros(self.d, 1, device=self.device)
+
+        self.optimizer = None
+
+    @classmethod
+    def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
+        """Create estimator from configuration.
+
+        Args:
+            method_config: Method-specific configuration (LeastSquaresConfig subclass)
+            network_config: Network configuration
+            obs_dim: Observation dimension
+            gamma: Discount factor (from training config, shared by all methods)
+
+        Returns:
+            Estimator instance
+        """
+        # Common parameters
+        common_params = {
+            'obs_dim': obs_dim,
+            'discount_factor': gamma,
+            'device': network_config.device,
+            'hidden_sizes': network_config.hidden_sizes,
+            'activation': network_config.activation,
+            'learning_rate': method_config.learning_rate,
+        }
+
+        # Get method-specific parameters
+        specific_params = cls._get_method_specific_params(method_config)
+
+        # Instantiate with all parameters
+        return cls(**common_params, **specific_params)
+
+    def train(self):
+        """Least squares estimators don't have train mode."""
+        pass
+
+    def eval(self):
+        """Least squares estimators don't have eval mode."""
+        pass
+
+    @abstractmethod
+    def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
+        """Update A and b matrices based on mini-batch data.
+
+        Subclasses implement specific update logic (MC vs TD).
+
+        Args:
+            mini_batch: Dictionary containing mini-batch data
+            phi: (batch_size, repr_dim+1) representations with bias
+        """
+        pass
+
+    @abstractmethod
+    def _compute_targets_for_metrics(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
+        """Compute targets for metric evaluation (not used in update).
+
+        Args:
+            mini_batch: Dictionary containing mini-batch data
+            phi: (batch_size, repr_dim+1) representations with bias
+
+        Returns:
+            Target values for computing loss/MAE metrics
+        """
+        pass
+
+    def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+        """Incremental update by accumulating A and b."""
+        self.repr_extractor.eval()
+
+        with torch.no_grad():
+            # Extract representations
+            obs = mini_batch['observations'].to(self.device)
+            representations = self.repr_extractor(obs)  # (batch_size, repr_dim)
+
+            # Add bias term
+            ones = torch.ones(representations.shape[0], 1, device=self.device)
+            phi = torch.cat([representations, ones], dim=1)  # (batch_size, repr_dim+1)
+
+            # Update A and b (method-specific)
+            self._update_A_and_b(mini_batch, phi)
+
+            # Solve: A w = b (with fallback for singular matrices)
+            try:
+                self.w = torch.linalg.solve(self.A, self.b)
+            except torch._C._LinAlgError:
+                # Matrix is singular, use pseudoinverse as fallback
+                self.w = torch.linalg.lstsq(self.A, self.b, rcond=None).solution
+
+            # Update value_net weights with the solved w
+            # w is (repr_dim+1, 1): first repr_dim elements are weights, last is bias
+            self.value_net.weight.data = self.w[:-1].T  # (1, repr_dim)
+            self.value_net.bias.data = self.w[-1]       # (1,)
+
+            # Compute predictions and targets for metrics using value_net
+            representations = self.repr_extractor(obs)
+            values = self.value_net(representations).squeeze(-1)
+            targets = self._compute_targets_for_metrics(mini_batch, phi)
+
+            loss = torch.nn.functional.mse_loss(values, targets)
+            mae = torch.abs(values - targets).mean()
+
+            # Also compute MC loss if available
+            mc_returns = mini_batch.get('mc_returns')
+            if mc_returns is not None:
+                mc_returns = mc_returns.to(self.device)
+                mc_loss = torch.nn.functional.mse_loss(values, mc_returns)
+            else:
+                mc_loss = torch.tensor(0.0)
+
+            self.training_step += 1
+
+            return {
+                'loss': loss.item(),
+                'mae': mae.item(),
+                'mean_value': values.mean().item(),
+                'mean_target': targets.mean().item(),
+                'mc_loss': mc_loss.item(),
+            }
+
+    def predict(self, observations: np.ndarray) -> np.ndarray:
+        """Predict values for given observations."""
+        self.repr_extractor.eval()
+        self.value_net.eval()
+
+        with torch.no_grad():
+            obs = torch.FloatTensor(observations).to(self.device)
+            representations = self.repr_extractor(obs)
+            values = self.value_net(representations).squeeze(-1)
+
+            return values.cpu().numpy()
+
+    def save(self, path: Path):
+        """Save estimator to disk."""
+        torch.save({
+            'value_net_state_dict': self.value_net.state_dict(),
+            'repr_extractor_state_dict': self.repr_extractor.state_dict(),
+            'A': self.A,
+            'b': self.b,
+            'w': self.w,
+            'training_step': self.training_step,
+            'obs_dim': self.obs_dim,
+            'hidden_sizes': self.hidden_sizes,
+            'activation': self.activation,
+            'learning_rate': self.learning_rate,
+            'normalize_observations': self.normalize_observations,
+            'ridge_lambda': self.ridge_lambda,
+            'algorithm': self.algorithm,
+            'repr_dim': self.repr_dim,
+        }, path)
+
+    def load(self, path: Path):
+        """Load estimator from disk."""
+        checkpoint = torch.load(path, map_location=self.device)
+        self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
+        self.repr_extractor.load_state_dict(checkpoint['repr_extractor_state_dict'])
+        self.A = checkpoint['A']
+        self.b = checkpoint['b']
+        self.w = checkpoint['w']
+        self.training_step = checkpoint['training_step']
+        self.repr_dim = checkpoint['repr_dim']
+
+    def get_config(self) -> Dict[str, Any]:
+        """Get estimator configuration."""
+        return {
+            'obs_dim': self.obs_dim,
+            'hidden_sizes': self.hidden_sizes,
+            'activation': self.activation,
+            'learning_rate': self.learning_rate,
+            'training_step': self.training_step,
+            'ridge_lambda': self.ridge_lambda,
+            'algorithm': self.algorithm,
         }
