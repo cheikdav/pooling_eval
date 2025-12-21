@@ -241,6 +241,20 @@ class ValueEstimator(ABC):
         """
         pass
 
+    @classmethod
+    @abstractmethod
+    def load_from_checkpoint(cls, path: Path, device: str = "auto"):
+        """Load estimator from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model on ('auto', 'cpu', or 'cuda')
+
+        Returns:
+            Estimator instance with loaded weights
+        """
+        pass
+
     @abstractmethod
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""
@@ -394,6 +408,7 @@ class NeuralNetEstimator(ValueEstimator):
             'activation': self.activation,
             'learning_rate': self.learning_rate,
             'normalize_observations': self.normalize_observations,
+            'discount_factor': self.discount_factor,
         }, path)
 
     def load(self, path: Path):
@@ -406,6 +421,40 @@ class NeuralNetEstimator(ValueEstimator):
         self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.training_step = checkpoint['training_step']
+
+    @classmethod
+    def load_from_checkpoint(cls, path: Path, device: str = "auto"):
+        """Load estimator from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model on ('auto', 'cpu', or 'cuda')
+
+        Returns:
+            Estimator instance with loaded weights
+        """
+        if device == "auto":
+            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device_obj = torch.device(device)
+
+        checkpoint = torch.load(path, map_location=device_obj)
+
+        # Create estimator instance with saved parameters
+        estimator = cls(
+            obs_dim=checkpoint['obs_dim'],
+            hidden_sizes=checkpoint['hidden_sizes'],
+            discount_factor=checkpoint.get('discount_factor', 0.99),  # Default if not saved
+            activation=checkpoint['activation'],
+            learning_rate=checkpoint['learning_rate'],
+            device=device,
+            normalize_observations=checkpoint.get('normalize_observations', True)
+        )
+
+        # Load state
+        estimator.load(path)
+
+        return estimator
 
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""
@@ -456,6 +505,7 @@ class LeastSquaresEstimator(ValueEstimator):
         self.normalize_observations = normalize_observations
         self.ridge_lambda = ridge_lambda
         self.algorithm = algorithm
+        self.policy_path = policy_path
 
         # Load policy and create representation extractor
         if policy_path is None:
@@ -466,11 +516,14 @@ class LeastSquaresEstimator(ValueEstimator):
         self.repr_extractor = load_policy_representation_extractor(policy_path, algorithm, device)
         self.repr_dim = self.repr_extractor.output_dim
 
-        # Create a simple linear layer as value_net (repr_dim -> 1, with bias)
-        self.value_net = torch.nn.Linear(self.repr_dim, 1, bias=True).to(self.device)
+        # Create ValueNetwork with no hidden layers (just input -> output linear layer)
+        # This makes it compatible with the evaluation code that expects ValueNetwork
+        self.value_net = ValueNetwork(self.repr_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
         # Initialize weights and bias to zero
-        torch.nn.init.zeros_(self.value_net.weight)
-        torch.nn.init.zeros_(self.value_net.bias)
+        for layer in self.value_net.network:
+            if isinstance(layer, nn.Linear):
+                torch.nn.init.zeros_(layer.weight)
+                torch.nn.init.zeros_(layer.bias)
 
         # Incremental least squares matrices: A = Φ^T Φ + λI, b = Φ^T y
         # Store A (not A_inv) for numerical stability
@@ -568,8 +621,10 @@ class LeastSquaresEstimator(ValueEstimator):
 
             # Update value_net weights with the solved w
             # w is (repr_dim+1, 1): first repr_dim elements are weights, last is bias
-            self.value_net.weight.data = self.w[:-1].T  # (1, repr_dim)
-            self.value_net.bias.data = self.w[-1]       # (1,)
+            # ValueNetwork with empty hidden_sizes has network = Sequential(Linear(repr_dim, 1))
+            linear_layer = self.value_net.network[0]
+            linear_layer.weight.data = self.w[:-1].T  # (1, repr_dim)
+            linear_layer.bias.data = self.w[-1]       # (1,)
 
             # Compute predictions and targets for metrics using value_net
             representations = self.repr_extractor(obs)
@@ -626,6 +681,8 @@ class LeastSquaresEstimator(ValueEstimator):
             'ridge_lambda': self.ridge_lambda,
             'algorithm': self.algorithm,
             'repr_dim': self.repr_dim,
+            'discount_factor': self.discount_factor,
+            'policy_path': getattr(self, 'policy_path', None),
         }, path)
 
     def load(self, path: Path):
@@ -638,6 +695,49 @@ class LeastSquaresEstimator(ValueEstimator):
         self.w = checkpoint['w']
         self.training_step = checkpoint['training_step']
         self.repr_dim = checkpoint['repr_dim']
+
+    @classmethod
+    def load_from_checkpoint(cls, path: Path, device: str = "auto"):
+        """Load estimator from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model on ('auto', 'cpu', or 'cuda')
+
+        Returns:
+            Estimator instance with loaded weights
+        """
+        if device == "auto":
+            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device_obj = torch.device(device)
+
+        checkpoint = torch.load(path, map_location=device_obj)
+
+        # Extract policy_path from the checkpoint - need to reconstruct it
+        # This is a limitation: we need the policy_path to be saved in the checkpoint
+        policy_path = checkpoint.get('policy_path')
+        if policy_path is None:
+            raise ValueError("Checkpoint does not contain 'policy_path'. Cannot load LeastSquaresEstimator.")
+
+        # Create estimator instance with saved parameters
+        estimator = cls(
+            obs_dim=checkpoint['obs_dim'],
+            discount_factor=checkpoint.get('discount_factor', 0.99),
+            policy_path=policy_path,
+            algorithm=checkpoint['algorithm'],
+            ridge_lambda=checkpoint.get('ridge_lambda', 1e-6),
+            device=device,
+            hidden_sizes=checkpoint.get('hidden_sizes', []),
+            activation=checkpoint.get('activation', 'relu'),
+            learning_rate=checkpoint.get('learning_rate', 0.001),
+            normalize_observations=checkpoint.get('normalize_observations', False)
+        )
+
+        # Load state
+        estimator.load(path)
+
+        return estimator
 
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""

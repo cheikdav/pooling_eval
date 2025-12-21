@@ -128,6 +128,7 @@ class DQNEstimator(NeuralNetEstimator):
             'learning_rate': self.learning_rate,
             'discount_factor': self.discount_factor,
             'target_update_rate': self.target_update_rate,
+            'normalize_observations': self.normalize_observations,
         }
         torch.save(checkpoint, path)
 
@@ -139,6 +140,41 @@ class DQNEstimator(NeuralNetEstimator):
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.training_step = checkpoint['training_step']
         self.steps_since_target_update = checkpoint['steps_since_target_update']
+
+    @classmethod
+    def load_from_checkpoint(cls, path, device: str = "auto"):
+        """Load estimator from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model on ('auto', 'cpu', or 'cuda')
+
+        Returns:
+            Estimator instance with loaded weights
+        """
+        if device == "auto":
+            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device_obj = torch.device(device)
+
+        checkpoint = torch.load(path, map_location=device_obj)
+
+        # Create estimator instance with saved parameters
+        estimator = cls(
+            obs_dim=checkpoint['obs_dim'],
+            hidden_sizes=checkpoint['hidden_sizes'],
+            discount_factor=checkpoint.get('discount_factor', 0.99),
+            activation=checkpoint['activation'],
+            learning_rate=checkpoint['learning_rate'],
+            device=device,
+            normalize_observations=checkpoint.get('normalize_observations', True),
+            target_update_rate=checkpoint.get('target_update_rate', 1e-5)
+        )
+
+        # Load state
+        estimator.load(path)
+
+        return estimator
 
     def get_config(self) -> Dict:
         """Get estimator configuration."""

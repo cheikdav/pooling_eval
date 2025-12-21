@@ -10,7 +10,19 @@ from typing import Dict
 from datetime import datetime
 
 from src.config import ExperimentConfig
-from src.estimators.base import ValueNetwork
+from src.estimators.monte_carlo import MonteCarloEstimator
+from src.estimators.dqn import DQNEstimator
+from src.estimators.least_squares_mc import LeastSquaresMCEstimator
+from src.estimators.least_squares_td import LeastSquaresTDEstimator
+
+
+# Mapping from method names to estimator classes
+ESTIMATOR_CLASSES = {
+    'monte_carlo': MonteCarloEstimator,
+    'dqn': DQNEstimator,
+    'least_squares_mc': LeastSquaresMCEstimator,
+    'least_squares_td': LeastSquaresTDEstimator,
+}
 
 
 def load_evaluation_batch(data_dir: Path) -> Dict:
@@ -30,43 +42,25 @@ def load_evaluation_batch(data_dir: Path) -> Dict:
     return dict(batch)
 
 
-class EstimatorWrapper:
-    """Simple wrapper to provide predict() interface for loaded models."""
-    def __init__(self, value_net, device):
-        self.value_net = value_net
-        self.device = device
-
-    def predict(self, observations):
-        """Predict values for observations."""
-        self.value_net.eval()
-        with torch.no_grad():
-            obs_tensor = torch.FloatTensor(observations).to(self.device)
-            values = self.value_net(obs_tensor).squeeze(-1)
-            return values.cpu().numpy()
-
-
-def load_estimator_model(model_path: Path, device: str = "cpu"):
-    """Load a trained estimator model.
+def load_estimator_model(model_path: Path, method_name: str, device: str = "cpu"):
+    """Load a trained estimator model using the class's load_from_checkpoint method.
 
     Args:
         model_path: Path to model file
+        method_name: Name of the estimation method (e.g., 'monte_carlo', 'dqn')
         device: Device to load model on
 
     Returns:
-        Estimator wrapper with predict() method
+        Loaded estimator with predict() method
     """
-    checkpoint = torch.load(model_path, map_location=device)
+    # Get the appropriate estimator class
+    estimator_class = ESTIMATOR_CLASSES.get(method_name)
+    if estimator_class is None:
+        raise ValueError(f"Unknown method: {method_name}. Available methods: {list(ESTIMATOR_CLASSES.keys())}")
 
-    obs_dim = checkpoint['obs_dim']
-    hidden_sizes = checkpoint['hidden_sizes']
-    activation = checkpoint['activation']
-
-    value_net = ValueNetwork(obs_dim, hidden_sizes, activation)
-    value_net.load_state_dict(checkpoint['value_net_state_dict'])
-    value_net.to(device)
-    value_net.eval()
-
-    return EstimatorWrapper(value_net, device)
+    # Load using the class method
+    estimator = estimator_class.load_from_checkpoint(model_path, device=device)
+    return estimator
 
 
 def generate_predictions_for_n_episodes(config: ExperimentConfig,
@@ -120,7 +114,7 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
             continue
 
         # Load model, generate predictions, then free memory
-        estimator = load_estimator_model(model_path, device)
+        estimator = load_estimator_model(model_path, method_name, device)
 
         # Use predict() method instead of direct value_net call
         values = estimator.predict(eval_obs_flat)

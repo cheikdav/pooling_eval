@@ -110,6 +110,7 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
     def save(self, path):
         """Save estimator to disk."""
         torch.save({
+            'value_net_state_dict': self.value_net.state_dict(),
             'repr_extractor_state_dict': self.repr_extractor.state_dict(),
             'A': self.A,
             'b': self.b,
@@ -124,6 +125,7 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
             'algorithm': self.algorithm,
             'repr_dim': self.repr_dim,
             'discount_factor': self.discount_factor,
+            'policy_path': self.policy_path,
         }, path)
 
     def get_config(self) -> Dict[str, Any]:
