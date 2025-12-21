@@ -191,7 +191,7 @@ def train_single_initialization(
             with torch.no_grad():
                 test_obs = torch.FloatTensor(test_batch['observations']).to(estimator.device)
                 test_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)
-                test_values = estimator.value_net(test_obs).squeeze(-1)
+                test_values = estimator.predict(test_obs)
                 final_mc_loss_test = torch.nn.functional.mse_loss(test_values, test_mc_returns).item()
 
 
