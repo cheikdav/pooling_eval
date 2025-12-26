@@ -131,7 +131,17 @@ def show_selection_filters(metadata_df):
     # Method selection
     methods = sorted(filtered['method'].unique())
     selected_methods = st.sidebar.multiselect(
-        "Methods", methods, default=methods
+        "Methods to Compare", methods, default=methods
+    )
+
+    # Baseline method selection
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Comparison Settings**")
+    baseline_method = st.sidebar.selectbox(
+        "Baseline Method",
+        methods,
+        index=methods.index('monte_carlo') if 'monte_carlo' in methods else 0,
+        help="Method to use as baseline for ratio metrics"
     )
 
     # Dataset type
@@ -147,16 +157,17 @@ def show_selection_filters(metadata_df):
         }[x]
     )
 
-    # Apply method filter
-    filtered = filtered[filtered['method'].isin(selected_methods + ['monte_carlo'])]
+    # Ensure baseline method is included in the data
+    methods_to_load = list(set(selected_methods + [baseline_method]))
+    filtered = filtered[filtered['method'].isin(methods_to_load)]
 
-    return filtered, selected_env, selected_policy, selected_methods, dataset_type
+    return filtered, selected_env, selected_policy, selected_methods, baseline_method, dataset_type
 
 
-def plot_metric_distribution(stats_df, metric_key, methods, n_episodes):
+def plot_metric_distribution(stats_df, metric_key, methods, n_episodes, baseline_method='monte_carlo'):
     """Create histogram of metric values."""
     metric_info = METRICS[metric_key]
-    metric_data = compute_metric(stats_df, metric_key)
+    metric_data = compute_metric(stats_df, metric_key, baseline_method)
     filtered = metric_data[metric_data['method'].isin(methods)]
 
     if filtered.empty:
@@ -183,17 +194,17 @@ def plot_metric_distribution(stats_df, metric_key, methods, n_episodes):
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.markdown("**Statistics**")
+        st.markdown(f"**Statistics** (vs {baseline_method})")
         summary = filtered.groupby('method')['metric_value'].agg(
             mean='mean', std='std'
         ).reset_index()
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
 
-def plot_metric_evolution(all_stats_df, metric_key, methods):
+def plot_metric_evolution(all_stats_df, metric_key, methods, baseline_method='monte_carlo'):
     """Create evolution plot across n_episodes."""
     metric_info = METRICS[metric_key]
-    metric_data = compute_metric(all_stats_df, metric_key)
+    metric_data = compute_metric(all_stats_df, metric_key, baseline_method)
     filtered = metric_data[metric_data['method'].isin(methods)]
 
     if filtered.empty:
@@ -225,7 +236,7 @@ def plot_metric_evolution(all_stats_df, metric_key, methods):
         )
 
     fig.update_layout(
-        title=f"{metric_info['name']} vs Training Data Size",
+        title=f"{metric_info['name']} vs Training Data Size (baseline: {baseline_method})",
         xaxis_title="Training Episodes",
         yaxis_title=f"Mean {metric_info['name']} (± std)",
         height=500
@@ -254,7 +265,7 @@ if metadata_df.empty:
     st.stop()
 
 # Sidebar filters
-filtered_metadata, env, policy, methods, dataset_type = show_selection_filters(metadata_df)
+filtered_metadata, env, policy, methods, baseline_method, dataset_type = show_selection_filters(metadata_df)
 
 if not methods:
     st.warning("Please select at least one method")
@@ -262,13 +273,15 @@ if not methods:
 
 # Show current selection
 st.markdown("### Current Selection")
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Environment", env)
 with col2:
     st.metric("Policy", policy)
 with col3:
     st.metric("Methods", len(methods))
+with col4:
+    st.metric("Baseline", baseline_method)
 
 st.markdown("---")
 
@@ -282,10 +295,11 @@ selected_n_ep = st.selectbox(
     format_func=lambda x: f"{x} episodes"
 )
 
-# Load stats for selected n_episodes
+# Load stats for selected n_episodes (include baseline method)
+methods_to_load = list(set(methods + [baseline_method]))
 stats_single = load_all_stats(
     filtered_metadata[filtered_metadata['n_episodes'] == selected_n_ep],
-    methods + ['monte_carlo'],
+    methods_to_load,
     [selected_n_ep],
     dataset_type
 )
@@ -302,7 +316,7 @@ metric_key_single = st.selectbox(
 )
 
 st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
-plot_metric_distribution(stats_single, metric_key_single, methods, selected_n_ep)
+plot_metric_distribution(stats_single, metric_key_single, methods, selected_n_ep, baseline_method)
 
 st.markdown("---")
 
@@ -318,11 +332,12 @@ metric_key_evolution = st.selectbox(
 
 st.markdown(f"**{METRICS[metric_key_evolution]['name']}** evolution across training data sizes")
 
-# Load stats for all n_episodes
+# Load stats for all n_episodes (include baseline method)
 with st.spinner("Loading data..."):
+    methods_to_load_all = list(set(methods + [baseline_method]))
     stats_all = load_all_stats(
         filtered_metadata,
-        methods + ['monte_carlo'],
+        methods_to_load_all,
         n_episodes_values,
         dataset_type
     )
@@ -331,7 +346,7 @@ if stats_all.empty:
     st.error("No data available for evolution plot")
     st.stop()
 
-plot_metric_evolution(stats_all, metric_key_evolution, methods)
+plot_metric_evolution(stats_all, metric_key_evolution, methods, baseline_method)
 
 st.markdown("---")
 st.caption(f"Dataset: {dataset_type} | Policy: {policy}")
