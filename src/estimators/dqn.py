@@ -4,10 +4,10 @@ import torch
 from typing import Dict, Any
 import copy
 
-from src.estimators.base import ValueEstimator
+from src.estimators.base import NeuralNetEstimator
 
 
-class DQNEstimator(ValueEstimator):
+class DQNEstimator(NeuralNetEstimator):
     """DQN-style value estimator with target network"""
 
     def __init__(
@@ -15,10 +15,11 @@ class DQNEstimator(ValueEstimator):
         obs_dim: int,
         hidden_sizes: list,
         discount_factor: float = 0.99,
-        target_update_rate: float = 1e-5,
         activation: str = "relu",
         learning_rate: float = 0.001,
-        device: str = "auto"
+        device: str = "auto",
+        normalize_observations: bool = True,
+        target_update_rate: float = 1e-5
     ):
         """Initialize DQN estimator.
 
@@ -26,12 +27,13 @@ class DQNEstimator(ValueEstimator):
             obs_dim: Observation dimension
             hidden_sizes: List of hidden layer sizes
             discount_factor: Discount factor (gamma)
-            target_update_rate: Polyak averaging coefficient for target network updates
             activation: Activation function
             learning_rate: Learning rate
             device: Device to use
+            normalize_observations: Whether to normalize observations
+            target_update_rate: Polyak averaging coefficient for target network updates
         """
-        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device)
+        super().__init__(obs_dim, hidden_sizes, discount_factor, activation, learning_rate, device, normalize_observations)
         self.target_update_rate = target_update_rate
 
         # Create target network (copy of value network)
@@ -126,6 +128,7 @@ class DQNEstimator(ValueEstimator):
             'learning_rate': self.learning_rate,
             'discount_factor': self.discount_factor,
             'target_update_rate': self.target_update_rate,
+            'normalize_observations': self.normalize_observations,
         }
         torch.save(checkpoint, path)
 
@@ -137,6 +140,41 @@ class DQNEstimator(ValueEstimator):
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.training_step = checkpoint['training_step']
         self.steps_since_target_update = checkpoint['steps_since_target_update']
+
+    @classmethod
+    def load_from_checkpoint(cls, path, device: str = "auto"):
+        """Load estimator from checkpoint file.
+
+        Args:
+            path: Path to checkpoint file
+            device: Device to load model on ('auto', 'cpu', or 'cuda')
+
+        Returns:
+            Estimator instance with loaded weights
+        """
+        if device == "auto":
+            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device_obj = torch.device(device)
+
+        checkpoint = torch.load(path, map_location=device_obj)
+
+        # Create estimator instance with saved parameters
+        estimator = cls(
+            obs_dim=checkpoint['obs_dim'],
+            hidden_sizes=checkpoint['hidden_sizes'],
+            discount_factor=checkpoint.get('discount_factor', 0.99),
+            activation=checkpoint['activation'],
+            learning_rate=checkpoint['learning_rate'],
+            device=device,
+            normalize_observations=checkpoint.get('normalize_observations', True),
+            target_update_rate=checkpoint.get('target_update_rate', 1e-5)
+        )
+
+        # Load state
+        estimator.load(path)
+
+        return estimator
 
     def get_config(self) -> Dict:
         """Get estimator configuration."""

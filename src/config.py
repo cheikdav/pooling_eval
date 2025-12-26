@@ -70,6 +70,7 @@ class BaseEstimatorConfig:
     type: EstimatorType  # Method type
     learning_rate: float = 0.001
     n_initializations: int = 1  # Number of random initializations to try
+    max_epochs: Optional[int] = None  # Override global max_epochs if set
 
 
 @dataclass

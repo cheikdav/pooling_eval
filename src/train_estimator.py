@@ -151,7 +151,17 @@ def train_single_initialization(
     dataset = TransitionDataset(train_batch)
     dataloader = None
 
-    for epoch in tqdm(range(training_config.max_epochs), desc=f"Init {init_idx}", leave=False):
+    # Get method config from estimator
+    method_config = None
+    for mc in config.value_estimators.method_configs:
+        if mc.name == method_name:
+            method_config = mc
+            break
+
+    # Use method-specific max_epochs if set, otherwise use global
+    max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
+
+    for epoch in tqdm(range(max_epochs), desc=f"Init {init_idx}", leave=False):
         final_epoch = epoch
         # Recreate dataloader when needed for shuffling
         if (dataloader is None or
@@ -189,9 +199,9 @@ def train_single_initialization(
         if use_test_set:
             estimator.eval()
             with torch.no_grad():
-                test_obs = torch.FloatTensor(test_batch['observations']).to(estimator.device)
                 test_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)
-                test_values = estimator.predict(test_obs)
+                test_values = estimator.predict(test_batch['observations'])
+                test_values = torch.FloatTensor(test_values).to(estimator.device)
                 final_mc_loss_test = torch.nn.functional.mse_loss(test_values, test_mc_returns).item()
 
 
@@ -222,7 +232,7 @@ def train_single_initialization(
 
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")
-    print(f"    Epochs: {final_epoch + 1}/{training_config.max_epochs}")
+    print(f"    Epochs: {final_epoch + 1}/{max_epochs}")
     if converged:
         print(f"    Stopped: Converged (loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
     else:
@@ -315,9 +325,12 @@ def train_estimator(
         obs_dim = train_batch['observations'].shape[-1]
         n_inits = method_config.n_initializations
 
+        # Use method-specific max_epochs if set
+        max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
+
         print(f"\nTraining {n_inits} initialization(s) of {method_name}")
         print(f"Episodes used: {n_episodes}")
-        print(f"Max epochs: {config.value_estimators.training.max_epochs}")
+        print(f"Max epochs: {max_epochs_to_use}")
         print()
 
         best_mc_loss = float('inf')

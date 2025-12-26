@@ -40,3 +40,7 @@ core
 uv.*
 
 test.py
+run_pipeline.py
+
+# Testing config
+configs/test_config.yaml
