@@ -159,7 +159,11 @@ def train_single_initialization(
             break
 
     # Use method-specific max_epochs if set, otherwise use global
-    max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
+    # For least squares methods, default to 1 epoch (closed-form solution)
+    if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
+        max_epochs = method_config.max_epochs if method_config.max_epochs is not None else 1
+    else:
+        max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
 
     for epoch in tqdm(range(max_epochs), desc=f"Init {init_idx}", leave=False):
         final_epoch = epoch
@@ -325,8 +329,12 @@ def train_estimator(
         obs_dim = train_batch['observations'].shape[-1]
         n_inits = method_config.n_initializations
 
-        # Use method-specific max_epochs if set
-        max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
+        # Use method-specific max_epochs if set, otherwise use global
+        # For least squares methods, default to 1 epoch (closed-form solution)
+        if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
+            max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else 1
+        else:
+            max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
 
         print(f"\nTraining {n_inits} initialization(s) of {method_name}")
         print(f"Episodes used: {n_episodes}")
