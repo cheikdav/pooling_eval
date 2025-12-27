@@ -332,7 +332,28 @@ The dashboard will automatically make the new metric available in the metric sel
 
 - All runs tagged with `experiment_id` for grouping
 - Training metrics logged: `train/loss`, `train/mse`, `train/mae`, `train/mean_value`, `train/mean_target`, `train/best_loss`
-- Run name format: `{method}_{batch_name}_init{idx}` (one run per initialization)
+- Run name format: `{method}_{batch_name}_{num_episodes}ep_init{idx}` (one run per initialization)
+
+**Offline Mode** (to avoid rate limits):
+
+Set `wandb_mode: "offline"` in your config to store runs locally and sync at the end of each training:
+
+```yaml
+logging:
+  use_wandb: true
+  wandb_mode: "offline"  # Syncs each run after training completes
+```
+
+Benefits:
+- No rate limits during training
+- Faster training (no network overhead)
+- Each run syncs automatically at completion
+- Works well with cluster jobs (each task syncs independently)
+
+Offline runs are stored in `experiments/<exp_id>/wandb_offline/` and automatically synced via `wandb sync` at the end of each training. If sync fails, you can manually sync later with:
+```bash
+wandb sync experiments/<exp_id>/wandb_offline/<run-directory>
+```
 
 ## Common Patterns
 

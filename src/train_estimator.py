@@ -127,6 +127,8 @@ def train_single_initialization(
             entity=config.logging.wandb_entity,
             name=run_name,
             group=config.experiment_id,
+            mode=config.logging.wandb_mode,
+            dir=f"experiments/{config.experiment_id}/wandb_offline" if config.logging.wandb_mode == "offline" else None,
             config={
                 'method': method_name,
                 'batch_name': batch_name,
@@ -159,7 +161,11 @@ def train_single_initialization(
             break
 
     # Use method-specific max_epochs if set, otherwise use global
-    max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
+    # For least squares methods, default to 1 epoch (closed-form solution)
+    if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
+        max_epochs = method_config.max_epochs if method_config.max_epochs is not None else 1
+    else:
+        max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
 
     for epoch in tqdm(range(max_epochs), desc=f"Init {init_idx}", leave=False):
         final_epoch = epoch
@@ -248,6 +254,18 @@ def train_single_initialization(
             final_log['final/mc_loss_train'] = final_mc_loss_train
             final_log['final/mc_loss_test'] = final_mc_loss_test
         wandb.log(final_log)
+
+        # Sync offline run if in offline mode
+        if config.logging.wandb_mode == "offline":
+            print(f"\n  Syncing offline run to W&B...")
+            import subprocess
+            try:
+                subprocess.run(["wandb", "sync", wandb.run.dir], check=True, capture_output=True)
+                print(f"  ✓ Successfully synced to W&B")
+            except subprocess.CalledProcessError as e:
+                print(f"  ✗ Warning: Failed to sync offline run: {e}")
+                print(f"  You can manually sync later with: wandb sync {wandb.run.dir}")
+
         wandb.finish()
 
     return best_mc_loss
@@ -325,8 +343,12 @@ def train_estimator(
         obs_dim = train_batch['observations'].shape[-1]
         n_inits = method_config.n_initializations
 
-        # Use method-specific max_epochs if set
-        max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
+        # Use method-specific max_epochs if set, otherwise use global
+        # For least squares methods, default to 1 epoch (closed-form solution)
+        if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
+            max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else 1
+        else:
+            max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
 
         print(f"\nTraining {n_inits} initialization(s) of {method_name}")
         print(f"Episodes used: {n_episodes}")
