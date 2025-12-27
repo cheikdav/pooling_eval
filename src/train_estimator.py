@@ -127,6 +127,8 @@ def train_single_initialization(
             entity=config.logging.wandb_entity,
             name=run_name,
             group=config.experiment_id,
+            mode=config.logging.wandb_mode,
+            dir=f"experiments/{config.experiment_id}/wandb_offline" if config.logging.wandb_mode == "offline" else None,
             config={
                 'method': method_name,
                 'batch_name': batch_name,
@@ -252,6 +254,18 @@ def train_single_initialization(
             final_log['final/mc_loss_train'] = final_mc_loss_train
             final_log['final/mc_loss_test'] = final_mc_loss_test
         wandb.log(final_log)
+
+        # Sync offline run if in offline mode
+        if config.logging.wandb_mode == "offline":
+            print(f"\n  Syncing offline run to W&B...")
+            import subprocess
+            try:
+                subprocess.run(["wandb", "sync", wandb.run.dir], check=True, capture_output=True)
+                print(f"  ✓ Successfully synced to W&B")
+            except subprocess.CalledProcessError as e:
+                print(f"  ✗ Warning: Failed to sync offline run: {e}")
+                print(f"  You can manually sync later with: wandb sync {wandb.run.dir}")
+
         wandb.finish()
 
     return best_mc_loss

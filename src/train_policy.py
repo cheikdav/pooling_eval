@@ -103,6 +103,8 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
             entity=config.logging.wandb_entity,
             name=f"policy_{config.policy.algorithm}",
             group=config.experiment_id,
+            mode=config.logging.wandb_mode,
+            dir=f"experiments/{config.experiment_id}/wandb_offline" if config.logging.wandb_mode == "offline" else None,
             config={
                 'algorithm': config.policy.algorithm,
                 'environment': config.environment.name,
@@ -270,6 +272,17 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     env.close()
 
     if use_wandb and config.logging.use_wandb:
+        # Sync offline run if in offline mode
+        if config.logging.wandb_mode == "offline":
+            print(f"\nSyncing offline run to W&B...")
+            import subprocess
+            try:
+                subprocess.run(["wandb", "sync", wandb.run.dir], check=True, capture_output=True)
+                print(f"✓ Successfully synced to W&B")
+            except subprocess.CalledProcessError as e:
+                print(f"✗ Warning: Failed to sync offline run: {e}")
+                print(f"You can manually sync later with: wandb sync {wandb.run.dir}")
+
         wandb.finish()
 
     return model

@@ -129,6 +129,7 @@ class LoggingConfig:
     wandb_project: str = "pooling-eval"
     wandb_entity: Optional[str] = None
     log_frequency: int = 10
+    wandb_mode: str = "online"  # "online" (sync immediately) or "offline" (sync at end)
 
 
 @dataclass

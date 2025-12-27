@@ -88,3 +88,4 @@ logging:
   wandb_project: "pooling-eval"
   wandb_entity: null  # set to your wandb username/team
   log_frequency: 10  # log every N training steps
+  wandb_mode: "offline"  # "online" (sync immediately) or "offline" (sync at end of each training)
