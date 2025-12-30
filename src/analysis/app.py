@@ -60,39 +60,6 @@ def compute_stats_from_predictions(predictions_path, n_episodes):
     return stats
 
 
-def load_all_stats(metadata_df, methods, n_episodes_list):
-    """Load stats for all method/n_episodes combinations.
-
-    Memory-efficient: calls compute_stats_from_predictions which caches results.
-    No additional caching here to avoid storing data twice.
-
-    Args:
-        metadata_df: DataFrame with columns [method, n_episodes, predictions_path, ...]
-        methods: List of method names to load
-        n_episodes_list: List of n_episodes values to load
-
-    Returns:
-        DataFrame with aggregated stats including 'method' column
-    """
-    all_stats = []
-
-    for _, row in metadata_df.iterrows():
-        if row['method'] not in methods or row['n_episodes'] not in n_episodes_list:
-            continue
-
-        # Load and compute stats (cached at compute_stats_from_predictions level)
-        stats = compute_stats_from_predictions(
-            row['predictions_path'], row['n_episodes']
-        )
-
-        # Add method name to stats
-        stats['method'] = row['method']
-
-        all_stats.append(stats)
-
-    return pd.concat(all_stats, ignore_index=True) if all_stats else pd.DataFrame()
-
-
 # UI Helper Functions
 
 def show_selection_filters(metadata_df):
@@ -265,11 +232,16 @@ selected_n_ep = st.selectbox(
 
 # Load stats for selected n_episodes (include baseline method)
 methods_to_load = list(set(methods + [baseline_method]))
-stats_single = load_all_stats(
-    filtered_metadata[filtered_metadata['n_episodes'] == selected_n_ep],
-    methods_to_load,
-    [selected_n_ep]
-)
+filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == selected_n_ep]
+
+stats_list = []
+for _, row in filtered_for_n_ep.iterrows():
+    if row['method'] in methods_to_load:
+        stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'])
+        stats['method'] = row['method']
+        stats_list.append(stats)
+
+stats_single = pd.concat(stats_list, ignore_index=True) if stats_list else pd.DataFrame()
 
 if stats_single.empty:
     st.error(f"No data for {selected_n_ep} episodes")
@@ -302,11 +274,15 @@ st.markdown(f"**{METRICS[metric_key_evolution]['name']}** evolution across train
 # Load stats for all n_episodes (include baseline method)
 with st.spinner("Loading data..."):
     methods_to_load_all = list(set(methods + [baseline_method]))
-    stats_all = load_all_stats(
-        filtered_metadata,
-        methods_to_load_all,
-        n_episodes_values
-    )
+
+    stats_list_all = []
+    for _, row in filtered_metadata.iterrows():
+        if row['method'] in methods_to_load_all and row['n_episodes'] in n_episodes_values:
+            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'])
+            stats['method'] = row['method']
+            stats_list_all.append(stats)
+
+    stats_all = pd.concat(stats_list_all, ignore_index=True) if stats_list_all else pd.DataFrame()
 
 if stats_all.empty:
     st.error("No data available for evolution plot")
