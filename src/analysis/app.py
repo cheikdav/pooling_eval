@@ -60,12 +60,11 @@ def compute_stats_from_predictions(predictions_path, n_episodes):
     return stats
 
 
-@st.cache_data
 def load_all_stats(metadata_df, methods, n_episodes_list):
     """Load stats for all method/n_episodes combinations.
 
-    Memory-efficient: loads raw predictions one at a time, computes aggregated stats,
-    caches only the stats, then frees raw data.
+    Memory-efficient: calls compute_stats_from_predictions which caches results.
+    No additional caching here to avoid storing data twice.
 
     Args:
         metadata_df: DataFrame with columns [method, n_episodes, predictions_path, ...]
@@ -81,7 +80,7 @@ def load_all_stats(metadata_df, methods, n_episodes_list):
         if row['method'] not in methods or row['n_episodes'] not in n_episodes_list:
             continue
 
-        # Load and compute stats (only stats are cached, not raw data)
+        # Load and compute stats (cached at compute_stats_from_predictions level)
         stats = compute_stats_from_predictions(
             row['predictions_path'], row['n_episodes']
         )
