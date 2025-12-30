@@ -101,21 +101,46 @@ def show_selection_filters(metadata_df):
     return filtered, selected_env, selected_policy, selected_methods, baseline_method
 
 
-def plot_metric_distribution(stats_df, metric_key, methods, n_episodes, baseline_method='monte_carlo'):
-    """Create histogram of metric values."""
-    metric_info = METRICS[metric_key]
-    metric_data = compute_metric(stats_df, metric_key, baseline_method)
-    filtered = metric_data[metric_data['method'].isin(methods)]
+def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseline_method='monte_carlo'):
+    """Create histogram of metric values.
 
-    if filtered.empty:
+    Args:
+        stats_dict: Dict mapping method names to DataFrames
+        metric_key: Metric to compute
+        methods: List of methods to display
+        n_episodes: Number of episodes (for display)
+        baseline_method: Baseline method name
+    """
+    metric_info = METRICS[metric_key]
+
+    if baseline_method not in stats_dict:
+        st.error(f"Baseline method {baseline_method} not found")
+        return
+
+    baseline_stats = stats_dict[baseline_method]
+
+    # Compute metrics for each method
+    metric_list = []
+    for method in methods:
+        if method == baseline_method or method not in stats_dict:
+            continue
+
+        method_stats = stats_dict[method]
+        metric_df = compute_metric(baseline_stats, method_stats, metric_key)
+        metric_df['method'] = method
+        metric_list.append(metric_df)
+
+    if not metric_list:
         st.warning("No data available")
         return
+
+    combined = pd.concat(metric_list, ignore_index=True)
 
     col1, col2 = st.columns([3, 1])
 
     with col1:
         fig = px.histogram(
-            filtered, x='metric_value', color='method',
+            combined, x='metric_value', color='method',
             nbins=40, opacity=0.7, barmode='overlay',
             title=f"{metric_info['name']} Distribution ({n_episodes} episodes)",
             labels={'metric_value': metric_info['name']}
@@ -132,39 +157,94 @@ def plot_metric_distribution(stats_df, metric_key, methods, n_episodes, baseline
 
     with col2:
         st.markdown(f"**Statistics** (vs {baseline_method})")
-        summary = filtered.groupby('method')['metric_value'].agg(
+        summary = combined.groupby('method')['metric_value'].agg(
             mean='mean', std='std'
         ).reset_index()
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
 
-def plot_metric_evolution(all_stats_df, metric_key, methods, baseline_method='monte_carlo'):
-    """Create evolution plot across n_episodes."""
-    metric_info = METRICS[metric_key]
-    metric_data = compute_metric(all_stats_df, metric_key, baseline_method)
-    filtered = metric_data[metric_data['method'].isin(methods)]
+def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values):
+    """Create evolution plot across n_episodes.
 
-    if filtered.empty:
+    Memory-efficient: processes one n_episodes at a time, loads baseline once,
+    then for each method, computes metric and discards immediately.
+    """
+    metric_info = METRICS[metric_key]
+
+    # Collect summary statistics for each method
+    summary_records = []
+
+    # Process one n_episodes at a time
+    for n_ep in n_episodes_values:
+        # Load baseline stats for this n_episodes
+        baseline_row = metadata_df[(metadata_df['method'] == baseline_method) &
+                                   (metadata_df['n_episodes'] == n_ep)]
+
+        if baseline_row.empty:
+            continue
+
+        baseline_stats = compute_stats_from_predictions(
+            baseline_row.iloc[0]['predictions_path'],
+            n_ep
+        )
+
+        # Process each method for this n_episodes
+        for method in methods:
+            if method == baseline_method:
+                continue
+
+            method_row = metadata_df[(metadata_df['method'] == method) &
+                                    (metadata_df['n_episodes'] == n_ep)]
+
+            if method_row.empty:
+                continue
+
+            # Load method stats
+            method_stats = compute_stats_from_predictions(
+                method_row.iloc[0]['predictions_path'],
+                n_ep
+            )
+
+            # Compute metric for this method vs baseline
+            metric_df = compute_metric(baseline_stats, method_stats, metric_key)
+
+            # Store summary statistics
+            if not metric_df.empty:
+                summary_records.append({
+                    'method': method,
+                    'n_episodes': n_ep,
+                    'mean': metric_df['metric_value'].mean(),
+                    'std': metric_df['metric_value'].std()
+                })
+
+            # Discard method stats and metric immediately
+            del method_stats, metric_df
+
+        # Discard baseline stats after processing all methods for this n_episodes
+        del baseline_stats
+
+    if not summary_records:
         st.warning("No data available")
         return
 
-    # Aggregate by method and n_episodes
-    summary = filtered.groupby(['method', 'n_episodes'])['metric_value'].agg(
-        mean='mean', std='std'
-    ).reset_index()
+    summary = pd.DataFrame(summary_records)
 
+    # Create plot
     fig = go.Figure()
 
     for method in methods:
+        if method == baseline_method:
+            continue
         method_data = summary[summary['method'] == method]
-        fig.add_trace(go.Scatter(
-            x=method_data['n_episodes'],
-            y=method_data['mean'],
-            error_y=dict(type='data', array=method_data['std']),
-            mode='lines+markers',
-            name=method,
-            marker=dict(size=10)
-        ))
+        if not method_data.empty:
+            fig.add_trace(go.Scatter(
+                x=method_data['n_episodes'],
+                y=method_data['mean'],
+                error_y=dict(type='data', array=method_data['std']),
+                mode='lines+markers',
+                name=method,
+                marker=dict(size=10)
+            ))
 
     if metric_info['reference_line'] is not None:
         fig.add_hline(
@@ -234,16 +314,13 @@ selected_n_ep = st.selectbox(
 methods_to_load = list(set(methods + [baseline_method]))
 filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == selected_n_ep]
 
-stats_list = []
+stats_dict_single = {}
 for _, row in filtered_for_n_ep.iterrows():
     if row['method'] in methods_to_load:
         stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'])
-        stats['method'] = row['method']
-        stats_list.append(stats)
+        stats_dict_single[row['method']] = stats
 
-stats_single = pd.concat(stats_list, ignore_index=True) if stats_list else pd.DataFrame()
-
-if stats_single.empty:
+if not stats_dict_single or baseline_method not in stats_dict_single:
     st.error(f"No data for {selected_n_ep} episodes")
     st.stop()
 
@@ -255,7 +332,7 @@ metric_key_single = st.selectbox(
 )
 
 st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
-plot_metric_distribution(stats_single, metric_key_single, methods, selected_n_ep, baseline_method)
+plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method)
 
 st.markdown("---")
 
@@ -271,24 +348,8 @@ metric_key_evolution = st.selectbox(
 
 st.markdown(f"**{METRICS[metric_key_evolution]['name']}** evolution across training data sizes")
 
-# Load stats for all n_episodes (include baseline method)
-with st.spinner("Loading data..."):
-    methods_to_load_all = list(set(methods + [baseline_method]))
-
-    stats_list_all = []
-    for _, row in filtered_metadata.iterrows():
-        if row['method'] in methods_to_load_all and row['n_episodes'] in n_episodes_values:
-            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'])
-            stats['method'] = row['method']
-            stats_list_all.append(stats)
-
-    stats_all = pd.concat(stats_list_all, ignore_index=True) if stats_list_all else pd.DataFrame()
-
-if stats_all.empty:
-    st.error("No data available for evolution plot")
-    st.stop()
-
-plot_metric_evolution(stats_all, metric_key_evolution, methods, baseline_method)
+# Plot evolution (loads stats one method at a time to minimize memory)
+plot_metric_evolution(filtered_metadata, metric_key_evolution, methods, baseline_method, n_episodes_values)
 
 st.markdown("---")
 st.caption(f"Policy: {policy} | Methods: {', '.join(methods)}")
