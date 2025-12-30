@@ -317,6 +317,7 @@ filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == selecte
 stats_dict_single = {}
 for _, row in filtered_for_n_ep.iterrows():
     if row['method'] in methods_to_load:
+        print(row['method'])
         stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'])
         stats_dict_single[row['method']] = stats
 
