@@ -236,6 +236,23 @@ def train_single_initialization(
             converged = True
             break
 
+    # Log final epoch metrics to wandb (ensures last epoch is always logged)
+    if use_wandb and config.logging.use_wandb:
+        final_log_dict = {
+            'epoch': final_epoch,
+            'train/loss': avg_metrics['loss'],
+            'train/mse': avg_metrics['loss'],
+            'train/mae': avg_metrics['mae'],
+            'train/mean_value': avg_metrics['mean_value'],
+            'train/mean_target': avg_metrics['mean_target'],
+            'train/mc_loss_train': final_mc_loss_train,
+            'train/best_mc_loss': best_mc_loss,
+            'stop_reason': 'convergence' if converged else 'max_epochs',
+        }
+        if use_test_set:
+            final_log_dict['test/mc_loss'] = final_mc_loss_test
+        wandb.log(final_log_dict)
+
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")
     print(f"    Epochs: {final_epoch + 1}/{max_epochs}")
