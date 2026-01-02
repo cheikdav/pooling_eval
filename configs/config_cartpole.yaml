@@ -30,7 +30,7 @@ data_generation:
   n_envs: 64
   tuning_episodes: 1000
   ground_truth_episodes: 5000
-  eval_episodes: 1000
+  eval_episodes: 400
 
 # Value estimator training
 value_estimators:
