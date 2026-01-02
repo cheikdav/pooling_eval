@@ -61,12 +61,13 @@ def find_wandb_runs(experiments_dir: Path) -> list[Path]:
         if not exp_dir.is_dir():
             continue
 
-        wandb_offline_dir = exp_dir / "wandb_offline"
-        if not wandb_offline_dir.exists():
+        # Path structure: experiments/<exp_id>/wandb_offline/wandb/offline-run-*
+        wandb_runs_dir = exp_dir / "wandb_offline" / "wandb"
+        if not wandb_runs_dir.exists():
             continue
 
         # Find all run directories (they start with "run-" or "offline-run-")
-        for item in wandb_offline_dir.iterdir():
+        for item in wandb_runs_dir.iterdir():
             if item.is_dir() and (item.name.startswith("run-") or item.name.startswith("offline-run-")):
                 runs.append(item)
 
