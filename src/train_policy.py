@@ -277,10 +277,15 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
             print(f"\nSyncing offline run to W&B...")
             import subprocess
             try:
-                subprocess.run(["wandb", "sync", wandb.run.dir], check=True, capture_output=True)
+                result = subprocess.run(["wandb", "sync", wandb.run.dir], check=True, capture_output=True, text=True)
                 print(f"✓ Successfully synced to W&B")
             except subprocess.CalledProcessError as e:
-                print(f"✗ Warning: Failed to sync offline run: {e}")
+                print(f"✗ Warning: Failed to sync offline run")
+                print(f"Error: {e}")
+                if e.stdout:
+                    print(f"stdout: {e.stdout}")
+                if e.stderr:
+                    print(f"stderr: {e.stderr}")
                 print(f"You can manually sync later with: wandb sync {wandb.run.dir}")
 
         wandb.finish()
