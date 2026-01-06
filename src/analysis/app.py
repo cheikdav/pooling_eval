@@ -97,9 +97,9 @@ def show_selection_filters(metadata_df):
     # Epsilon parameter for log ratio metrics
     log_epsilon = st.sidebar.slider(
         "Log Epsilon (log₁₀ε)",
-        min_value=-15.0,
-        max_value=-1.0,
-        value=-10.0,
+        min_value=-5.0,
+        max_value=1.0,
+        value=-2.0,
         step=0.5,
         help="Epsilon value for log ratio computations: log(x+ε) - log(y+ε). Adjust on log scale."
     )
