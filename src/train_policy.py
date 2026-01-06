@@ -129,8 +129,13 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
 
     AlgorithmClass = ALGORITHM_MAP[config.policy.algorithm]
 
+    if len(env.observation_space.shape) == 3:
+        policy_type = "CnnPolicy"
+    else:
+        policy_type = "MlpPolicy"
+
     algo_kwargs = {
-        "policy": "MlpPolicy",
+        "policy": policy_type,
         "env": env,
         "learning_rate": config.policy.learning_rate,
         "gamma": config.policy.gamma,
