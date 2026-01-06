@@ -94,14 +94,26 @@ def show_selection_filters(metadata_df):
         help="Method to use as baseline for ratio metrics"
     )
 
+    # Epsilon parameter for log ratio metrics
+    log_epsilon = st.sidebar.slider(
+        "Log Epsilon (log₁₀ε)",
+        min_value=-15.0,
+        max_value=-1.0,
+        value=-10.0,
+        step=0.5,
+        help="Epsilon value for log ratio computations: log(x+ε) - log(y+ε). Adjust on log scale."
+    )
+    epsilon = 10 ** log_epsilon
+    st.sidebar.caption(f"ε = {epsilon:.2e}")
+
     # Ensure baseline method is included in the data
     methods_to_load = list(set(selected_methods + [baseline_method]))
     filtered = filtered[filtered['method'].isin(methods_to_load)]
 
-    return filtered, selected_env, selected_policy, selected_methods, baseline_method
+    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon
 
 
-def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseline_method='monte_carlo'):
+def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10):
     """Create histogram of metric values.
 
     Args:
@@ -110,6 +122,7 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
         methods: List of methods to display
         n_episodes: Number of episodes (for display)
         baseline_method: Baseline method name
+        epsilon: Small value added before taking log
     """
     metric_info = METRICS[metric_key]
 
@@ -126,7 +139,7 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
             continue
 
         method_stats = stats_dict[method]
-        metric_df = compute_metric(baseline_stats, method_stats, metric_key)
+        metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon)
         metric_df['method'] = method
         metric_list.append(metric_df)
 
@@ -163,11 +176,19 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
 
-def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values):
+def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon=1e-10):
     """Create evolution plot across n_episodes.
 
     Memory-efficient: processes one n_episodes at a time, loads baseline once,
     then for each method, computes metric and discards immediately.
+
+    Args:
+        metadata_df: DataFrame with experiment metadata
+        metric_key: Metric to compute
+        methods: List of methods to display
+        baseline_method: Baseline method name
+        n_episodes_values: List of n_episodes values to plot
+        epsilon: Small value added before taking log
     """
     metric_info = METRICS[metric_key]
 
@@ -206,7 +227,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             )
 
             # Compute metric for this method vs baseline
-            metric_df = compute_metric(baseline_stats, method_stats, metric_key)
+            metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon)
 
             # Store summary statistics
             if not metric_df.empty:
@@ -282,7 +303,7 @@ if metadata_df.empty:
     st.stop()
 
 # Sidebar filters
-filtered_metadata, env, policy, methods, baseline_method = show_selection_filters(metadata_df)
+filtered_metadata, env, policy, methods, baseline_method, epsilon = show_selection_filters(metadata_df)
 
 if not methods:
     st.warning("Please select at least one method")
@@ -333,7 +354,7 @@ metric_key_single = st.selectbox(
 )
 
 st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
-plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method)
+plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method, epsilon)
 
 st.markdown("---")
 
@@ -350,7 +371,7 @@ metric_key_evolution = st.selectbox(
 st.markdown(f"**{METRICS[metric_key_evolution]['name']}** evolution across training data sizes")
 
 # Plot evolution (loads stats one method at a time to minimize memory)
-plot_metric_evolution(filtered_metadata, metric_key_evolution, methods, baseline_method, n_episodes_values)
+plot_metric_evolution(filtered_metadata, metric_key_evolution, methods, baseline_method, n_episodes_values, epsilon)
 
 st.markdown("---")
 st.caption(f"Policy: {policy} | Methods: {', '.join(methods)}")
