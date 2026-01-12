@@ -138,7 +138,7 @@ def train_single_initialization(
         Final MC loss value (test set if available, otherwise train set)
     """
     if use_wandb and config.logging.use_wandb and not sweep_mode:
-        run_name = f"{method_name}_batch{batch_name}_{num_episodes}ep_init{init_idx}"
+        run_name = f"{method_name} ({config.environment.name}, #{batch_name}, #ep {num_episodes}, init {init_idx})"
         wandb.init(
             project=config.logging.wandb_project,
             entity=config.logging.wandb_entity,
