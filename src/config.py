@@ -23,6 +23,10 @@ class PolicyConfig:
     gamma: float = 0.99
     gae_lambda: float = 0.95
     n_envs: int = 1
+    ent_coef: float = 0.0  # Entropy coefficient for exploration
+    clip_range: float = 0.2  # Clipping parameter for PPO
+    max_grad_norm: float = 0.5  # Max gradient norm for gradient clipping
+    vf_coef: float = 0.5  # Value function coefficient
     policy_kwargs: Dict[str, Any] = field(default_factory=dict)
     kwargs: Dict[str, Any] = field(default_factory=dict)
     use_vec_normalize: bool = False

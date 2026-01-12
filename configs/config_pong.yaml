@@ -21,6 +21,8 @@ policy:
   n_envs: 8  # More parallel envs for Atari
   clip_range: 0.1  # Tighter clip range for Atari
   ent_coef: 0.01  # Entropy coefficient for exploration
+  max_grad_norm: 0.5
+  vf_coef: 0.5
 
 # Data generation
 data_generation:

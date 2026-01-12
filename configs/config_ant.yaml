@@ -19,6 +19,10 @@ policy:
   n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
+  ent_coef: 0.0
+  clip_range: 0.2
+  max_grad_norm: 0.5
+  vf_coef: 0.5
   n_envs: 32
   policy_kwargs:
     net_arch:
