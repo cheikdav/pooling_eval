@@ -59,6 +59,50 @@ def compute_log_mean_ratio(baseline_stats, method_stats, epsilon=1e-10):
     return merged
 
 
+@st.cache_data
+def compute_log_variance(baseline_stats, method_stats, epsilon=1e-10):
+    """Compute log variance (no ratio).
+
+    Args:
+        baseline_stats: Not used (kept for signature compatibility)
+        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
+        epsilon: Small value added before taking log to avoid log(0)
+
+    Returns:
+        DataFrame with metric_value column using log(variance + eps)
+    """
+    result = method_stats.copy()
+    result['metric_value'] = np.log(result['variance'] + epsilon)
+
+    if result['metric_value'].isnull().any():
+        null_count = result['metric_value'].isnull().sum()
+        st.error(f"Found {null_count} NaN values after computation!")
+
+    return result
+
+
+@st.cache_data
+def compute_variance(baseline_stats, method_stats, epsilon=1e-10):
+    """Compute variance (no ratio).
+
+    Args:
+        baseline_stats: Not used (kept for signature compatibility)
+        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
+        epsilon: Not used (kept for signature compatibility)
+
+    Returns:
+        DataFrame with metric_value column using raw variance
+    """
+    result = method_stats.copy()
+    result['metric_value'] = result['variance']
+
+    if result['metric_value'].isnull().any():
+        null_count = result['metric_value'].isnull().sum()
+        st.error(f"Found {null_count} NaN values after computation!")
+
+    return result
+
+
 METRICS = {
     'log_variance_ratio': {
         'name': 'Log Variance Ratio',
@@ -73,6 +117,20 @@ METRICS = {
         'reference_line': 0,
         'reference_label': 'Equal to Baseline',
         'compute_fn': compute_log_mean_ratio
+    },
+    'log_variance': {
+        'name': 'Log Variance',
+        'description': 'log(Variance + ε)',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_log_variance
+    },
+    'variance': {
+        'name': 'Variance',
+        'description': 'Raw variance values',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_variance
     }
 }
 
