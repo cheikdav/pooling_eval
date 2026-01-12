@@ -1,0 +1,101 @@
+# Configuration for MuJoCo Walker2d-v4 environment
+# Walker2d is a bipedal walking task (~17 obs dims, 6 action dims)
+# Using tuned hyperparameters from SB3 zoo
+
+experiment_id: "walker2d_baseline"
+seed: 42
+
+# Environment configuration
+environment:
+  name: "Walker2d-v4"
+
+# Policy training (Stable Baselines 3)
+# Hyperparameters from SB3 zoo, adapted for 32 parallel envs
+policy:
+  algorithm: "PPO"
+  total_timesteps: 1000000
+  learning_rate: 5.05041e-05
+  n_steps: 64
+  batch_size: 64
+  n_epochs: 20
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.000585045
+  clip_range: 0.1
+  max_grad_norm: 1.0
+  vf_coef: 0.871923
+  n_envs: 32
+  policy_kwargs:
+    net_arch:
+      - pi: [64, 64]
+        vf: [64, 64]
+    activation_fn: tanh
+  use_vec_normalize: true
+  normalize_obs: true
+  normalize_reward: false
+
+# Data generation
+data_generation:
+  n_batches: 50
+  episodes_per_batch: 200
+  deterministic_policy: false
+  n_envs: 64
+  tuning_episodes: 200
+  ground_truth_episodes: 500
+  eval_episodes: 100
+
+# Value estimator training
+value_estimators:
+  # Shared training parameters
+  training:
+    max_epochs: 30000
+    batch_size: 256
+    convergence_patience: 60
+    convergence_threshold: 1.0e-4
+    eval_frequency: 20
+    gamma: 0.99
+    shuffle_frequency: 100
+    test_episodes: 50
+
+  # List of method configurations
+  method_configs:
+    - name: "monte_carlo"
+      type: "monte_carlo"
+      learning_rate: 0.001
+      n_initializations: 3
+
+    - name: "dqn"
+      type: "dqn"
+      learning_rate: 0.001
+      n_initializations: 3
+      target_update_rate: 0.005
+
+    - name: "least_squares_mc"
+      type: "least_squares_mc"
+      learning_rate: 0.001
+      n_initializations: 1
+      policy_path: null
+      algorithm: "PPO"
+      ridge_lambda: 1.0e-6
+
+    - name: "least_squares_td"
+      type: "least_squares_td"
+      learning_rate: 0.001
+      n_initializations: 1
+      policy_path: null
+      algorithm: "PPO"
+      ridge_lambda: 1.0e-6
+
+# Network architecture
+network:
+  hidden_sizes: [128, 128]
+  activation: "relu"
+  device: "auto"
+
+# Logging
+logging:
+  use_wandb: true
+  wandb_project: "pooling-eval"
+  wandb_entity: null
+  log_frequency: 20
+  wandb_mode: "offline"

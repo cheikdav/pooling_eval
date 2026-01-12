@@ -1,0 +1,96 @@
+# Configuration for MuJoCo Ant-v4 environment
+# Ant is a complex quadruped locomotion task (~27 obs dims, 8 action dims)
+
+experiment_id: "ant_baseline"
+seed: 42
+
+# Environment configuration
+environment:
+  name: "Ant-v4"
+
+# Policy training (Stable Baselines 3)
+# Using PPO with parameters adapted from SB3 zoo and Humanoid config
+policy:
+  algorithm: "PPO"
+  total_timesteps: 2000000
+  learning_rate: 0.0003
+  n_steps: 256
+  batch_size: 128
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_envs: 32
+  policy_kwargs:
+    net_arch:
+      - pi: [256, 256]
+        vf: [256, 256]
+    activation_fn: tanh
+  use_vec_normalize: true
+  normalize_obs: true
+  normalize_reward: false
+
+# Data generation
+data_generation:
+  n_batches: 50
+  episodes_per_batch: 200
+  deterministic_policy: false
+  n_envs: 64
+  tuning_episodes: 200
+  ground_truth_episodes: 500
+  eval_episodes: 100
+
+# Value estimator training
+value_estimators:
+  # Shared training parameters
+  training:
+    max_epochs: 50000
+    batch_size: 256
+    convergence_patience: 80
+    convergence_threshold: 1.0e-4
+    eval_frequency: 20
+    gamma: 0.99
+    shuffle_frequency: 100
+    test_episodes: 50
+
+  # List of method configurations
+  method_configs:
+    - name: "monte_carlo"
+      type: "monte_carlo"
+      learning_rate: 0.001
+      n_initializations: 3
+
+    - name: "dqn"
+      type: "dqn"
+      learning_rate: 0.001
+      n_initializations: 3
+      target_update_rate: 0.005
+
+    - name: "least_squares_mc"
+      type: "least_squares_mc"
+      learning_rate: 0.001
+      n_initializations: 1
+      policy_path: null
+      algorithm: "PPO"
+      ridge_lambda: 1.0e-6
+
+    - name: "least_squares_td"
+      type: "least_squares_td"
+      learning_rate: 0.001
+      n_initializations: 1
+      policy_path: null
+      algorithm: "PPO"
+      ridge_lambda: 1.0e-6
+
+# Network architecture
+network:
+  hidden_sizes: [128, 128]
+  activation: "relu"
+  device: "auto"
+
+# Logging
+logging:
+  use_wandb: true
+  wandb_project: "pooling-eval"
+  wandb_entity: null
+  log_frequency: 20
+  wandb_mode: "offline"
