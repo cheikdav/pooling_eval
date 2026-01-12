@@ -14,6 +14,18 @@ from metadata_discovery import discover_predictions
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
 
 
+# Method Display Name Mapping
+METHOD_DISPLAY_NAMES = {
+    'dqn': 'td',
+    'monte_carlo': 'monte_carlo'
+}
+
+
+def get_method_display_name(method):
+    """Get display name for a method."""
+    return METHOD_DISPLAY_NAMES.get(method, method)
+
+
 # Data Loading Functions
 
 @st.cache_data
@@ -197,7 +209,7 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
 
         method_stats = stats_dict[method]
         metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon)
-        metric_df['method'] = method
+        metric_df['method'] = get_method_display_name(method)
         metric_list.append(metric_df)
 
     if not metric_list:
@@ -226,7 +238,7 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.markdown(f"**Statistics** (vs {baseline_method})")
+        st.markdown(f"**Statistics** (vs {get_method_display_name(baseline_method)})")
         summary = combined.groupby('method')['metric_value'].agg(
             mean='mean', std='std'
         ).reset_index()
@@ -258,7 +270,7 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
             x=deciles,
             y=percentile_values,
             mode='lines+markers',
-            name=method,
+            name=get_method_display_name(method),
             marker=dict(size=8)
         ))
 
@@ -332,7 +344,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             # Store summary statistics
             if not metric_df.empty:
                 summary_records.append({
-                    'method': method,
+                    'method': get_method_display_name(method),
                     'n_episodes': n_ep,
                     'mean': metric_df['metric_value'].mean(),
                     'std': metric_df['metric_value'].std()
@@ -374,7 +386,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
         )
 
     fig.update_layout(
-        title=f"{metric_info['name']} vs Training Data Size (baseline: {baseline_method})",
+        title=f"{metric_info['name']} vs Training Data Size (baseline: {get_method_display_name(baseline_method)})",
         xaxis_title="Training Episodes",
         yaxis_title=f"Mean {metric_info['name']} (± std)",
         height=500
@@ -417,7 +429,7 @@ with col1:
 with col2:
     st.metric("Policy", policy)
 with col3:
-    st.metric("Baseline", baseline_method)
+    st.metric("Baseline", get_method_display_name(baseline_method))
 with col4:
     dataset_label = "Full" if dataset_type == "full" else "Differences"
     st.metric("Dataset", dataset_label)
@@ -481,4 +493,5 @@ st.markdown(f"**{METRICS[metric_key_evolution]['name']}** evolution across train
 plot_metric_evolution(filtered_metadata, metric_key_evolution, methods, baseline_method, n_episodes_values, epsilon, dataset_type)
 
 st.markdown("---")
-st.caption(f"Policy: {policy} | Methods: {', '.join(methods)}")
+display_methods = [get_method_display_name(m) for m in methods]
+st.caption(f"Policy: {policy} | Methods: {', '.join(display_methods)}")
