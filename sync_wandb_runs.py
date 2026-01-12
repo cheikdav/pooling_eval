@@ -17,7 +17,8 @@ def is_run_synced(run_dir: Path) -> bool:
     wandb sync creates these files automatically.
     """
     parent_dir = run_dir.parent
-    for file in parent_dir.glob(f"{run_dir.name}*.synced"):
+
+    for file in run_dir.glob(f"*.synced"):
         return True
     return False
 
@@ -137,6 +138,7 @@ def main():
             success_count += 1
         else:
             fail_count += 1
+
 
     print(f"\n{'='*60}")
     print(f"Summary:")
