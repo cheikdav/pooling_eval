@@ -10,13 +10,13 @@ environment:
   name: "Walker2d-v4"
 
 # Policy training (Stable Baselines 3)
-# Hyperparameters from SB3 zoo
+# Hyperparameters from SB3 zoo, adapted for 32 parallel envs
 policy:
   algorithm: "PPO"
   total_timesteps: 1000000
   learning_rate: 5.05041e-05
-  n_steps: 512
-  batch_size: 32
+  n_steps: 64
+  batch_size: 64
   n_epochs: 20
   gamma: 0.99
   gae_lambda: 0.95
@@ -24,7 +24,7 @@ policy:
   clip_range: 0.1
   max_grad_norm: 1.0
   vf_coef: 0.871923
-  n_envs: 1
+  n_envs: 32
   policy_kwargs:
     net_arch:
       - pi: [64, 64]
