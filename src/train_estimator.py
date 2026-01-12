@@ -152,9 +152,10 @@ def train_single_initialization(
                 'num_episodes': num_episodes,
                 'init_idx': init_idx,
                 'experiment_id': config.experiment_id,
+                'environment': config.environment.name,
                 **estimator.get_config(),
             },
-            tags=[method_name, f"batch_{batch_name}", f"{num_episodes}_episodes", f"init{init_idx}"],
+            tags=[method_name, f"batch_{batch_name}", f"{num_episodes}_episodes", f"init{init_idx}", config.environment.name],
         )
 
     training_config = config.value_estimators.training
