@@ -149,6 +149,14 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
             "batch_size": config.policy.batch_size,
             "n_epochs": config.policy.n_epochs,
             "gae_lambda": config.policy.gae_lambda,
+            "ent_coef": config.policy.ent_coef,
+            "vf_coef": config.policy.vf_coef,
+            "max_grad_norm": config.policy.max_grad_norm,
+        })
+
+    if config.policy.algorithm == "PPO":
+        algo_kwargs.update({
+            "clip_range": config.policy.clip_range,
         })
 
     if config.policy.policy_kwargs:
