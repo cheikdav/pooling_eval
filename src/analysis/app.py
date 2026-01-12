@@ -233,6 +233,46 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
 
+def plot_variance_deciles(stats_dict, methods, n_episodes):
+    """Create plot showing variance distribution by deciles.
+
+    Args:
+        stats_dict: Dict mapping method names to DataFrames with variance column
+        methods: List of methods to display
+        n_episodes: Number of episodes (for display)
+    """
+    fig = go.Figure()
+
+    deciles = np.arange(0, 101, 10)  # 0th, 10th, 20th, ..., 100th percentile
+
+    for method in methods:
+        if method not in stats_dict:
+            continue
+
+        variance_values = stats_dict[method]['variance'].values
+
+        # Compute percentiles
+        percentile_values = np.percentile(variance_values, deciles)
+
+        fig.add_trace(go.Scatter(
+            x=deciles,
+            y=percentile_values,
+            mode='lines+markers',
+            name=method,
+            marker=dict(size=8)
+        ))
+
+    fig.update_layout(
+        title=f"Variance Distribution by Decile ({n_episodes} episodes)",
+        xaxis_title="Percentile",
+        yaxis_title="Variance",
+        height=500,
+        hovermode='x unified'
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
 def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon=1e-10, dataset_type='full'):
     """Create evolution plot across n_episodes.
 
@@ -418,6 +458,10 @@ metric_key_single = st.selectbox(
 
 st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
 plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method, epsilon)
+
+st.markdown("### Variance Distribution by Percentile")
+st.markdown("Shows how variance is distributed across states (0th percentile = minimum, 50th = median, 100th = maximum)")
+plot_variance_deciles(stats_dict_single, methods, selected_n_ep)
 
 st.markdown("---")
 
