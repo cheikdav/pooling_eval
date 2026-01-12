@@ -91,6 +91,23 @@ def check_convergence(loss_history: list, patience: int, threshold: float) -> bo
     return relative_improvement < threshold
 
 
+def check_dual_convergence(train_loss_history: list, mc_loss_history: list, patience: int, threshold: float) -> bool:
+    """Check if both training loss and MC loss have converged.
+
+    Args:
+        train_loss_history: List of training losses
+        mc_loss_history: List of MC losses
+        patience: Number of epochs to check
+        threshold: Relative improvement threshold
+
+    Returns:
+        True if both have converged, False otherwise
+    """
+    train_converged = check_convergence(train_loss_history, patience, threshold)
+    mc_converged = check_convergence(mc_loss_history, patience, threshold)
+    return train_converged and mc_converged
+
+
 def train_single_initialization(
     estimator,
     train_batch: dict,
@@ -135,13 +152,15 @@ def train_single_initialization(
                 'num_episodes': num_episodes,
                 'init_idx': init_idx,
                 'experiment_id': config.experiment_id,
+                'environment': config.environment.name,
                 **estimator.get_config(),
             },
-            tags=[method_name, f"batch_{batch_name}", f"{num_episodes}_episodes", f"init{init_idx}"],
+            tags=[method_name, f"batch_{batch_name}", f"{num_episodes}_episodes", f"init{init_idx}", config.environment.name],
         )
 
     training_config = config.value_estimators.training
     loss_history = []
+    mc_loss_history = []
     final_mc_loss_train = float('inf')
     final_mc_loss_test = float('inf')
     best_mc_loss = float('inf')
@@ -199,6 +218,7 @@ def train_single_initialization(
         }
 
         loss_history.append(avg_metrics['loss'])
+        mc_loss_history.append(avg_metrics['mc_loss'])
         final_mc_loss_train = avg_metrics['mc_loss']
 
         # Compute test MC loss every epoch for model selection
@@ -231,7 +251,7 @@ def train_single_initialization(
                 log_dict['test/mc_loss'] = final_mc_loss_test
             wandb.log(log_dict)
 
-        if check_convergence(loss_history, training_config.convergence_patience,
+        if check_dual_convergence(loss_history, mc_loss_history, training_config.convergence_patience,
                            training_config.convergence_threshold):
             converged = True
             break
@@ -257,9 +277,10 @@ def train_single_initialization(
     print(f"\n  Init {init_idx} Summary:")
     print(f"    Epochs: {final_epoch + 1}/{max_epochs}")
     if converged:
-        print(f"    Stopped: Converged (loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
+        print(f"    Stopped: Converged (both training loss and MC loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
     else:
         print(f"    Stopped: Reached max epochs")
+    print(f"    Final train loss: {loss_history[-1]:.6f}")
     print(f"    Final train MC loss: {final_mc_loss_train:.6f}")
     if use_test_set:
         print(f"    Final test MC loss: {final_mc_loss_test:.6f}")

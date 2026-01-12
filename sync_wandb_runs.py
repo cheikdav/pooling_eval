@@ -13,9 +13,13 @@ from pathlib import Path
 def is_run_synced(run_dir: Path) -> bool:
     """Check if a wandb run has been synced.
 
-    A run is considered synced if it contains a .synced file.
+    A run is considered synced if there's a .synced file matching the run name in the parent directory.
+    wandb sync creates these files automatically.
     """
-    return (run_dir / ".synced").exists()
+    parent_dir = run_dir.parent
+    for file in parent_dir.glob(f"{run_dir.name}*.synced"):
+        return True
+    return False
 
 
 def sync_run(run_dir: Path, dry_run: bool = False) -> bool:
@@ -56,17 +60,14 @@ def find_wandb_runs(experiments_dir: Path) -> list[Path]:
     """
     runs = []
 
-    # Look for wandb_offline directories in all experiments
     for exp_dir in experiments_dir.iterdir():
         if not exp_dir.is_dir():
             continue
 
-        # Path structure: experiments/<exp_id>/wandb_offline/wandb/offline-run-*
         wandb_runs_dir = exp_dir / "wandb_offline" / "wandb"
         if not wandb_runs_dir.exists():
             continue
 
-        # Find all run directories (they start with "run-" or "offline-run-")
         for item in wandb_runs_dir.iterdir():
             if item.is_dir() and (item.name.startswith("run-") or item.name.startswith("offline-run-")):
                 runs.append(item)
@@ -107,7 +108,6 @@ def main():
 
     print(f"Found {len(runs)} wandb run(s)\n")
 
-    # Separate synced and unsynced
     unsynced_runs = [r for r in runs if not is_run_synced(r)]
     synced_runs = [r for r in runs if is_run_synced(r)]
 
