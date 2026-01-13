@@ -101,7 +101,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
         wandb.init(
             project=config.logging.wandb_project,
             entity=config.logging.wandb_entity,
-            name=f"policy_{config.policy.algorithm}",
+            name=f"policy_{config.policy.algorithm} ({config.environment.name})",
             group=config.experiment_id,
             mode=config.logging.wandb_mode,
             dir=f"experiments/{config.experiment_id}/wandb_offline" if config.logging.wandb_mode == "offline" else None,
