@@ -293,15 +293,15 @@ def train_single_initialization(
             final_log['final/mc_loss_test'] = final_mc_loss_test
         wandb.log(final_log)
 
-        # Save run directory before finishing (needed for offline sync)
-        run_dir = wandb.run.dir if config.logging.wandb_mode == "offline" else None
-        if run_dir:
+        # wandb.run.dir points to 'files' subdirectory; sync needs parent directory
+        if config.logging.wandb_mode == "offline":
+            run_dir = str(Path(wandb.run.dir).parent)
             print(f"\n  [DEBUG] Wandb run directory: {run_dir}")
+        else:
+            run_dir = None
 
-        # Finish the run first to write all data to disk
         wandb.finish()
 
-        # Sync offline run if in offline mode (must happen AFTER wandb.finish())
         if config.logging.wandb_mode == "offline" and run_dir:
             print(f"\n  Syncing offline run to W&B...")
             print(f"  [DEBUG] Syncing directory: {run_dir}")
