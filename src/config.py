@@ -95,6 +95,8 @@ class LeastSquaresMCConfig(BaseEstimatorConfig):
     policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
     algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
     ridge_lambda: float = 1e-6  # Ridge regularization parameter
+    preprocess_fraction: float = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
+    n_components: Optional[int] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
 
 
 @dataclass
@@ -103,6 +105,8 @@ class LeastSquaresTDConfig(BaseEstimatorConfig):
     policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
     algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
     ridge_lambda: float = 1e-6  # Ridge regularization parameter
+    preprocess_fraction: float = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
+    n_components: Optional[int] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
 
 
 # Registry mapping EstimatorType to config class

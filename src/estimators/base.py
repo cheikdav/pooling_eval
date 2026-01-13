@@ -481,7 +481,9 @@ class LeastSquaresEstimator(ValueEstimator):
         hidden_sizes: Optional[list] = None,
         activation: str = "relu",
         learning_rate: float = 0.001,
-        normalize_observations: bool = False
+        normalize_observations: bool = False,
+        use_pca_projection: bool = False,
+        n_components: Optional[int] = None
     ):
         """Initialize least squares estimator.
 
@@ -496,6 +498,8 @@ class LeastSquaresEstimator(ValueEstimator):
             activation: Not used (kept for compatibility)
             learning_rate: Not used (closed-form solution)
             normalize_observations: Not used
+            use_pca_projection: Whether to project features onto top-k eigenvectors
+            n_components: Number of eigenvectors to keep (if use_pca_projection=True)
         """
         super().__init__(obs_dim, discount_factor, device)
 
@@ -506,6 +510,8 @@ class LeastSquaresEstimator(ValueEstimator):
         self.ridge_lambda = ridge_lambda
         self.algorithm = algorithm
         self.policy_path = policy_path
+        self.use_pca_projection = use_pca_projection
+        self.n_components = n_components
 
         # Load policy and create representation extractor
         if policy_path is None:
@@ -515,6 +521,11 @@ class LeastSquaresEstimator(ValueEstimator):
         policy_path = Path(policy_path)
         self.repr_extractor = load_policy_representation_extractor(policy_path, algorithm, device)
         self.repr_dim = self.repr_extractor.output_dim
+
+        # PCA projection matrices (set during fit_pca_projection)
+        self.pca_mean = None
+        self.pca_components = None  # Orthonormal basis of top-k eigenvectors
+        self.projected_dim = self.repr_dim  # Updated after PCA fit
 
         # Create ValueNetwork with no hidden layers (just input -> output linear layer)
         # This makes it compatible with the evaluation code that expects ValueNetwork
@@ -527,7 +538,7 @@ class LeastSquaresEstimator(ValueEstimator):
 
         # Incremental least squares matrices: A = Φ^T Φ + λI, b = Φ^T y
         # Store A (not A_inv) for numerical stability
-        self.d = self.repr_dim + 1  # +1 for bias
+        self.d = self.repr_dim + 1  # +1 for bias (updated after PCA)
         self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)
         self.b = torch.zeros(self.d, 1, device=self.device)
         self.w = torch.zeros(self.d, 1, device=self.device)
@@ -571,6 +582,82 @@ class LeastSquaresEstimator(ValueEstimator):
         """Least squares estimators don't have eval mode."""
         pass
 
+    def fit_pca_projection(self, preprocess_batch: Dict[str, np.ndarray]):
+        """Fit PCA projection using covariance matrix from preprocessing data.
+
+        Computes covariance matrix, extracts top-k eigenvectors as orthonormal basis.
+        All subsequent feature projections will use this basis.
+
+        Args:
+            preprocess_batch: Preprocessed batch for computing covariance
+                - observations: (n_samples, obs_dim) array
+        """
+        if not self.use_pca_projection:
+            return
+
+        if self.n_components is None:
+            raise ValueError("n_components must be set when use_pca_projection=True")
+
+        self.repr_extractor.eval()
+
+        with torch.no_grad():
+            obs = torch.FloatTensor(preprocess_batch['observations']).to(self.device)
+            representations = self.repr_extractor(obs)  # (n_samples, repr_dim)
+
+            # Center the data
+            self.pca_mean = representations.mean(dim=0, keepdim=True)  # (1, repr_dim)
+            centered = representations - self.pca_mean  # (n_samples, repr_dim)
+
+            # Compute covariance matrix: C = (1/n) * X^T X
+            n_samples = centered.shape[0]
+            cov_matrix = (centered.T @ centered) / n_samples  # (repr_dim, repr_dim)
+
+            # Eigendecomposition (symmetric matrix)
+            eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrix)
+
+            # Sort by descending eigenvalues
+            sorted_indices = torch.argsort(eigenvalues, descending=True)
+            eigenvalues = eigenvalues[sorted_indices]
+            eigenvectors = eigenvectors[:, sorted_indices]
+
+            # Keep top k components (already orthonormal from eigh)
+            k = min(self.n_components, self.repr_dim)
+            self.pca_components = eigenvectors[:, :k]  # (repr_dim, k)
+            self.projected_dim = k
+
+            # Update dimensions for least squares
+            self.d = k + 1  # +1 for bias
+            self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)
+            self.b = torch.zeros(self.d, 1, device=self.device)
+            self.w = torch.zeros(self.d, 1, device=self.device)
+
+            # Update value network to match projected dimension
+            self.value_net = ValueNetwork(k, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
+            for layer in self.value_net.network:
+                if isinstance(layer, nn.Linear):
+                    torch.nn.init.zeros_(layer.weight)
+                    torch.nn.init.zeros_(layer.bias)
+
+            print(f"PCA projection fitted: {self.repr_dim} -> {k} dimensions")
+            print(f"Explained variance ratio (top {k}): {eigenvalues[:k].sum() / eigenvalues.sum():.4f}")
+
+    def _project_representations(self, representations: torch.Tensor) -> torch.Tensor:
+        """Project representations onto PCA basis if enabled.
+
+        Args:
+            representations: (batch_size, repr_dim) tensor
+
+        Returns:
+            Projected representations: (batch_size, projected_dim) tensor
+        """
+        if not self.use_pca_projection or self.pca_components is None:
+            return representations
+
+        # Center and project: (X - mean) @ components
+        centered = representations - self.pca_mean  # (batch_size, repr_dim)
+        projected = centered @ self.pca_components  # (batch_size, k)
+        return projected
+
     @abstractmethod
     def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
         """Update A and b matrices based on mini-batch data.
@@ -605,9 +692,12 @@ class LeastSquaresEstimator(ValueEstimator):
             obs = mini_batch['observations'].to(self.device)
             representations = self.repr_extractor(obs)  # (batch_size, repr_dim)
 
+            # Project onto PCA basis if enabled
+            representations = self._project_representations(representations)  # (batch_size, projected_dim)
+
             # Add bias term
             ones = torch.ones(representations.shape[0], 1, device=self.device)
-            phi = torch.cat([representations, ones], dim=1)  # (batch_size, repr_dim+1)
+            phi = torch.cat([representations, ones], dim=1)  # (batch_size, projected_dim+1)
 
             # Update A and b (method-specific)
             self._update_A_and_b(mini_batch, phi)
@@ -660,6 +750,10 @@ class LeastSquaresEstimator(ValueEstimator):
         with torch.no_grad():
             obs = torch.FloatTensor(observations).to(self.device)
             representations = self.repr_extractor(obs)
+
+            # Project onto PCA basis if enabled
+            representations = self._project_representations(representations)
+
             values = self.value_net(representations).squeeze(-1)
 
             return values.cpu().numpy()
@@ -683,6 +777,11 @@ class LeastSquaresEstimator(ValueEstimator):
             'repr_dim': self.repr_dim,
             'discount_factor': self.discount_factor,
             'policy_path': getattr(self, 'policy_path', None),
+            'use_pca_projection': self.use_pca_projection,
+            'n_components': self.n_components,
+            'pca_mean': self.pca_mean,
+            'pca_components': self.pca_components,
+            'projected_dim': self.projected_dim,
         }, path)
 
     def load(self, path: Path):
@@ -695,6 +794,11 @@ class LeastSquaresEstimator(ValueEstimator):
         self.w = checkpoint['w']
         self.training_step = checkpoint['training_step']
         self.repr_dim = checkpoint['repr_dim']
+        self.use_pca_projection = checkpoint.get('use_pca_projection', False)
+        self.n_components = checkpoint.get('n_components', None)
+        self.pca_mean = checkpoint.get('pca_mean', None)
+        self.pca_components = checkpoint.get('pca_components', None)
+        self.projected_dim = checkpoint.get('projected_dim', self.repr_dim)
 
     @classmethod
     def load_from_checkpoint(cls, path: Path, device: str = "auto"):

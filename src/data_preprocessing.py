@@ -132,6 +132,60 @@ def sample_episodes(batch: Dict[str, np.ndarray], n_episodes: int, seed: int = 4
     return sampled_batch
 
 
+def split_episodes_for_preprocessing(batch: Dict[str, np.ndarray], preprocess_fraction: float, seed: int = 42):
+    """Split episodes into preprocessing and training sets.
+
+    Args:
+        batch: Raw episode batch (lists of arrays):
+            - observations: List of (T_i, obs_dim) arrays
+            - actions: List of (T_i, act_dim) or (T_i,) arrays
+            - rewards: List of (T_i,) arrays
+            - dones: List of (T_i,) arrays
+            - next_observations: List of (T_i, obs_dim) arrays
+        preprocess_fraction: Fraction of episodes for preprocessing (0.0-1.0)
+            - If 0.0, returns (None, full_batch) - no preprocessing split
+            - If > 0.0, splits episodes into preprocessing and training sets
+        seed: Random seed for reproducible splitting
+
+    Returns:
+        (preprocess_batch, train_batch):
+            - preprocess_batch: None if preprocess_fraction=0.0, otherwise preprocessing episodes
+            - train_batch: Full batch if preprocess_fraction=0.0, otherwise training episodes
+    """
+    if preprocess_fraction == 0.0:
+        return None, batch
+
+    total_episodes = len(batch['observations'])
+    n_preprocess = int(total_episodes * preprocess_fraction)
+
+    if n_preprocess == 0:
+        raise ValueError(f"preprocess_fraction={preprocess_fraction} results in 0 preprocessing episodes. Use 0.0 to disable preprocessing.")
+
+    rng = np.random.RandomState(seed)
+    indices = rng.permutation(total_episodes)
+
+    preprocess_indices = indices[:n_preprocess]
+    train_indices = indices[n_preprocess:]
+
+    preprocess_batch = {
+        'observations': [batch['observations'][i] for i in preprocess_indices],
+        'actions': [batch['actions'][i] for i in preprocess_indices],
+        'rewards': [batch['rewards'][i] for i in preprocess_indices],
+        'dones': [batch['dones'][i] for i in preprocess_indices],
+        'next_observations': [batch['next_observations'][i] for i in preprocess_indices],
+    }
+
+    train_batch = {
+        'observations': [batch['observations'][i] for i in train_indices],
+        'actions': [batch['actions'][i] for i in train_indices],
+        'rewards': [batch['rewards'][i] for i in train_indices],
+        'dones': [batch['dones'][i] for i in train_indices],
+        'next_observations': [batch['next_observations'][i] for i in train_indices],
+    }
+
+    return preprocess_batch, train_batch
+
+
 class TransitionDataset(Dataset):
     """PyTorch Dataset for transition data."""
 

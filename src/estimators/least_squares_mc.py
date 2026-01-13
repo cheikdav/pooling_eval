@@ -16,10 +16,13 @@ class LeastSquaresMCEstimator(LeastSquaresEstimator):
     @classmethod
     def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
         """Get method-specific parameters from config."""
+        use_pca = method_config.preprocess_fraction > 0.0
         return {
             'policy_path': method_config.policy_path,
             'algorithm': method_config.algorithm,
             'ridge_lambda': method_config.ridge_lambda,
+            'use_pca_projection': use_pca,
+            'n_components': method_config.n_components if use_pca else None,
         }
 
     def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:

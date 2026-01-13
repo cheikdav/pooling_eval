@@ -10,7 +10,7 @@ import json
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
-from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset
+from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset, split_episodes_for_preprocessing
 from torch.utils.data import DataLoader
 
 
@@ -387,6 +387,19 @@ def train_estimator(
         print(f"Training {method_name} on batch_{batch_name} with {n_episodes} episodes")
         print(f"{'='*80}")
 
+        # Split for preprocessing if needed (for least squares with PCA)
+        preprocess_batch_raw = None
+        preprocess_batch = None
+        if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and method_config.preprocess_fraction > 0.0:
+            print(f"Splitting {method_config.preprocess_fraction*100:.1f}% of episodes for PCA preprocessing")
+            preprocess_batch_raw, train_batch_raw = split_episodes_for_preprocessing(
+                train_batch_raw, method_config.preprocess_fraction, seed=config.seed
+            )
+            print(f"  Preprocessing: {len(preprocess_batch_raw['observations'])} episodes")
+            print(f"  Training: {len(train_batch_raw['observations'])} episodes")
+            print(f"Preprocessing preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
+            preprocess_batch = preprocess_episodes(preprocess_batch_raw, gamma)
+
         print(f"Preprocessing training batch (flattening episodes, computing MC returns with gamma={gamma})")
         train_batch = preprocess_episodes(train_batch_raw, gamma)
 
@@ -412,6 +425,11 @@ def train_estimator(
             torch.manual_seed(config.seed + init_idx)
             np.random.seed(config.seed + init_idx)
             estimator = create_estimator(method_config, config.network, obs_dim, gamma, config.experiment_id)
+
+            # Fit PCA projection if preprocessing data available
+            if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):
+                print(f"Fitting PCA projection on preprocessing batch")
+                estimator.fit_pca_projection(preprocess_batch)
 
             final_mc_loss = train_single_initialization(
                 estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
