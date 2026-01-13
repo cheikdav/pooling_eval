@@ -295,6 +295,8 @@ def train_single_initialization(
 
         # Save run directory before finishing (needed for offline sync)
         run_dir = wandb.run.dir if config.logging.wandb_mode == "offline" else None
+        if run_dir:
+            print(f"\n  [DEBUG] Wandb run directory: {run_dir}")
 
         # Finish the run first to write all data to disk
         wandb.finish()
@@ -302,6 +304,7 @@ def train_single_initialization(
         # Sync offline run if in offline mode (must happen AFTER wandb.finish())
         if config.logging.wandb_mode == "offline" and run_dir:
             print(f"\n  Syncing offline run to W&B...")
+            print(f"  [DEBUG] Syncing directory: {run_dir}")
             import subprocess
             try:
                 subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
