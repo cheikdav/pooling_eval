@@ -234,17 +234,19 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     batches_to_generate = []
     if config.data_generation.tuning_episodes > 0:
         batches_to_generate.append(("batch_tuning", config.data_generation.tuning_episodes))
-    # Regular batches
+
+    # Regular batches (each with optional validation set)
     for i in range(config.data_generation.n_batches):
         if i < start_batch_idx:
             batches_to_generate.append((f"skip", 0))
+            if config.data_generation.validation_episodes_per_batch > 0:
+                batches_to_generate.append((f"skip", 0))
             continue
         batches_to_generate.append((f"batch_{i}", config.data_generation.episodes_per_batch))
+        if config.data_generation.validation_episodes_per_batch > 0:
+            batches_to_generate.append((f"batch_{i}_validation", config.data_generation.validation_episodes_per_batch))
 
-    # Special batches
-
-    if config.data_generation.ground_truth_episodes > 0:
-        batches_to_generate.append(("batch_ground_truth", config.data_generation.ground_truth_episodes))
+    # Eval batch
     if config.data_generation.eval_episodes > 0:
         batches_to_generate.append(("batch_eval", config.data_generation.eval_episodes))
 
@@ -289,7 +291,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         'n_batches': config.data_generation.n_batches,
         'episodes_per_batch': config.data_generation.episodes_per_batch,
         'tuning_episodes': config.data_generation.tuning_episodes,
-        'ground_truth_episodes': config.data_generation.ground_truth_episodes,
+        'validation_episodes_per_batch': config.data_generation.validation_episodes_per_batch,
         'eval_episodes': config.data_generation.eval_episodes,
         'seed': config.seed,
         'policy_metadata': policy_metadata,

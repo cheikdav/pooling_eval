@@ -42,7 +42,7 @@ class DataGenerationConfig:
     deterministic_policy: bool = False
     n_envs: int = 1
     tuning_episodes: int = 0
-    ground_truth_episodes: int = 0
+    validation_episodes_per_batch: int = 0
     eval_episodes: int = 0
 
 

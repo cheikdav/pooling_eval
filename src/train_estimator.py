@@ -354,20 +354,21 @@ def train_estimator(
         with open(data_metadata_path, 'r') as f:
             data_metadata = json.load(f)
 
-    # Load and preprocess test batch if test_episodes > 0
+    # Load and preprocess validation batch if it exists
     test_batch = None
     if test_episodes > 0:
-        eval_batch_path = batch_path.parent / "batch_ground_truth.npz"
-        if eval_batch_path.exists():
-            print(f"Loading test batch from {eval_batch_path}")
-            eval_batch_raw = load_batch_data(eval_batch_path)
+        # Try to load per-batch validation set first
+        validation_batch_path = batch_path.parent / f"{batch_path.stem}_validation.npz"
+        if validation_batch_path.exists():
+            print(f"Loading validation batch from {validation_batch_path}")
+            validation_batch_raw = load_batch_data(validation_batch_path)
             print(f"Sampling {test_episodes} episodes for test set")
-            test_batch_raw = sample_episodes(eval_batch_raw, test_episodes, seed=config.seed)
+            test_batch_raw = sample_episodes(validation_batch_raw, test_episodes, seed=config.seed)
             print(f"Preprocessing test batch (flattening episodes, computing MC returns with gamma={gamma})")
             test_batch = preprocess_episodes(test_batch_raw, gamma)
             print(f"Test batch: {len(test_batch['observations'])} transitions")
         else:
-            print(f"Warning: test_episodes={test_episodes} but {eval_batch_path} not found. No test set will be used.")
+            print(f"Warning: test_episodes={test_episodes} but {validation_batch_path} not found. No test set will be used.")
 
     for n_episodes in episode_subsets:
         print(f"\nLoading training batch from {batch_path}")

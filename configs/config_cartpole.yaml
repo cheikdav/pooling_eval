@@ -33,7 +33,7 @@ data_generation:
   deterministic_policy: false
   n_envs: 64
   tuning_episodes: 1000
-  ground_truth_episodes: 5000
+  validation_episodes_per_batch: 200
   eval_episodes: 400
 
 # Value estimator training
@@ -71,6 +71,8 @@ value_estimators:
       policy_path: null  # Will be auto-set to experiments/<experiment_id>/policy/policy_final.zip
       algorithm: "PPO"
       ridge_lambda: 1.0e-1
+      preprocess_fraction: 0.0  # Set to 0.1 to use 10% of data for PCA (0.0 = disabled)
+      n_components: null  # Number of PCA components (e.g., 32)
 
     - name: "least_squares_td"
       type: "least_squares_td"
@@ -79,6 +81,8 @@ value_estimators:
       policy_path: null  # Will be auto-set to experiments/<experiment_id>/policy/policy_final.zip
       algorithm: "PPO"
       ridge_lambda: 1.0e-1
+      preprocess_fraction: 0.0  # Set to 0.1 to use 10% of data for PCA (0.0 = disabled)
+      n_components: null  # Number of PCA components (e.g., 32)
 
 # Network architecture (will match SB3 critic architecture)
 network:
