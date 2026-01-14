@@ -169,10 +169,11 @@ Data generation creates multiple types of batches for different purposes:
    - Used exclusively for hyperparameter search via W&B sweeps
    - Created only if `tuning_episodes > 0`
 
-3. **Ground truth batch** (`batch_ground_truth.npz`):
-   - Number of episodes controlled by `data_generation.ground_truth_episodes`
-   - For training a high-quality reference estimator
-   - Created only if `ground_truth_episodes > 0`
+3. **Validation batches** (`batch_0_validation.npz`, `batch_1_validation.npz`, ...):
+   - Number of episodes per validation set controlled by `data_generation.validation_episodes_per_batch`
+   - Each training batch has a corresponding validation set
+   - Used for early stopping and model selection during training
+   - Created only if `validation_episodes_per_batch > 0`
 
 4. **Evaluation batch** (`batch_eval.npz`):
    - Number of episodes controlled by `data_generation.eval_episodes`
