@@ -251,7 +251,6 @@ def train_single_initialization(
 
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
-                'epoch': epoch,
                 'train/loss': avg_metrics['loss'],
                 'train/mse': avg_metrics['loss'],
                 'train/mae': avg_metrics['mae'],
@@ -262,7 +261,8 @@ def train_single_initialization(
             }
             if use_validation:
                 log_dict['val/mc_loss'] = final_mc_loss_val
-            wandb.log(log_dict)
+                log_dict['val/min_mc_loss'] = min_loss
+            wandb.log(log_dict, step=epoch)
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
         final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
@@ -282,7 +282,6 @@ def train_single_initialization(
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
         final_log_dict = {
-            'epoch': final_epoch,
             'train/loss': avg_metrics['loss'],
             'train/mse': avg_metrics['loss'],
             'train/mae': avg_metrics['mae'],
@@ -294,7 +293,8 @@ def train_single_initialization(
         }
         if use_validation:
             final_log_dict['val/mc_loss'] = final_mc_loss_val
-        wandb.log(final_log_dict)
+            final_log_dict['val/min_mc_loss'] = min_loss
+        wandb.log(final_log_dict, step=final_epoch)
 
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")
