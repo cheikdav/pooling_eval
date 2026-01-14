@@ -62,35 +62,33 @@ def load_batch_data(batch_path: Path, max_episodes: int = None) -> dict:
     return batch
 
 
-def check_convergence(loss_history: list, patience: int, threshold: float) -> bool:
+def check_convergence(current_epoch: int, current_loss: float, min_loss: float,
+                     last_improvement_epoch: int, patience: int, threshold: float) -> tuple[bool, float, int]:
     """Check if training has converged based on validation loss.
 
     Converged if no significant improvement in last `patience` epochs.
 
     Args:
-        loss_history: List of validation losses
-        patience: Number of epochs to check
-        threshold: Relative improvement threshold
+        current_epoch: Current epoch number
+        current_loss: Current validation loss
+        min_loss: Best validation loss seen so far
+        last_improvement_epoch: Last epoch where loss improved significantly
+        patience: Number of epochs without improvement before stopping
+        threshold: Absolute improvement threshold
 
     Returns:
-        True if converged, False otherwise
+        (converged, new_min_loss, new_last_improvement_epoch)
     """
-    if len(loss_history) < patience:
-        return False
+    # Check if current loss is significantly better than min loss
+    if current_loss < min_loss - threshold:
+        # Significant improvement found
+        return False, current_loss, current_epoch
 
-    recent_losses = loss_history[-patience:]
-    if len(recent_losses) < 2:
-        return False
+    # No significant improvement - check if we've exceeded patience
+    epochs_since_improvement = current_epoch - last_improvement_epoch
+    converged = epochs_since_improvement >= patience
 
-    # Check if improvement is below threshold
-    initial_loss = recent_losses[0]
-    final_loss = recent_losses[-1]
-
-    if initial_loss == 0:
-        return False
-
-    relative_improvement = abs((final_loss - initial_loss) / initial_loss)
-    return relative_improvement < threshold
+    return converged, min_loss, last_improvement_epoch
 
 
 def train_single_initialization(
@@ -153,6 +151,10 @@ def train_single_initialization(
     use_validation = test_batch is not None
     converged = False
     final_epoch = 0
+
+    # Track convergence state
+    min_loss = float('inf')
+    last_improvement_epoch = 0
 
     # Create dataset once
     dataset = TransitionDataset(train_batch)
@@ -241,18 +243,15 @@ def train_single_initialization(
             wandb.log(log_dict)
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
-        if use_validation:
-            if check_convergence(val_mc_loss_history, training_config.convergence_patience,
-                               training_config.convergence_threshold):
-                converged = True
-                break
-        else:
-            # Fallback to training loss convergence if no validation set
-            if check_convergence(mc_loss_history, training_config.convergence_patience,
-                               training_config.convergence_threshold):
-                converged = True
-                break
+        final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
 
+        converged, min_loss, last_improvement_epoch = check_convergence(
+            epoch, final_mc_loss, min_loss, last_improvement_epoch,
+            training_config.convergence_patience, training_config.convergence_threshold
+        )
+        if converged:
+            break
+        
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
         final_log_dict = {
