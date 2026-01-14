@@ -14,6 +14,24 @@ from src.data_preprocessing import preprocess_episodes, sample_episodes, Transit
 from torch.utils.data import DataLoader
 
 
+def get_method_abbreviation(method_name: str) -> str:
+    """Convert method name to abbreviation for wandb display.
+
+    Args:
+        method_name: Full method name (e.g., 'monte_carlo', 'dqn')
+
+    Returns:
+        Abbreviated method name (e.g., 'MC', 'TD')
+    """
+    abbreviations = {
+        'monte_carlo': 'MC',
+        'dqn': 'TD',
+        'least_squares_mc': 'LSMC',
+        'least_squares_td': 'LSTD',
+    }
+    return abbreviations.get(method_name, method_name)
+
+
 def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, experiment_id: str = None):
     """Create an estimator instance from configuration using registry.
 
@@ -121,7 +139,8 @@ def train_single_initialization(
         Final MC loss value (test set if available, otherwise train set)
     """
     if use_wandb and config.logging.use_wandb and not sweep_mode:
-        run_name = f"{method_name} ({config.environment.name}, #{batch_name}, #ep {num_episodes}, init {init_idx})"
+        method_abbr = get_method_abbreviation(method_name)
+        run_name = f"{method_abbr} ({config.environment.name}, #{batch_name}, #ep {num_episodes}, init {init_idx})"
         wandb.init(
             project=config.logging.wandb_project,
             entity=config.logging.wandb_entity,
