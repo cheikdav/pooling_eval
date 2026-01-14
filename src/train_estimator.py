@@ -167,6 +167,7 @@ def train_single_initialization(
     final_mc_loss_train = float('inf')
     final_mc_loss_val = float('inf')
     best_mc_loss = float('inf')
+    best_estimator_state = None
     use_validation = test_batch is not None
     converged = False
     final_epoch = 0
@@ -238,13 +239,15 @@ def train_single_initialization(
                 final_mc_loss_val = torch.nn.functional.mse_loss(val_values, val_mc_returns).item()
             val_mc_loss_history.append(final_mc_loss_val)
 
-            # Track best validation MC loss
+            # Track best validation MC loss and save state
             if final_mc_loss_val < best_mc_loss:
                 best_mc_loss = final_mc_loss_val
+                best_estimator_state = estimator.state_dict()
         else:
             # No validation set, use training MC loss
             if final_mc_loss_train < best_mc_loss:
                 best_mc_loss = final_mc_loss_train
+                best_estimator_state = estimator.state_dict()
 
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
@@ -270,7 +273,12 @@ def train_single_initialization(
         )
         if converged:
             break
-        
+
+    # Restore best estimator state
+    if best_estimator_state is not None:
+        estimator.load_state_dict(best_estimator_state)
+        print(f"\n  Restored best estimator state (MC loss: {best_mc_loss:.6f})")
+
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
         final_log_dict = {
