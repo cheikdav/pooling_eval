@@ -63,10 +63,12 @@ def load_batch_data(batch_path: Path, max_episodes: int = None) -> dict:
 
 
 def check_convergence(loss_history: list, patience: int, threshold: float) -> bool:
-    """Check if training has converged.
+    """Check if training has converged based on validation loss.
+
+    Converged if no significant improvement in last `patience` epochs.
 
     Args:
-        loss_history: List of recent losses
+        loss_history: List of validation losses
         patience: Number of epochs to check
         threshold: Relative improvement threshold
 
@@ -89,23 +91,6 @@ def check_convergence(loss_history: list, patience: int, threshold: float) -> bo
 
     relative_improvement = abs((final_loss - initial_loss) / initial_loss)
     return relative_improvement < threshold
-
-
-def check_dual_convergence(train_loss_history: list, mc_loss_history: list, patience: int, threshold: float) -> bool:
-    """Check if both training loss and MC loss have converged.
-
-    Args:
-        train_loss_history: List of training losses
-        mc_loss_history: List of MC losses
-        patience: Number of epochs to check
-        threshold: Relative improvement threshold
-
-    Returns:
-        True if both have converged, False otherwise
-    """
-    train_converged = check_convergence(train_loss_history, patience, threshold)
-    mc_converged = check_convergence(mc_loss_history, patience, threshold)
-    return train_converged and mc_converged
 
 
 def train_single_initialization(
@@ -161,10 +146,11 @@ def train_single_initialization(
     training_config = config.value_estimators.training
     loss_history = []
     mc_loss_history = []
+    val_mc_loss_history = []
     final_mc_loss_train = float('inf')
-    final_mc_loss_test = float('inf')
+    final_mc_loss_val = float('inf')
     best_mc_loss = float('inf')
-    use_test_set = test_batch is not None
+    use_validation = test_batch is not None
     converged = False
     final_epoch = 0
 
@@ -221,20 +207,23 @@ def train_single_initialization(
         mc_loss_history.append(avg_metrics['mc_loss'])
         final_mc_loss_train = avg_metrics['mc_loss']
 
-        # Compute test MC loss every epoch for model selection
-        if use_test_set:
+        # Compute validation MC loss every epoch for convergence check and model selection
+        if use_validation:
             estimator.eval()
             with torch.no_grad():
-                test_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)
-                test_values = estimator.predict(test_batch['observations'])
-                test_values = torch.FloatTensor(test_values).to(estimator.device)
-                final_mc_loss_test = torch.nn.functional.mse_loss(test_values, test_mc_returns).item()
+                val_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)
+                val_values = estimator.predict(test_batch['observations'])
+                val_values = torch.FloatTensor(val_values).to(estimator.device)
+                final_mc_loss_val = torch.nn.functional.mse_loss(val_values, val_mc_returns).item()
+            val_mc_loss_history.append(final_mc_loss_val)
 
-
-        current_mc_loss = final_mc_loss_train
-
-        if current_mc_loss < best_mc_loss:
-            best_mc_loss = current_mc_loss
+            # Track best validation MC loss
+            if final_mc_loss_val < best_mc_loss:
+                best_mc_loss = final_mc_loss_val
+        else:
+            # No validation set, use training MC loss
+            if final_mc_loss_train < best_mc_loss:
+                best_mc_loss = final_mc_loss_train
 
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
@@ -247,14 +236,22 @@ def train_single_initialization(
                 'train/mc_loss_train': final_mc_loss_train,
                 'train/best_mc_loss': best_mc_loss,
             }
-            if use_test_set:
-                log_dict['test/mc_loss'] = final_mc_loss_test
+            if use_validation:
+                log_dict['val/mc_loss'] = final_mc_loss_val
             wandb.log(log_dict)
 
-        if check_dual_convergence(loss_history, mc_loss_history, training_config.convergence_patience,
-                           training_config.convergence_threshold):
-            converged = True
-            break
+        # Check convergence based on validation MC loss (or training MC loss if no validation)
+        if use_validation:
+            if check_convergence(val_mc_loss_history, training_config.convergence_patience,
+                               training_config.convergence_threshold):
+                converged = True
+                break
+        else:
+            # Fallback to training loss convergence if no validation set
+            if check_convergence(mc_loss_history, training_config.convergence_patience,
+                               training_config.convergence_threshold):
+                converged = True
+                break
 
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
@@ -269,28 +266,31 @@ def train_single_initialization(
             'train/best_mc_loss': best_mc_loss,
             'stop_reason': 'convergence' if converged else 'max_epochs',
         }
-        if use_test_set:
-            final_log_dict['test/mc_loss'] = final_mc_loss_test
+        if use_validation:
+            final_log_dict['val/mc_loss'] = final_mc_loss_val
         wandb.log(final_log_dict)
 
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")
     print(f"    Epochs: {final_epoch + 1}/{max_epochs}")
     if converged:
-        print(f"    Stopped: Converged (both training loss and MC loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
+        if use_validation:
+            print(f"    Stopped: Converged (validation MC loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
+        else:
+            print(f"    Stopped: Converged (training MC loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
     else:
         print(f"    Stopped: Reached max epochs")
     print(f"    Final train loss: {loss_history[-1]:.6f}")
     print(f"    Final train MC loss: {final_mc_loss_train:.6f}")
-    if use_test_set:
-        print(f"    Final test MC loss: {final_mc_loss_test:.6f}")
+    if use_validation:
+        print(f"    Final val MC loss: {final_mc_loss_val:.6f}")
     print(f"    Best MC loss: {best_mc_loss:.6f}")
 
     if use_wandb and config.logging.use_wandb:
         final_log = {'final/best_mc_loss': best_mc_loss}
-        if use_test_set:
+        if use_validation:
             final_log['final/mc_loss_train'] = final_mc_loss_train
-            final_log['final/mc_loss_test'] = final_mc_loss_test
+            final_log['final/mc_loss_val'] = final_mc_loss_val
         wandb.log(final_log)
 
         # wandb.run.dir points to 'files' subdirectory; sync needs parent directory
