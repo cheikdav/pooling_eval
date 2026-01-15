@@ -263,7 +263,10 @@ def train_single_initialization(
             training_config.convergence_patience, training_config.convergence_threshold
         )
         if last_improvement_epoch == epoch:
+            best_mc_loss = final_mc_loss
             best_estimator = copy.deepcopy(estimator)
+            print(f"  [DEBUG] Epoch {epoch}: Updated best_estimator (MC loss: {best_mc_loss:.6f})")
+            print(f"  [DEBUG] best_estimator is None: {best_estimator is None}")
         if converged:
             break
 
@@ -333,7 +336,12 @@ def train_single_initialization(
                     print(f"  stderr: {e.stderr}")
                 print(f"  You can manually sync later with: wandb sync {run_dir}")
 
-    return best_mc_loss, best_estimator
+    print(f"\n  [DEBUG] End of training:")
+    print(f"  [DEBUG] best_estimator is None: {best_estimator is None}")
+    print(f"  [DEBUG] best_mc_loss: {best_mc_loss}")
+    print(f"  [DEBUG] Returning estimator is None: {(best_estimator if best_estimator is not None else estimator) is None}")
+
+    return best_mc_loss, best_estimator if best_estimator is not None else estimator
 
 
 def train_estimator(
@@ -451,11 +459,16 @@ def train_estimator(
                 estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
             )
 
+            print(f"  [DEBUG] Received estimator from train_single_initialization, is None: {estimator is None}")
+
             if final_mc_loss < best_mc_loss:
                 best_mc_loss = final_mc_loss
                 best_estimator = estimator
                 print(f"  -> New best!")
 
+        print(f"\n[DEBUG] Before saving:")
+        print(f"[DEBUG] best_estimator is None: {best_estimator is None}")
+        print(f"[DEBUG] best_mc_loss: {best_mc_loss}")
         print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
         best_estimator.save(checkpoint_path)
 
