@@ -267,10 +267,6 @@ def train_single_initialization(
         if converged:
             break
 
-    # Restore best estimator state
-    if best_estimator is not None:
-        estimator = best_estimator
-        print(f"\n  Restored best estimator state (MC loss: {best_mc_loss:.6f})")
 
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
@@ -337,7 +333,7 @@ def train_single_initialization(
                     print(f"  stderr: {e.stderr}")
                 print(f"  You can manually sync later with: wandb sync {run_dir}")
 
-    return best_mc_loss
+    return best_mc_loss, best_estimator
 
 
 def train_estimator(
@@ -451,7 +447,7 @@ def train_estimator(
                 print(f"Fitting PCA projection on preprocessing batch")
                 estimator.fit_pca_projection(preprocess_batch)
 
-            final_mc_loss = train_single_initialization(
+            final_mc_loss, estimator = train_single_initialization(
                 estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
             )
 
