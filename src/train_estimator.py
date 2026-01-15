@@ -7,6 +7,7 @@ import torch
 from tqdm import tqdm
 import wandb
 import json
+import copy
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
@@ -167,7 +168,7 @@ def train_single_initialization(
     final_mc_loss_train = float('inf')
     final_mc_loss_val = float('inf')
     best_mc_loss = float('inf')
-    best_estimator_state = None
+    best_estimator = None
     use_validation = test_batch is not None
     converged = False
     final_epoch = 0
@@ -239,16 +240,6 @@ def train_single_initialization(
                 final_mc_loss_val = torch.nn.functional.mse_loss(val_values, val_mc_returns).item()
             val_mc_loss_history.append(final_mc_loss_val)
 
-            # Track best validation MC loss and save state
-            if final_mc_loss_val < best_mc_loss:
-                best_mc_loss = final_mc_loss_val
-                best_estimator_state = estimator.state_dict()
-        else:
-            # No validation set, use training MC loss
-            if final_mc_loss_train < best_mc_loss:
-                best_mc_loss = final_mc_loss_train
-                best_estimator_state = estimator.state_dict()
-
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
                 'train/loss': avg_metrics['loss'],
@@ -271,12 +262,14 @@ def train_single_initialization(
             epoch, final_mc_loss, min_loss, last_improvement_epoch,
             training_config.convergence_patience, training_config.convergence_threshold
         )
+        if last_improvement_epoch == epoch:
+            best_estimator = copy.deepcopy(estimator)
         if converged:
             break
 
     # Restore best estimator state
-    if best_estimator_state is not None:
-        estimator.load_state_dict(best_estimator_state)
+    if best_estimator is not None:
+        estimator = best_estimator
         print(f"\n  Restored best estimator state (MC loss: {best_mc_loss:.6f})")
 
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
