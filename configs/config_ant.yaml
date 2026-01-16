@@ -4,6 +4,10 @@
 experiment_id: "ant_baseline"
 seed: 42
 
+# Configurable storage paths
+data_root: "/scratch/dc3430/pooling_eval"
+results_root: "/scratch/dc3430/pooling_eval"
+
 # Environment configuration
 environment:
   name: "Ant-v4"

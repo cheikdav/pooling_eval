@@ -33,7 +33,7 @@ def get_method_abbreviation(method_name: str) -> str:
     return abbreviations.get(method_name, method_name)
 
 
-def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, experiment_id: str = None):
+def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, experiment_config=None):
     """Create an estimator instance from configuration using registry.
 
     Args:
@@ -41,16 +41,16 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
         network_config: Network configuration
         obs_dim: Observation dimension
         gamma: Discount factor (from training config)
-        experiment_id: Experiment ID (needed for auto-setting policy_path)
+        experiment_config: ExperimentConfig (needed for auto-setting policy_path)
 
     Returns:
         Estimator instance
     """
     # Auto-set policy_path for LeastSquares methods if not provided
     if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and method_config.policy_path is None:
-        if experiment_id is None:
-            raise ValueError("experiment_id is required when policy_path is not set in LeastSquares config")
-        policy_path = Path("experiments") / experiment_id / "policy" / "policy_final.zip"
+        if experiment_config is None:
+            raise ValueError("experiment_config is required when policy_path is not set in LeastSquares config")
+        policy_path = experiment_config.get_policy_dir() / "policy_final.zip"
         method_config.policy_path = str(policy_path)
         print(f"Auto-set policy_path to: {policy_path}")
 
@@ -148,7 +148,7 @@ def train_single_initialization(
             name=run_name,
             group=config.experiment_id,
             mode=config.logging.wandb_mode,
-            dir=f"experiments/{config.experiment_id}/wandb_offline" if config.logging.wandb_mode == "offline" else None,
+            dir=str(config.get_estimators_dir() / "wandb_offline") if config.logging.wandb_mode == "offline" else None,
             config={
                 'method': method_name,
                 'batch_name': batch_name,
@@ -556,8 +556,8 @@ def main():
 
     # Set paths
     batch_name = str(batch_idx)
-    batch_path = Path("experiments") / config.experiment_id / "data" / f"batch_{batch_name}.npz"
-    output_dir = Path("experiments") / config.experiment_id / "estimators" / args.method
+    batch_path = config.get_data_dir() / f"batch_{batch_name}.npz"
+    output_dir = config.get_estimators_dir() / args.method
 
     # Save config to method directory
     output_dir.mkdir(parents=True, exist_ok=True)

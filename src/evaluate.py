@@ -191,14 +191,14 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
     return str(predictions_file.relative_to(results_dir))
 
 
-def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
+def generate_predictions(estimators_dir: Path, config: ExperimentConfig,
                         eval_batch: Dict, results_dir: Path, device: str = "cpu"):
     """Generate predictions from all trained models with metadata.
 
     Processes one n_episodes at a time to avoid memory issues.
 
     Args:
-        experiment_dir: Experiment directory
+        estimators_dir: Directory containing trained estimators
         config: Experiment configuration
         eval_batch: Evaluation batch data
         results_dir: Root results directory
@@ -222,7 +222,7 @@ def generate_predictions(experiment_dir: Path, config: ExperimentConfig,
         print(f"\n  Processing method: {method_name}")
 
         # Get available n_episodes directories from estimators
-        estimators_method_dir = experiment_dir / "estimators" / method_name
+        estimators_method_dir = estimators_dir / method_name
         if not estimators_method_dir.exists():
             print(f"    Method directory not found: {estimators_method_dir}, skipping")
             continue
@@ -254,13 +254,15 @@ def main():
 
     config = ExperimentConfig.from_yaml(args.config)
 
-    experiment_dir = Path("experiments") / config.experiment_id
-    data_dir = experiment_dir / "data"
-    results_dir = experiment_dir / "results"
+    data_dir = config.get_data_dir()
+    estimators_dir = config.get_estimators_dir()
+    results_dir = config.get_results_dir()
     results_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nEvaluating experiment: {config.experiment_id}")
-    print(f"Experiment directory: {experiment_dir}")
+    print(f"Data directory: {data_dir}")
+    print(f"Estimators directory: {estimators_dir}")
+    print(f"Results directory: {results_dir}")
     print(f"Methods: {[mc.name for mc in config.value_estimators.method_configs]}")
     print(f"Batches: {config.data_generation.n_batches}\n")
 
@@ -271,7 +273,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
-    prediction_files = generate_predictions(experiment_dir, config, eval_batch, results_dir, device)
+    prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device)
 
     summary = {
         'experiment_id': config.experiment_id,

@@ -195,16 +195,24 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
     """
     metric_info = METRICS[metric_key]
 
-    if baseline_method not in stats_dict:
+    # Check if this is a non-comparison metric (variance or log_variance)
+    is_comparison_metric = metric_key not in ['variance', 'log_variance']
+
+    if is_comparison_metric and baseline_method not in stats_dict:
         st.error(f"Baseline method {baseline_method} not found")
         return
 
-    baseline_stats = stats_dict[baseline_method]
+    baseline_stats = stats_dict.get(baseline_method)
 
     # Compute metrics for each method
     metric_list = []
     for method in methods:
-        if method == baseline_method or method not in stats_dict:
+        # For comparison metrics, skip the baseline method
+        # For non-comparison metrics, include all methods
+        if is_comparison_metric and method == baseline_method:
+            continue
+
+        if method not in stats_dict:
             continue
 
         method_stats = stats_dict[method]
@@ -238,7 +246,10 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
-        st.markdown(f"**Statistics** (vs {get_method_display_name(baseline_method)})")
+        if is_comparison_metric:
+            st.markdown(f"**Statistics** (vs {get_method_display_name(baseline_method)})")
+        else:
+            st.markdown(f"**Statistics**")
         summary = combined.groupby('method')['metric_value'].agg(
             mean='mean', std='std'
         ).reset_index()
@@ -302,27 +313,35 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
     """
     metric_info = METRICS[metric_key]
 
+    # Check if this is a non-comparison metric (variance or log_variance)
+    is_comparison_metric = metric_key not in ['variance', 'log_variance']
+
     # Collect summary statistics for each method
     summary_records = []
 
     # Process one n_episodes at a time
     for n_ep in n_episodes_values:
-        # Load baseline stats for this n_episodes
-        baseline_row = metadata_df[(metadata_df['method'] == baseline_method) &
-                                   (metadata_df['n_episodes'] == n_ep)]
+        # Load baseline stats for this n_episodes (only needed for comparison metrics)
+        if is_comparison_metric:
+            baseline_row = metadata_df[(metadata_df['method'] == baseline_method) &
+                                       (metadata_df['n_episodes'] == n_ep)]
 
-        if baseline_row.empty:
-            continue
+            if baseline_row.empty:
+                continue
 
-        baseline_stats = compute_stats_from_predictions(
-            baseline_row.iloc[0]['predictions_path'],
-            n_ep,
-            dataset_type=dataset_type
-        )
+            baseline_stats = compute_stats_from_predictions(
+                baseline_row.iloc[0]['predictions_path'],
+                n_ep,
+                dataset_type=dataset_type
+            )
+        else:
+            baseline_stats = None
 
         # Process each method for this n_episodes
         for method in methods:
-            if method == baseline_method:
+            # For comparison metrics, skip the baseline method
+            # For non-comparison metrics, include all methods
+            if is_comparison_metric and method == baseline_method:
                 continue
 
             method_row = metadata_df[(metadata_df['method'] == method) &
@@ -354,7 +373,8 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             del method_stats, metric_df
 
         # Discard baseline stats after processing all methods for this n_episodes
-        del baseline_stats
+        if baseline_stats is not None:
+            del baseline_stats
 
     if not summary_records:
         st.warning("No data available")
@@ -366,16 +386,19 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
     fig = go.Figure()
 
     for method in methods:
-        if method == baseline_method:
+        # For comparison metrics, skip the baseline method
+        # For non-comparison metrics, include all methods
+        if is_comparison_metric and method == baseline_method:
             continue
-        method_data = summary[summary['method'] == method]
+        method_display = get_method_display_name(method)
+        method_data = summary[summary['method'] == method_display]
         if not method_data.empty:
             fig.add_trace(go.Scatter(
                 x=method_data['n_episodes'],
                 y=method_data['mean'],
                 error_y=dict(type='data', array=method_data['std']),
                 mode='lines+markers',
-                name=method,
+                name=method_display,
                 marker=dict(size=10)
             ))
 
@@ -385,8 +408,13 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             annotation_text=metric_info['reference_label']
         )
 
+    if is_comparison_metric:
+        title = f"{metric_info['name']} vs Training Data Size (baseline: {get_method_display_name(baseline_method)})"
+    else:
+        title = f"{metric_info['name']} vs Training Data Size"
+
     fig.update_layout(
-        title=f"{metric_info['name']} vs Training Data Size (baseline: {get_method_display_name(baseline_method)})",
+        title=title,
         xaxis_title="Training Episodes",
         yaxis_title=f"Mean {metric_info['name']} (± std)",
         height=500
@@ -403,13 +431,27 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
 st.title("Value Estimator Variance Analysis")
 st.markdown("Compare variance and performance of different value estimation methods")
 
-# Load data
-experiments_dir = Path("experiments")
-if not experiments_dir.exists():
-    st.error(f"Experiments directory not found: {experiments_dir.absolute()}")
+# Load data - support multiple search paths
+default_paths = [
+    "experiments",  # Local experiments
+    "/scratch/dc3430/pooling_eval/experiments"  # Scratch filesystem
+]
+
+# Try each path and collect all predictions
+all_metadata = []
+for exp_path in default_paths:
+    experiments_dir = Path(exp_path)
+    if experiments_dir.exists():
+        st.sidebar.info(f"Searching: {experiments_dir}")
+        df = load_predictions_data(str(experiments_dir))
+        if not df.empty:
+            all_metadata.append(df)
+
+if not all_metadata:
+    st.error(f"No predictions found in any search paths: {default_paths}")
     st.stop()
 
-metadata_df = load_predictions_data(str(experiments_dir))
+metadata_df = pd.concat(all_metadata, ignore_index=True)
 if metadata_df.empty:
     st.error("No predictions found. Run: `python -m src.evaluate --config <config>.yaml`")
     st.stop()

@@ -324,12 +324,12 @@ def main():
 
     # Set default paths
     if args.policy_path is None:
-        policy_path = Path("experiments") / config.experiment_id / "policy" / "policy_final.zip"
+        policy_path = config.get_policy_dir() / "policy_final.zip"
     else:
         policy_path = args.policy_path
 
     if args.output_dir is None:
-        output_dir = Path("experiments") / config.experiment_id / "data"
+        output_dir = config.get_data_dir()
     else:
         output_dir = args.output_dir
 

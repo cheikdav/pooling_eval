@@ -27,8 +27,11 @@ def main():
     # Initialize wandb (will pick up sweep config automatically)
     wandb.init(tags=["hyperparameter-tuning", "sweep"])
 
+    # Load config early to get paths
+    config_temp = ExperimentConfig.from_yaml(args.config)
+
     # Redirect stdout/stderr to log file
-    log_dir = Path("experiments") / ExperimentConfig.from_yaml(args.config).experiment_id / "sweeps" / args.method / "logs"
+    log_dir = config_temp.get_estimators_dir() / "sweeps" / args.method / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{wandb.run.id}.log"
 
@@ -75,8 +78,8 @@ def main():
     method_config.n_initializations = 1
 
     # Setup paths
-    batch_path = Path("experiments") / config.experiment_id / "data" / "batch_tuning.npz"
-    output_dir = Path("experiments") / config.experiment_id / "sweeps" / args.method / wandb.run.id
+    batch_path = config.get_data_dir() / "batch_tuning.npz"
+    output_dir = config.get_estimators_dir() / "sweeps" / args.method / wandb.run.id
 
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")

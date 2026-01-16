@@ -104,7 +104,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
             name=f"policy_{config.policy.algorithm} ({config.environment.name})",
             group=config.experiment_id,
             mode=config.logging.wandb_mode,
-            dir=f"experiments/{config.experiment_id}/wandb_offline" if config.logging.wandb_mode == "offline" else None,
+            dir=str(config.get_policy_dir() / "wandb_offline") if config.logging.wandb_mode == "offline" else None,
             config={
                 'algorithm': config.policy.algorithm,
                 'environment': config.environment.name,
@@ -320,7 +320,7 @@ def main():
 
     # Set output directory
     if args.output_dir is None:
-        output_dir = Path("experiments") / config.experiment_id / "policy"
+        output_dir = config.get_policy_dir()
     else:
         output_dir = args.output_dir
 

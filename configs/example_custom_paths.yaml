@@ -1,0 +1,79 @@
+# Example configuration showing how to customize storage paths
+# By default, all paths are "." which creates the standard structure:
+#   ./experiments/<experiment_id>/policy/
+#   ./experiments/<experiment_id>/data/
+#   ./experiments/<experiment_id>/estimators/
+#   ./experiments/<experiment_id>/results/
+
+experiment_id: "custom_paths_example"
+seed: 42
+
+# Optional: Customize root directories for each component
+# Each defaults to "." if not specified
+policy_root: "."           # Policy models stored in ./experiments/<experiment_id>/policy/
+data_root: "/scratch/data" # Data batches stored in /scratch/data/experiments/<experiment_id>/data/
+estimators_root: "."       # Estimators stored in ./experiments/<experiment_id>/estimators/
+results_root: "."          # Results stored in ./experiments/<experiment_id>/results/
+
+# Environment configuration
+environment:
+  name: "CartPole-v1"
+
+# Policy training (Stable Baselines 3)
+policy:
+  algorithm: "PPO"
+  total_timesteps: 10000
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_envs: 4
+
+# Data generation
+data_generation:
+  n_batches: 3
+  episodes_per_batch: 100
+  deterministic_policy: false
+  n_envs: 8
+  tuning_episodes: 100
+  validation_episodes_per_batch: 50
+  eval_episodes: 100
+
+# Value estimator training
+value_estimators:
+  training:
+    max_epochs: 1000
+    batch_size: 128
+    convergence_patience: 50
+    convergence_threshold: 1.0e-4
+    eval_frequency: 10
+    gamma: 0.99
+    episode_subsets: [50, 100]
+    shuffle_frequency: 100
+
+  method_configs:
+    - name: "monte_carlo"
+      type: "monte_carlo"
+      learning_rate: 0.001
+      n_initializations: 3
+
+    - name: "dqn"
+      type: "dqn"
+      learning_rate: 0.001
+      n_initializations: 3
+      target_update_rate: 1.0e-3
+
+# Network architecture
+network:
+  hidden_sizes: [64, 64]
+  activation: "relu"
+  device: "auto"
+
+# Logging
+logging:
+  use_wandb: false
+  wandb_project: "pooling-eval"
+  wandb_entity: null
+  log_frequency: 10
