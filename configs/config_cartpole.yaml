@@ -46,7 +46,7 @@ value_estimators:
     convergence_threshold: 1.0e-4
     eval_frequency: 10
     gamma: 0.99
-    episode_subsets: [100, 250, 500, 750, 1000]
+    episode_subsets: [25, 50, 100, 250, 500, 1000]
     shuffle_frequency: 100  # Re-shuffle DataLoader every N epochs for efficiency
     test_episodes: 100  # Number of episodes to sample from eval batch for test set (0 = no test set)
 
