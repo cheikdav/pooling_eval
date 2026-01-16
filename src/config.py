@@ -150,6 +150,42 @@ class ExperimentConfig:
     value_estimators: ValueEstimatorsConfig
     network: NetworkConfig
     logging: LoggingConfig
+    policy_root: str = "."  # Root directory for policy storage (default: current directory)
+    data_root: str = "."  # Root directory for data batches (default: current directory)
+    estimators_root: str = "."  # Root directory for estimators (default: current directory)
+    results_root: str = "."  # Root directory for results (default: current directory)
+
+    def get_policy_dir(self) -> Path:
+        """Get the policy directory path.
+
+        Returns:
+            Path to {policy_root}/experiments/{experiment_id}/policy
+        """
+        return Path(self.policy_root) / "experiments" / self.experiment_id / "policy"
+
+    def get_data_dir(self) -> Path:
+        """Get the data directory path.
+
+        Returns:
+            Path to {data_root}/experiments/{experiment_id}/data
+        """
+        return Path(self.data_root) / "experiments" / self.experiment_id / "data"
+
+    def get_estimators_dir(self) -> Path:
+        """Get the estimators directory path.
+
+        Returns:
+            Path to {estimators_root}/experiments/{experiment_id}/estimators
+        """
+        return Path(self.estimators_root) / "experiments" / self.experiment_id / "estimators"
+
+    def get_results_dir(self) -> Path:
+        """Get the results directory path.
+
+        Returns:
+            Path to {results_root}/experiments/{experiment_id}/results
+        """
+        return Path(self.results_root) / "experiments" / self.experiment_id / "results"
 
     @classmethod
     def from_yaml(cls, path: Path) -> "ExperimentConfig":
@@ -197,7 +233,11 @@ class ExperimentConfig:
             data_generation=data_gen_config,
             value_estimators=value_estimators_config,
             network=network_config,
-            logging=logging_config
+            logging=logging_config,
+            policy_root=config_dict.get('policy_root', '.'),
+            data_root=config_dict.get('data_root', '.'),
+            estimators_root=config_dict.get('estimators_root', '.'),
+            results_root=config_dict.get('results_root', '.')
         )
 
     def to_dict(self) -> Dict[str, Any]:
