@@ -431,13 +431,27 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
 st.title("Value Estimator Variance Analysis")
 st.markdown("Compare variance and performance of different value estimation methods")
 
-# Load data
-experiments_dir = Path("experiments")
-if not experiments_dir.exists():
-    st.error(f"Experiments directory not found: {experiments_dir.absolute()}")
+# Load data - support multiple search paths
+default_paths = [
+    "experiments",  # Local experiments
+    "/scratch/dc3430/pooling_eval/experiments"  # Scratch filesystem
+]
+
+# Try each path and collect all predictions
+all_metadata = []
+for exp_path in default_paths:
+    experiments_dir = Path(exp_path)
+    if experiments_dir.exists():
+        st.sidebar.info(f"Searching: {experiments_dir}")
+        df = load_predictions_data(str(experiments_dir))
+        if not df.empty:
+            all_metadata.append(df)
+
+if not all_metadata:
+    st.error(f"No predictions found in any search paths: {default_paths}")
     st.stop()
 
-metadata_df = load_predictions_data(str(experiments_dir))
+metadata_df = pd.concat(all_metadata, ignore_index=True)
 if metadata_df.empty:
     st.error("No predictions found. Run: `python -m src.evaluate --config <config>.yaml`")
     st.stop()
