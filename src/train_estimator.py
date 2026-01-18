@@ -448,7 +448,7 @@ def train_estimator(
         for init_idx in range(n_inits):
             torch.manual_seed(config.seed + init_idx)
             np.random.seed(config.seed + init_idx)
-            estimator = create_estimator(method_config, config.network, obs_dim, gamma, config.experiment_id)
+            estimator = create_estimator(method_config, config.network, obs_dim, gamma, config)
 
             # Fit PCA projection if preprocessing data available
             if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):

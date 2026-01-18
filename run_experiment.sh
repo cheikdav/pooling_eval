@@ -1,7 +1,7 @@
 #!/bin/bash
 # Simple script to run complete experiment pipeline
 
-CONFIG="configs/example_config.yaml"
+CONFIG="configs/test_config.yaml"
 
 echo "============================================"
 echo "Step 1: Training Policy"
