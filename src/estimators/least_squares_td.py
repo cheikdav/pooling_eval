@@ -46,11 +46,9 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
             mini_batch: Dictionary containing mini-batch data
             phi: (batch_size, repr_dim+1) representations with bias
         """
-        # Extract next state representations
+        # Extract next state representations with PCA projection
         next_obs = mini_batch['next_observations'].to(self.device)
-        next_representations = self.repr_extractor(next_obs)
-        ones = torch.ones(next_representations.shape[0], 1, device=self.device)
-        phi_next = torch.cat([next_representations, ones], dim=1)
+        phi_next = self._extract_phi(next_obs)
 
         rewards = mini_batch['rewards'].to(self.device).unsqueeze(1)  # (n, 1)
         dones = mini_batch['dones'].to(self.device).unsqueeze(1)  # (n, 1)
@@ -76,11 +74,9 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         Returns:
             TD targets: r + γ * V(s') * (1 - done)
         """
-        # Extract next state representations
+        # Extract next state representations with PCA projection
         next_obs = mini_batch['next_observations'].to(self.device)
-        next_representations = self.repr_extractor(next_obs)
-        ones = torch.ones(next_representations.shape[0], 1, device=self.device)
-        phi_next = torch.cat([next_representations, ones], dim=1)
+        phi_next = self._extract_phi(next_obs)
 
         rewards = mini_batch['rewards'].to(self.device)
         dones = mini_batch['dones'].to(self.device)
@@ -98,10 +94,8 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         dones = mini_batch['dones'].to(self.device)
 
         with torch.no_grad():
-            # Get next state values
-            next_representations = self.repr_extractor(next_obs)
-            ones = torch.ones(next_representations.shape[0], 1, device=self.device)
-            phi_next = torch.cat([next_representations, ones], dim=1)
+            # Extract next state representations with PCA projection
+            phi_next = self._extract_phi(next_obs)
             next_values = (phi_next @ self.w).squeeze(-1)
 
             # TD target: r + γ * V(s') * (1 - done)

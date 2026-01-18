@@ -658,6 +658,21 @@ class LeastSquaresEstimator(ValueEstimator):
         projected = centered @ self.pca_components  # (batch_size, k)
         return projected
 
+    def _extract_phi(self, observations: torch.Tensor) -> torch.Tensor:
+        """Extract and project representations with bias term.
+
+        Args:
+            observations: (batch_size, obs_dim) tensor
+
+        Returns:
+            phi: (batch_size, projected_dim+1) tensor with bias
+        """
+        representations = self.repr_extractor(observations)
+        representations = self._project_representations(representations)
+        ones = torch.ones(representations.shape[0], 1, device=self.device)
+        phi = torch.cat([representations, ones], dim=1)
+        return phi
+
     @abstractmethod
     def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
         """Update A and b matrices based on mini-batch data.
