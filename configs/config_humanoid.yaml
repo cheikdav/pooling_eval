@@ -81,7 +81,7 @@ value_estimators:
       policy_path: null  # Will be auto-set to experiments/<experiment_id>/policy/policy_final.zip
       algorithm: "PPO"
       ridge_lambda: 1.0e-1
-      preprocess_fraction: 0.0  # Set to 0.1 to use 10% of data for PCA (0.0 = disabled)
+      preprocess_fraction: 0.1  # Set to 0.1 to use 10% of data for PCA (0.0 = disabled)
       n_components: 64  # Number of PCA components (e.g., 64, 128)
 
     - name: "least_squares_td"
@@ -91,7 +91,7 @@ value_estimators:
       policy_path: null  # Will be auto-set to experiments/<experiment_id>/policy/policy_final.zip
       algorithm: "PPO"
       ridge_lambda: 1.0e-1
-      preprocess_fraction: 0.0  # Set to 0.1 to use 10% of data for PCA (0.0 = disabled)
+      preprocess_fraction: 0.1  # Set to 0.1 to use 10% of data for PCA (0.0 = disabled)
       n_components: 64  # Number of PCA components (e.g., 64, 128)
 
 # Network architecture (larger for high-dimensional observations)
