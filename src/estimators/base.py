@@ -525,11 +525,22 @@ class LeastSquaresEstimator(ValueEstimator):
         # PCA projection matrices (set during fit_pca_projection)
         self.pca_mean = None
         self.pca_components = None  # Orthonormal basis of top-k eigenvectors
-        self.projected_dim = self.repr_dim  # Updated after PCA fit
+
+        # Determine projected dimension: will be set by fit_pca_projection if PCA enabled
+        if use_pca_projection:
+            # Placeholder - will be properly set in fit_pca_projection
+            # We can't know the exact dimension until PCA is fitted
+            self.projected_dim = None
+        else:
+            self.projected_dim = self.repr_dim
+
+        # Initialize value network and matrices
+        # If PCA enabled, these will be recreated in fit_pca_projection with correct dimensions
+        feature_dim = self.repr_dim if self.projected_dim is None else self.projected_dim
 
         # Create ValueNetwork with no hidden layers (just input -> output linear layer)
         # This makes it compatible with the evaluation code that expects ValueNetwork
-        self.value_net = ValueNetwork(self.repr_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
+        self.value_net = ValueNetwork(feature_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
         # Initialize weights and bias to zero
         for layer in self.value_net.network:
             if isinstance(layer, nn.Linear):
@@ -538,7 +549,8 @@ class LeastSquaresEstimator(ValueEstimator):
 
         # Incremental least squares matrices: A = Φ^T Φ + λI, b = Φ^T y
         # Store A (not A_inv) for numerical stability
-        self.d = self.repr_dim + 1  # +1 for bias (updated after PCA)
+        # If PCA enabled, these will be recreated in fit_pca_projection
+        self.d = feature_dim + 1  # +1 for bias
         self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)
         self.b = torch.zeros(self.d, 1, device=self.device)
         self.w = torch.zeros(self.d, 1, device=self.device)
