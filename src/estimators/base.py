@@ -801,34 +801,29 @@ class LeastSquaresEstimator(ValueEstimator):
         """Load estimator from disk."""
         checkpoint = torch.load(path, map_location=self.device)
 
-        # 1. Load representation dimension
-        self.repr_dim = checkpoint['repr_dim']
-
-        # 2. Load PCA settings
+        # Load PCA settings first
         self.use_pca_projection = checkpoint.get('use_pca_projection', False)
         self.n_components = checkpoint.get('n_components', None)
         self.pca_mean = checkpoint.get('pca_mean', None)
         self.pca_components = checkpoint.get('pca_components', None)
+        self.projected_dim = checkpoint.get('projected_dim', self.repr_dim)
 
-        # 3. Determine working_dim from checkpoint
-        self.working_dim = checkpoint.get('working_dim', None)
-        if self.working_dim is None:
-            # Backward compatibility: infer from saved value_net dimension
-            self.working_dim = checkpoint['value_net_state_dict']['network.0.weight'].shape[1]
-            print(f"Loaded old checkpoint: inferred working_dim={self.working_dim} from value_net")
+        # Recreate value network with correct dimension if needed
+        saved_feature_dim = checkpoint['value_net_state_dict']['network.0.weight'].shape[1]
+        current_feature_dim = self.value_net.network[0].weight.shape[1]
 
-        # 4. Recreate value network with correct dimension
-        if self.value_net is None or self.value_net.network[0].weight.shape[1] != self.working_dim:
-            print(f"Creating value network with working_dim={self.working_dim}")
-            self._initialize_value_net()
+        if saved_feature_dim != current_feature_dim:
+            print(f"Recreating value network: saved dim {saved_feature_dim} != current dim {current_feature_dim}")
+            self.value_net = ValueNetwork(saved_feature_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
+            self.d = saved_feature_dim + 1  # +1 for bias in least squares matrices
 
-        # 5. Load states
         self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
         self.repr_extractor.load_state_dict(checkpoint['repr_extractor_state_dict'])
         self.A = checkpoint['A']
         self.b = checkpoint['b']
         self.w = checkpoint['w']
         self.training_step = checkpoint['training_step']
+        self.repr_dim = checkpoint['repr_dim']
 
     @classmethod
     def load_from_checkpoint(cls, path: Path, device: str = "auto"):

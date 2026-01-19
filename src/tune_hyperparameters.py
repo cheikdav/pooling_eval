@@ -22,6 +22,9 @@ def main():
     parser.add_argument("--target-update-rate", type=float, default=None)
     parser.add_argument("--num-episodes", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--ridge-lambda", type=float, default=None)
+    parser.add_argument("--n-components", type=int, default=None)
+    parser.add_argument("--preprocess-fraction", type=float, default=None)
     args = parser.parse_args()
 
     # Initialize wandb (will pick up sweep config automatically)
@@ -73,6 +76,21 @@ def main():
     batch_size = wandb.config.get('batch_size', args.batch_size)
     if batch_size is not None:
         config.value_estimators.training.batch_size = batch_size
+
+    # Override ridge_lambda for LeastSquares methods from wandb sweep or CLI
+    ridge_lambda = wandb.config.get('ridge_lambda', args.ridge_lambda)
+    if ridge_lambda is not None and hasattr(method_config, 'ridge_lambda'):
+        method_config.ridge_lambda = ridge_lambda
+
+    # Override n_components for LeastSquares methods from wandb sweep or CLI
+    n_components = wandb.config.get('n_components', args.n_components)
+    if n_components is not None and hasattr(method_config, 'n_components'):
+        method_config.n_components = n_components
+
+    # Override preprocess_fraction for LeastSquares methods from wandb sweep or CLI
+    preprocess_fraction = wandb.config.get('preprocess_fraction', args.preprocess_fraction)
+    if preprocess_fraction is not None and hasattr(method_config, 'preprocess_fraction'):
+        method_config.preprocess_fraction = preprocess_fraction
 
     # Force single initialization for tuning
     method_config.n_initializations = 1

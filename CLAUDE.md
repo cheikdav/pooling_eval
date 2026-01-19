@@ -38,6 +38,10 @@ pip install -e .          # Alternative
 python -m src.train_policy --config configs/example_config.yaml
 python -m src.generate_data --config configs/example_config.yaml
 python -m src.train_estimator --config configs/example_config.yaml --method monte_carlo --batch-idx 0 --no-overwrite
+
+# Generate specific range of batches:
+python -m src.generate_data --config configs/example_config.yaml --start-batch-idx 0 --end-batch-idx 10  # Batches 0-9
+python -m src.generate_data --config configs/example_config.yaml --start-batch-idx 10  # Resume from batch 10
 ```
 
 ### Run All Estimators (Multiple Methods × Multiple Batches)
@@ -106,18 +110,30 @@ wandb sweep configs/sweep_monte_carlo.yaml
 
 # 2. Run agent(s) with the sweep ID returned above
 wandb agent <sweep-id>
+
+# Launch separate sweeps per episode count
+python launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
+python launch_episode_sweeps.py --method least_squares_mc --episodes 50 100 200
 ```
 
 **How it works:**
-- Sweep configs in `configs/sweep_*.yaml` define hyperparameter search space (currently: learning rate)
-- Uses Bayesian optimization to find optimal values
-- **Always uses `batch_tuning.npz`** for hyperparameter search
+- Sweep configs in `configs/sweep_*.yaml` define hyperparameter search space
+- **Monte Carlo / DQN**: Tunes learning rate, batch size, num episodes
+- **Least Squares (MC/TD)**: Tunes ridge_lambda, n_components, preprocess_fraction, num episodes
+- Uses random search to find optimal values
+- **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
+- **Optimizes validation MC loss** (`final/best_val_mc_loss`) to prevent overfitting
 - Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/`
-- All runs tracked in W&B with eval/mse metric for comparison
+- All runs tracked in W&B for comparison
+
+**Separate sweeps per episode count:**
+- `launch_episode_sweeps.py` creates one sweep per episode count
+- Each sweep varies hyperparameters (learning rate, ridge_lambda, etc.) for a fixed episode count
+- Useful for analyzing performance scaling with data size
 
 **Customizing sweeps:**
 - Edit `configs/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- To tune additional hyperparameters, modify `src/tune_hyperparameters.py`
+- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, n_components, preprocess_fraction
 
 ## Architecture
 
@@ -168,10 +184,11 @@ Data generation creates multiple types of batches for different purposes:
    - Number of episodes controlled by `data_generation.tuning_episodes`
    - Used exclusively for hyperparameter search via W&B sweeps
    - Created only if `tuning_episodes > 0`
+   - Has corresponding validation set `batch_tuning_validation.npz` if `validation_episodes_per_batch > 0`
 
-3. **Validation batches** (`batch_0_validation.npz`, `batch_1_validation.npz`, ...):
+3. **Validation batches** (`batch_0_validation.npz`, `batch_1_validation.npz`, ..., `batch_tuning_validation.npz`):
    - Number of episodes per validation set controlled by `data_generation.validation_episodes_per_batch`
-   - Each training batch has a corresponding validation set
+   - Each training batch (including tuning batch) has a corresponding validation set
    - Used for early stopping and model selection during training
    - Created only if `validation_episodes_per_batch > 0`
 
@@ -379,7 +396,19 @@ python -c "import json; stats = json.load(open('training_stats.json')); print([s
 
 ### Resuming Interrupted Experiments
 
-Use `--no-overwrite` to skip already-trained models:
+**For data generation**, use `--start-batch-idx` and `--end-batch-idx` to control which batches to generate:
+```bash
+# Resume from batch 10 onwards
+python -m src.generate_data --config config.yaml --start-batch-idx 10
+
+# Generate only batches 5-15 (exclusive end)
+python -m src.generate_data --config config.yaml --start-batch-idx 5 --end-batch-idx 15
+
+# Generate first 20 batches only
+python -m src.generate_data --config config.yaml --end-batch-idx 20
+```
+
+**For estimator training**, use `--no-overwrite` to skip already-trained models:
 ```bash
 python -m src.run_all_estimators --config config.yaml --mode sequential --no-overwrite
 ```

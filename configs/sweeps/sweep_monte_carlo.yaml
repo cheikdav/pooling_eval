@@ -1,6 +1,6 @@
-# W&B Sweep configuration for DQN estimator
+# W&B Sweep configuration for Monte Carlo estimator
 # Usage:
-#   1. wandb sweep configs/sweep_dqn.yaml
+#   1. wandb sweep configs/sweep_monte_carlo.yaml
 #   2. wandb agent <sweep-id>
 
 program: uv
@@ -13,30 +13,20 @@ command:
   - ${args}
 method: random  # bayes, grid, or random
 metric:
-  name: final/best_mc_loss
+  name: final/best_val_mc_loss
   goal: minimize
 
 # Termination conditions
 run_cap: 30  # Maximum number of runs before sweep terminates
 
-early_terminate:
-  type: hyperband
-  min_iter: 3  # Minimum number of iterations before considering early stopping
-  eta: 3  # Proportion of runs to keep in each successive halving
-  s: 2  # Number of times to halve the number of configurations
-
 parameters:
   config:
     value: configs/config_humanoid.yaml
   method:
-    value: dqn
+    value: monte_carlo
   learning-rate:
-    min: 0.001
-    max: 0.1
-    distribution: log_uniform_values
-  target-update-rate:
-    min: 0.001
-    max: 0.2
+    min: 0.0001
+    max: 0.01
     distribution: log_uniform_values
   num-episodes:
     values: [ 50, 100, 200, 400]

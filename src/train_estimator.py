@@ -309,6 +309,9 @@ def train_single_initialization(
         if use_validation:
             final_log['final/mc_loss_train'] = final_mc_loss_train
             final_log['final/mc_loss_val'] = final_mc_loss_val
+            final_log['final/best_val_mc_loss'] = best_mc_loss  # Explicitly log validation metric for sweeps
+        else:
+            final_log['final/mc_loss_train'] = final_mc_loss_train
         wandb.log(final_log)
 
         # wandb.run.dir points to 'files' subdirectory; sync needs parent directory

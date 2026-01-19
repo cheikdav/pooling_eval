@@ -187,7 +187,7 @@ def save_and_log_batch(batch_data: dict, output_path: Path, batch_name: str) -> 
     }
 
 
-def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0):
+def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None):
     """Generate n batches of k episodes using trained policy.
 
     Args:
@@ -195,6 +195,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         policy_path: Path to trained policy (.zip file)
         output_dir: Directory to save generated data
         start_batch_idx: Skip batches before this index (for resuming interrupted runs)
+        end_batch_idx: Stop after this index (exclusive, None = generate all batches)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -234,10 +235,12 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     batches_to_generate = []
     if config.data_generation.tuning_episodes > 0:
         batches_to_generate.append(("batch_tuning", config.data_generation.tuning_episodes))
+        if config.data_generation.validation_episodes_per_batch > 0:
+            batches_to_generate.append(("batch_tuning_validation", config.data_generation.validation_episodes_per_batch))
 
     # Regular batches (each with optional validation set)
     for i in range(config.data_generation.n_batches):
-        if i < start_batch_idx:
+        if i < start_batch_idx or (end_batch_idx is not None and i >= end_batch_idx):
             batches_to_generate.append((f"skip", 0))
             if config.data_generation.validation_episodes_per_batch > 0:
                 batches_to_generate.append((f"skip", 0))
@@ -317,6 +320,8 @@ def main():
                        help="Output directory (default: experiments/<experiment_id>/data)")
     parser.add_argument("--start-batch-idx", type=int, default=0,
                        help="Skip batches before this index (for resuming interrupted runs)")
+    parser.add_argument("--end-batch-idx", type=int, default=None,
+                       help="Stop after this batch index (exclusive, default: generate all batches)")
     args = parser.parse_args()
 
     # Load configuration
@@ -338,7 +343,7 @@ def main():
     config.save(output_dir / "config.yaml")
 
     # Generate data
-    generate_data(config, policy_path, output_dir, start_batch_idx=args.start_batch_idx)
+    generate_data(config, policy_path, output_dir, start_batch_idx=args.start_batch_idx, end_batch_idx=args.end_batch_idx)
 
 
 if __name__ == "__main__":
