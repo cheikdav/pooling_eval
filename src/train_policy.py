@@ -45,12 +45,10 @@ class WandbCallback(BaseCallback):
             if len(self.model.ep_info_buffer) > 0:
                 ep_info = self.model.ep_info_buffer
                 if len(ep_info) > 0:
+                    # Note: Monitor tracks raw (unnormalized) returns before VecNormalize,
+                    # so ep_returns are already the true environment returns
                     ep_returns = [info['r'] for info in ep_info]
                     ep_lengths = [info['l'] for info in ep_info]
-
-                    from stable_baselines3.common.vec_env import VecNormalize
-                    env = self.training_env
-                    is_normalized = isinstance(env, VecNormalize)
 
                     log_dict.update({
                         'episode/mean_reward': np.mean(ep_returns),
@@ -58,14 +56,6 @@ class WandbCallback(BaseCallback):
                         'episode/min_reward': np.min(ep_returns),
                         'episode/max_reward': np.max(ep_returns),
                     })
-
-                    if is_normalized and env.norm_reward:
-                        unnormalized_returns = [env.unnormalize_reward(r) for r in ep_returns]
-                        log_dict.update({
-                            'episode/mean_reward_unnormalized': np.mean(unnormalized_returns),
-                            'episode/min_reward_unnormalized': np.min(unnormalized_returns),
-                            'episode/max_reward_unnormalized': np.max(unnormalized_returns),
-                        })
 
             if hasattr(self.model, 'logger') and self.model.logger is not None:
                 try:
