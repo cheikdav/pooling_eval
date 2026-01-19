@@ -66,8 +66,9 @@ def launch_sweep(config_dict: dict, method: str, episode_count: int) -> str:
             print("STDERR:", result.stderr)
             return None
 
-        # Extract sweep ID from output
-        for line in result.stdout.split('\n'):
+        # Extract sweep ID from output (wandb writes to stderr)
+        output = result.stderr if result.stderr else result.stdout
+        for line in output.split('\n'):
             if 'wandb agent' in line:
                 sweep_id = line.split()[-1]
                 return sweep_id
