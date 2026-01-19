@@ -89,14 +89,14 @@ def main():
         "--episodes",
         type=int,
         nargs='+',
-        default=[50, 100, 200, 400],
-        help="Episode counts to sweep over (default: 50 100 200 400)"
+        default=None,
+        help="Episode counts to sweep over (default: use values from sweep config)"
     )
     parser.add_argument(
         "--sweep-config",
         type=Path,
         default=None,
-        help="Base sweep config file (default: configs/sweep_<method>.yaml)"
+        help="Base sweep config file (default: configs/sweeps/sweep_<method>.yaml)"
     )
     parser.add_argument(
         "--dry-run",
@@ -107,7 +107,7 @@ def main():
 
     # Load base sweep config
     if args.sweep_config is None:
-        args.sweep_config = Path(f"configs/sweep_{args.method}.yaml")
+        args.sweep_config = Path(f"configs/sweeps/sweep_{args.method}.yaml")
 
     if not args.sweep_config.exists():
         print(f"Error: Sweep config not found: {args.sweep_config}")
@@ -115,6 +115,19 @@ def main():
 
     with open(args.sweep_config, 'r') as f:
         base_config = yaml.safe_load(f)
+
+    # If no episodes specified, use values from sweep config
+    if args.episodes is None:
+        if 'num-episodes' in base_config.get('parameters', {}):
+            num_episodes_param = base_config['parameters']['num-episodes']
+            if 'values' in num_episodes_param:
+                args.episodes = num_episodes_param['values']
+            else:
+                print(f"Error: num-episodes parameter in sweep config must have 'values' field")
+                sys.exit(1)
+        else:
+            print(f"Error: No --episodes specified and num-episodes not found in sweep config")
+            sys.exit(1)
 
     print(f"Launching {len(args.episodes)} sweeps for {args.method}")
     print(f"Episode counts: {args.episodes}\n")

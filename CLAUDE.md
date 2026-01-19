@@ -111,9 +111,12 @@ wandb sweep configs/sweep_monte_carlo.yaml
 # 2. Run agent(s) with the sweep ID returned above
 wandb agent <sweep-id>
 
-# Launch separate sweeps per episode count
+# Launch separate sweeps per episode count (uses episodes from sweep config by default)
+python launch_episode_sweeps.py --method monte_carlo
+python launch_episode_sweeps.py --method least_squares_mc
+
+# Or specify custom episode counts
 python launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
-python launch_episode_sweeps.py --method least_squares_mc --episodes 50 100 200
 ```
 
 **How it works:**
@@ -128,6 +131,7 @@ python launch_episode_sweeps.py --method least_squares_mc --episodes 50 100 200
 
 **Separate sweeps per episode count:**
 - `launch_episode_sweeps.py` creates one sweep per episode count
+- Uses episode values from sweep config by default (or specify with `--episodes`)
 - Each sweep varies hyperparameters (learning rate, ridge_lambda, etc.) for a fixed episode count
 - Useful for analyzing performance scaling with data size
 
