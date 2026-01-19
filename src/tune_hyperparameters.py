@@ -29,7 +29,9 @@ def main():
 
     # Initialize wandb (will pick up sweep config automatically)
     # Force online mode for sweeps to ensure real-time syncing
-    wandb.init(tags=["hyperparameter-tuning", "sweep"], mode="online")
+    print(f"[SWEEP] Initializing wandb in ONLINE mode (forced)")
+    run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode="online")
+    print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
 
     # Load config early to get paths
     config_temp = ExperimentConfig.from_yaml(args.config)
