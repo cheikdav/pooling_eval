@@ -540,6 +540,7 @@ class LeastSquaresEstimator(ValueEstimator):
 
         # Create ValueNetwork with no hidden layers (just input -> output linear layer)
         # This makes it compatible with the evaluation code that expects ValueNetwork
+        print("Initializing value network with feature dimension:", feature_dim)
         self.value_net = ValueNetwork(feature_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
         # Initialize weights and bias to zero
         for layer in self.value_net.network:
@@ -644,6 +645,7 @@ class LeastSquaresEstimator(ValueEstimator):
             self.w = torch.zeros(self.d, 1, device=self.device)
 
             # Update value network to match projected dimension
+            print("Initializing value network with projected dimension:", k)
             self.value_net = ValueNetwork(k, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
             for layer in self.value_net.network:
                 if isinstance(layer, nn.Linear):
@@ -744,7 +746,8 @@ class LeastSquaresEstimator(ValueEstimator):
             linear_layer.bias.data = self.w[-1]       # (1,)
 
             # Compute predictions and targets for metrics using value_net
-            representations = self.repr_extractor(obs)
+            representations = self._extract_phi(obs)
+            print(representations.shape)
             values = self.value_net(representations).squeeze(-1)
             targets = self._compute_targets_for_metrics(mini_batch, phi)
 
