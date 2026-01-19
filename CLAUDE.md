@@ -129,6 +129,7 @@ python launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 - Uses random search to find optimal values
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
 - **Optimizes validation MC loss** (`final/best_val_mc_loss`) to prevent overfitting
+- **Sweeps always run in online mode** for real-time monitoring (regardless of config settings)
 - Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/`
 - All runs tracked in W&B for comparison
 

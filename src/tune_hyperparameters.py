@@ -28,7 +28,8 @@ def main():
     args = parser.parse_args()
 
     # Initialize wandb (will pick up sweep config automatically)
-    wandb.init(tags=["hyperparameter-tuning", "sweep"])
+    # Force online mode for sweeps to ensure real-time syncing
+    wandb.init(tags=["hyperparameter-tuning", "sweep"], mode="online")
 
     # Load config early to get paths
     config_temp = ExperimentConfig.from_yaml(args.config)
