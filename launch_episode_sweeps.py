@@ -57,8 +57,14 @@ def launch_sweep(config_dict: dict, method: str, episode_count: int) -> str:
             ['wandb', 'sweep', str(temp_config_path)],
             capture_output=True,
             text=True,
-            check=True
+            check=False  # Don't raise exception, handle errors manually
         )
+
+        if result.returncode != 0:
+            print(f"Error launching sweep (exit code {result.returncode}):")
+            print("STDOUT:", result.stdout)
+            print("STDERR:", result.stderr)
+            return None
 
         # Extract sweep ID from output
         for line in result.stdout.split('\n'):
@@ -66,13 +72,20 @@ def launch_sweep(config_dict: dict, method: str, episode_count: int) -> str:
                 sweep_id = line.split()[-1]
                 return sweep_id
 
-        # Fallback: print output and let user extract ID
-        print(result.stdout)
+        # Fallback: couldn't find sweep ID in expected format
+        print("Warning: Could not extract sweep ID from wandb output:")
+        print("STDOUT:", result.stdout)
+        print("STDERR:", result.stderr)
+        return None
+
+    except Exception as e:
+        print(f"Exception while launching sweep: {e}")
         return None
 
     finally:
         # Clean up temp file
-        temp_config_path.unlink()
+        if temp_config_path.exists():
+            temp_config_path.unlink()
 
 
 def main():
