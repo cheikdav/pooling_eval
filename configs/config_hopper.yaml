@@ -19,8 +19,8 @@ policy:
   algorithm: "PPO"
   total_timesteps: 1000000
   learning_rate: 9.80828e-05
-  n_steps: 64
-  batch_size: 64
+  n_steps: 16
+  batch_size: 32
   n_epochs: 5
   gamma: 0.999
   gae_lambda: 0.99
@@ -31,12 +31,12 @@ policy:
   n_envs: 32
   policy_kwargs:
     net_arch:
-      - pi: [64, 64]
-        vf: [64, 64]
-    activation_fn: tanh
+      - pi: [256, 256]
+        vf: [256, 256]
+    activation_fn: relu
   use_vec_normalize: true
   normalize_obs: true
-  normalize_reward: false
+  normalize_reward: true
 
 # Data generation
 data_generation:
