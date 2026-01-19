@@ -117,6 +117,12 @@ def main():
         action='store_true',
         help="Print sweep configs without launching"
     )
+    parser.add_argument(
+        "--launch-agents",
+        type=int,
+        default=0,
+        help="Number of agents to launch per sweep (default: 0, just create sweeps)"
+    )
     args = parser.parse_args()
 
     # Load base sweep config
@@ -169,11 +175,40 @@ def main():
 
     if not args.dry_run and sweep_ids:
         print(f"\n{'='*60}")
-        print("All sweeps created! Run agents with:")
-        print(f"{'='*60}\n")
-        for episode_count, sweep_id in sweep_ids:
-            print(f"# {episode_count} episodes:")
-            print(f"wandb agent {sweep_id}\n")
+
+        if args.launch_agents > 0:
+            print(f"Launching {args.launch_agents} agent(s) per sweep...")
+            print(f"{'='*60}\n")
+
+            agent_processes = []
+            for episode_count, sweep_id in sweep_ids:
+                print(f"Launching {args.launch_agents} agent(s) for {episode_count} episodes (sweep: {sweep_id})")
+                for agent_idx in range(args.launch_agents):
+                    # Launch agent in background
+                    log_file = Path(f"sweep_agent_{args.method}_{episode_count}ep_agent{agent_idx}.log")
+                    with open(log_file, 'w') as f:
+                        process = subprocess.Popen(
+                            ['wandb', 'agent', sweep_id],
+                            stdout=f,
+                            stderr=subprocess.STDOUT
+                        )
+                        agent_processes.append((episode_count, agent_idx, sweep_id, process, log_file))
+                        print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
+
+            print(f"\n{'='*60}")
+            print(f"All agents launched! Monitor progress:")
+            print(f"{'='*60}\n")
+            for episode_count, agent_idx, sweep_id, process, log_file in agent_processes:
+                print(f"tail -f {log_file}  # {episode_count}ep agent {agent_idx+1}")
+            print(f"\nOr view sweeps at: https://wandb.ai")
+            print(f"\nTo stop agents, use: kill <PID>")
+
+        else:
+            print("All sweeps created! Run agents with:")
+            print(f"{'='*60}\n")
+            for episode_count, sweep_id in sweep_ids:
+                print(f"# {episode_count} episodes:")
+                print(f"wandb agent {sweep_id}\n")
 
 
 if __name__ == "__main__":

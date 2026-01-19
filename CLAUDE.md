@@ -117,6 +117,9 @@ python launch_episode_sweeps.py --method least_squares_mc
 
 # Or specify custom episode counts
 python launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
+
+# Auto-launch multiple agents per sweep to parallelize
+python launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agents per sweep
 ```
 
 **How it works:**
@@ -133,6 +136,7 @@ python launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
 - `launch_episode_sweeps.py` creates one sweep per episode count
 - Uses episode values from sweep config by default (or specify with `--episodes`)
 - Each sweep varies hyperparameters (learning rate, ridge_lambda, etc.) for a fixed episode count
+- Use `--launch-agents N` to automatically launch N parallel agents per sweep for faster tuning
 - Useful for analyzing performance scaling with data size
 
 **Customizing sweeps:**
