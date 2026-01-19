@@ -44,11 +44,11 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
 
         Args:
             mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, repr_dim+1) representations with bias
+            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
         """
-        # Extract next state representations with PCA projection
+        # Extract next state features with bias
         next_obs = mini_batch['next_observations'].to(self.device)
-        phi_next = self._extract_phi(next_obs)
+        phi_next = self._get_features(next_obs, add_bias=True)
 
         rewards = mini_batch['rewards'].to(self.device).unsqueeze(1)  # (n, 1)
         dones = mini_batch['dones'].to(self.device).unsqueeze(1)  # (n, 1)
@@ -69,14 +69,14 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
 
         Args:
             mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, repr_dim+1) representations with bias
+            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
 
         Returns:
             TD targets: r + γ * V(s') * (1 - done)
         """
-        # Extract next state representations with PCA projection
+        # Extract next state features with bias
         next_obs = mini_batch['next_observations'].to(self.device)
-        phi_next = self._extract_phi(next_obs)
+        phi_next = self._get_features(next_obs, add_bias=True)
 
         rewards = mini_batch['rewards'].to(self.device)
         dones = mini_batch['dones'].to(self.device)
@@ -94,8 +94,8 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         dones = mini_batch['dones'].to(self.device)
 
         with torch.no_grad():
-            # Extract next state representations with PCA projection
-            phi_next = self._extract_phi(next_obs)
+            # Extract next state features with bias
+            phi_next = self._get_features(next_obs, add_bias=True)
             next_values = (phi_next @ self.w).squeeze(-1)
 
             # TD target: r + γ * V(s') * (1 - done)
@@ -127,7 +127,7 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
             'n_components': self.n_components,
             'pca_mean': self.pca_mean,
             'pca_components': self.pca_components,
-            'projected_dim': self.projected_dim,
+            'working_dim': self.working_dim,
         }, path)
 
     def get_config(self) -> Dict[str, Any]:

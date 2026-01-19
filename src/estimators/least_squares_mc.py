@@ -32,7 +32,7 @@ class LeastSquaresMCEstimator(LeastSquaresEstimator):
 
         Args:
             mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, repr_dim+1) representations with bias
+            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
         """
         targets = mini_batch['mc_returns'].to(self.device).unsqueeze(1)  # (batch_size, 1)
 
@@ -47,7 +47,7 @@ class LeastSquaresMCEstimator(LeastSquaresEstimator):
 
         Args:
             mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, repr_dim+1) representations with bias
+            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
 
         Returns:
             Monte Carlo returns
