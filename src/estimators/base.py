@@ -746,8 +746,8 @@ class LeastSquaresEstimator(ValueEstimator):
             linear_layer.bias.data = self.w[-1]       # (1,)
 
             # Compute predictions and targets for metrics using value_net
-            representations = self._extract_phi(obs)
-            print(representations.shape)
+            representations = self.repr_extractor(obs)
+            representations = self._project_representations(representations)
             values = self.value_net(representations).squeeze(-1)
             targets = self._compute_targets_for_metrics(mini_batch, phi)
 
