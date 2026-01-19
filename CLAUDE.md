@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project Rules
 
 - **Simplicity**: This is a research project and code does not need to be production level. Simplicity on the other hand is key to iterate quickly. Make sure to keep code as simple and readable as possible.
-- **Factored**: Factor code as much as possible, in the limit of readability. 
-- **Comments**: Write only high level comments and no need for detailed documentation.  
-- **Git Commits**: Never include Claude Code references, attributions, or Co-Authored-By tags in commit messages. Keep commits clean and professional.
+- **Factored**: Factor code as much as possible, in the limit of readability.
+- **Comments**: Write only high level comments and no need for detailed documentation.
+- **Git Commits**: Never include Claude Code references, attributions, or Co-Authored-By tags in commit messages. Keep commits clean, professional, and concise (short subject line with optional bulleted details).
 
 
 ## Project Overview
