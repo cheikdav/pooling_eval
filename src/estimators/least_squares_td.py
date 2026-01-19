@@ -123,6 +123,11 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
             'repr_dim': self.repr_dim,
             'discount_factor': self.discount_factor,
             'policy_path': self.policy_path,
+            'use_pca_projection': self.use_pca_projection,
+            'n_components': self.n_components,
+            'pca_mean': self.pca_mean,
+            'pca_components': self.pca_components,
+            'projected_dim': self.projected_dim,
         }, path)
 
     def get_config(self) -> Dict[str, Any]:

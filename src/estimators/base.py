@@ -817,6 +817,23 @@ class LeastSquaresEstimator(ValueEstimator):
     def load(self, path: Path):
         """Load estimator from disk."""
         checkpoint = torch.load(path, map_location=self.device)
+
+        # Load PCA settings first
+        self.use_pca_projection = checkpoint.get('use_pca_projection', False)
+        self.n_components = checkpoint.get('n_components', None)
+        self.pca_mean = checkpoint.get('pca_mean', None)
+        self.pca_components = checkpoint.get('pca_components', None)
+        self.projected_dim = checkpoint.get('projected_dim', self.repr_dim)
+
+        # Recreate value network with correct dimension if needed
+        saved_feature_dim = checkpoint['value_net_state_dict']['network.0.weight'].shape[1]
+        current_feature_dim = self.value_net.network[0].weight.shape[1]
+
+        if saved_feature_dim != current_feature_dim:
+            print(f"Recreating value network: saved dim {saved_feature_dim} != current dim {current_feature_dim}")
+            self.value_net = ValueNetwork(saved_feature_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
+            self.d = saved_feature_dim + 1  # +1 for bias in least squares matrices
+
         self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
         self.repr_extractor.load_state_dict(checkpoint['repr_extractor_state_dict'])
         self.A = checkpoint['A']
@@ -824,11 +841,6 @@ class LeastSquaresEstimator(ValueEstimator):
         self.w = checkpoint['w']
         self.training_step = checkpoint['training_step']
         self.repr_dim = checkpoint['repr_dim']
-        self.use_pca_projection = checkpoint.get('use_pca_projection', False)
-        self.n_components = checkpoint.get('n_components', None)
-        self.pca_mean = checkpoint.get('pca_mean', None)
-        self.pca_components = checkpoint.get('pca_components', None)
-        self.projected_dim = checkpoint.get('projected_dim', self.repr_dim)
 
     @classmethod
     def load_from_checkpoint(cls, path: Path, device: str = "auto"):
@@ -865,7 +877,9 @@ class LeastSquaresEstimator(ValueEstimator):
             hidden_sizes=checkpoint.get('hidden_sizes', []),
             activation=checkpoint.get('activation', 'relu'),
             learning_rate=checkpoint.get('learning_rate', 0.001),
-            normalize_observations=checkpoint.get('normalize_observations', False)
+            normalize_observations=checkpoint.get('normalize_observations', False),
+            use_pca_projection=checkpoint.get('use_pca_projection', False),
+            n_components=checkpoint.get('n_components', None)
         )
 
         # Load state
