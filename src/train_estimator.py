@@ -204,6 +204,9 @@ def train_single_initialization(
     else:
         max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
 
+    # Offset step for wandb logging to ensure monotonicity across initializations
+    step_offset = init_idx * max_epochs
+
     for epoch in tqdm(range(max_epochs), desc=f"Init {init_idx}", leave=False):
         final_epoch = epoch
         # Recreate dataloader when needed for shuffling
@@ -262,7 +265,7 @@ def train_single_initialization(
             if use_validation:
                 log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
                 log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
-            wandb.log(log_dict, step=epoch)
+            wandb.log(log_dict, step=epoch + step_offset)
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
         final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
@@ -295,7 +298,7 @@ def train_single_initialization(
         if use_validation:
             final_log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
             final_log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
-        wandb.log(final_log_dict, step=final_epoch)
+        wandb.log(final_log_dict, step=final_epoch + step_offset)
 
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")
