@@ -34,40 +34,14 @@ def main():
     run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode="online")
     print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
 
-    # Debug: Print wandb config BEFORE any potential failures
-    print(f"\n[DEBUG] wandb.config contents:")
-    try:
-        config_dict = dict(wandb.config)
-        print(f"  Full config: {config_dict}")
-        print(f"  n_initializations: {wandb.config.get('n_initializations', 'NOT FOUND')}")
-    except Exception as e:
-        print(f"  ERROR reading wandb.config: {e}")
-
     # Load config early to get paths
-    print(f"\n[SWEEP] Loading config from: {args.config}")
-    try:
-        config_temp = ExperimentConfig.from_yaml(args.config)
-        print(f"[SWEEP] Config loaded successfully")
-    except Exception as e:
-        print(f"[SWEEP] ERROR loading config: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+    config_temp = ExperimentConfig.from_yaml(args.config)
 
     # Redirect stdout/stderr to log file
-    print(f"[SWEEP] Creating log directory...")
-    try:
-        log_dir = config_temp.get_estimators_dir() / "sweeps" / args.method / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_file = log_dir / f"{wandb.run.id}.log"
-        print(f"[SWEEP] Log file will be: {log_file}")
-    except Exception as e:
-        print(f"[SWEEP] ERROR creating log directory: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
+    log_dir = config_temp.get_estimators_dir() / "sweeps" / args.method / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{wandb.run.id}.log"
 
-    print(f"[SWEEP] Redirecting output to log file...")
     sys.stdout = open(log_file, 'w', buffering=1)
     sys.stderr = sys.stdout
 
@@ -86,12 +60,6 @@ def main():
     if method_config is None:
         available_methods = [mc.name for mc in config.value_estimators.method_configs]
         raise ValueError(f"Method '{args.method}' not found in config. Available methods: {available_methods}")
-
-    # Debug: Print wandb config
-    print(f"\n[DEBUG] wandb.config contents:")
-    print(f"  Full config: {dict(wandb.config)}")
-    print(f"  n_initializations value: {wandb.config.get('n_initializations', 'NOT FOUND')}")
-    print()
 
     # Override hyperparameters from wandb sweep or CLI
     learning_rate = wandb.config.get('learning_rate', args.learning_rate)
@@ -130,16 +98,11 @@ def main():
 
     # Override n_initializations from wandb sweep or CLI
     n_initializations = wandb.config.get('n_initializations', args.n_initializations)
-    print(f"[DEBUG] n_initializations from wandb.config or CLI: {n_initializations}")
     if n_initializations is not None:
         method_config.n_initializations = n_initializations
-        print(f"[DEBUG] Set method_config.n_initializations to: {method_config.n_initializations}")
     else:
         # Default to 1 if not specified
         method_config.n_initializations = 1
-        print(f"[DEBUG] Using default n_initializations: 1")
-
-    print(f"[DEBUG] Final method_config.n_initializations before training: {method_config.n_initializations}\n")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
