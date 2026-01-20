@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 import sys
 import os
+import wandb
+import multiprocessing
 
 
 def create_sweep_config(base_config: dict, method: str, episode_count: int) -> dict:
@@ -34,6 +36,16 @@ def create_sweep_config(base_config: dict, method: str, episode_count: int) -> d
         config['run_cap'] = 30
 
     return config
+
+
+def run_agent(sweep_id: str, log_file: Path):
+    """Run a wandb agent in a subprocess (called via multiprocessing)."""
+    # Redirect stdout/stderr to log file
+    sys.stdout = open(log_file, 'w', buffering=1)
+    sys.stderr = sys.stdout
+
+    # Run the agent using wandb Python API
+    wandb.agent(sweep_id)
 
 
 def launch_sweep(config_dict: dict, method: str, episode_count: int) -> str:
@@ -185,35 +197,20 @@ def main():
             for episode_count, sweep_id in sweep_ids:
                 print(f"Launching {args.launch_agents} agent(s) for {episode_count} episodes (sweep: {sweep_id})")
                 for agent_idx in range(args.launch_agents):
-                    # Launch agent in background using shell command
+                    # Launch agent in background using Python multiprocessing
                     log_file = Path(f"sweep_agent_{args.method}_{episode_count}ep_agent{agent_idx}.log")
 
-                    # Run the exact shell command that works manually
-                    # The </dev/null prevents stdin blocking, > redirects output, & backgrounds it
-                    cmd = f"wandb agent {sweep_id} </dev/null > {log_file} 2>&1 &"
-                    print(f"  Running: {cmd}")
-
-                    # Use os.system instead of subprocess.run - simpler and doesn't interfere with I/O
-                    exit_code = os.system(cmd)
-                    print(f"  Exit code: {exit_code}")
-
-                    # Wait a moment and check if process started
-                    import time
-                    time.sleep(1)
-
-                    # Check log file
-                    if log_file.exists():
-                        with open(log_file) as f:
-                            content = f.read()
-                            if content:
-                                print(f"  Log has {len(content)} bytes")
-                            else:
-                                print(f"  ⚠️  Log file is empty")
-                    else:
-                        print(f"  ⚠️  Log file doesn't exist yet")
+                    # Use multiprocessing to run agent in separate process
+                    # This avoids all subprocess/shell/stdin issues
+                    process = multiprocessing.Process(
+                        target=run_agent,
+                        args=(sweep_id, log_file),
+                        daemon=True  # Daemonize so it doesn't block parent exit
+                    )
+                    process.start()
 
                     agent_processes.append((episode_count, agent_idx, sweep_id, log_file))
-                    print(f"  Agent {agent_idx+1} log: {log_file}")
+                    print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
 
             print(f"\n{'='*60}")
             print(f"All agents launched! Monitor progress:")
