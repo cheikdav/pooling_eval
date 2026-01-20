@@ -199,6 +199,7 @@ def main():
 
                     process = subprocess.Popen(
                         ['wandb', 'agent', sweep_id],
+                        stdin=subprocess.DEVNULL,  # Close stdin - prevents wandb from blocking
                         stdout=f,
                         stderr=subprocess.STDOUT,
                         bufsize=1,
