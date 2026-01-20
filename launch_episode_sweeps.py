@@ -9,6 +9,7 @@ import yaml
 from pathlib import Path
 import subprocess
 import sys
+import os
 
 
 def create_sweep_config(base_config: dict, method: str, episode_count: int) -> dict:
@@ -192,12 +193,9 @@ def main():
                     cmd = f"wandb agent {sweep_id} </dev/null > {log_file} 2>&1 &"
                     print(f"  Running: {cmd}")
 
-                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                    print(f"  Return code: {result.returncode}")
-                    if result.stdout:
-                        print(f"  Stdout: {result.stdout}")
-                    if result.stderr:
-                        print(f"  Stderr: {result.stderr}")
+                    # Use os.system instead of subprocess.run - simpler and doesn't interfere with I/O
+                    exit_code = os.system(cmd)
+                    print(f"  Exit code: {exit_code}")
 
                     # Wait a moment and check if process started
                     import time
