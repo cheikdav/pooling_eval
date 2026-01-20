@@ -1,7 +1,6 @@
 # W&B Sweep configuration for Monte Carlo estimator
 # Usage:
-#   1. wandb sweep configs/sweep_monte_carlo.yaml
-#   2. wandb agent <sweep-id>
+#   python launch_episode_sweeps.py --config configs/config_humanoid.yaml --method monte_carlo
 
 program: uv
 command:
@@ -20,16 +19,12 @@ metric:
 run_cap: 30  # Maximum number of runs before sweep terminates
 
 parameters:
-  config:
-    value: configs/config_humanoid.yaml
   method:
     value: monte_carlo
   learning-rate:
     min: 0.0001
     max: 0.01
     distribution: log_uniform_values
-  num-episodes:
-    values: [ 50, 100, 200, 400]
   batch-size:
     values: [64, 128, 256, 512]
   n-initializations:

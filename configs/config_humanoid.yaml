@@ -65,7 +65,9 @@ value_estimators:
   method_configs:
     - name: "monte_carlo"
       type: "monte_carlo"
-      learning_rate: 0.0002  # Lower learning rate for stability
+      learning_rate: 
+        default: 0.0002  
+        50: 0.001
       n_initializations: 1  # More initializations for robustness
 
     - name: "dqn"

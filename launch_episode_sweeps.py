@@ -12,20 +12,26 @@ import sys
 import wandb
 import multiprocessing
 
+from src.config import ExperimentConfig
 
-def create_sweep_config(base_config: dict, method: str, episode_count: int) -> dict:
+
+def create_sweep_config(base_config: dict, method: str, episode_count: int, config_path: str) -> dict:
     """Create a sweep config for a specific episode count.
 
     Args:
         base_config: Base sweep configuration to use as template
         method: Method name (monte_carlo, dqn, etc.)
         episode_count: Number of episodes for this sweep
+        config_path: Path to experiment config file
 
     Returns:
         Modified sweep configuration
     """
     import copy
     config = copy.deepcopy(base_config)
+
+    # Set the experiment config path
+    config['parameters']['config'] = {'value': config_path}
 
     # Fix the episode count for this sweep
     config['parameters']['num-episodes'] = {'value': episode_count}
@@ -106,6 +112,12 @@ def main():
         description="Launch separate W&B sweeps for each episode count"
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Experiment config file (e.g., configs/config_humanoid.yaml)"
+    )
+    parser.add_argument(
         "--method",
         type=str,
         required=True,
@@ -116,7 +128,7 @@ def main():
         type=int,
         nargs='+',
         default=None,
-        help="Episode counts to sweep over (default: use values from sweep config)"
+        help="Episode counts to sweep over (default: use values from experiment config)"
     )
     parser.add_argument(
         "--sweep-config",
@@ -148,18 +160,16 @@ def main():
     with open(args.sweep_config, 'r') as f:
         base_config = yaml.safe_load(f)
 
-    # If no episodes specified, use values from sweep config
+    # Verify experiment config exists
+    if not args.config.exists():
+        print(f"Error: Experiment config not found: {args.config}")
+        sys.exit(1)
+
+    # If no episodes specified, read from experiment config
     if args.episodes is None:
-        if 'num-episodes' in base_config.get('parameters', {}):
-            num_episodes_param = base_config['parameters']['num-episodes']
-            if 'values' in num_episodes_param:
-                args.episodes = num_episodes_param['values']
-            else:
-                print(f"Error: num-episodes parameter in sweep config must have 'values' field")
-                sys.exit(1)
-        else:
-            print(f"Error: No --episodes specified and num-episodes not found in sweep config")
-            sys.exit(1)
+        exp_config = ExperimentConfig.from_yaml(args.config)
+        args.episodes = exp_config.value_estimators.training.episode_subsets
+        print(f"Using episode counts from {args.config}: {args.episodes}")
 
     print(f"Launching {len(args.episodes)} sweeps for {args.method}")
     print(f"Episode counts: {args.episodes}\n")
@@ -167,7 +177,7 @@ def main():
     sweep_ids = []
 
     for episode_count in args.episodes:
-        sweep_config = create_sweep_config(base_config, args.method, episode_count)
+        sweep_config = create_sweep_config(base_config, args.method, episode_count, str(args.config))
 
         if args.dry_run:
             print(f"\n{'='*60}")
