@@ -184,37 +184,24 @@ def main():
             for episode_count, sweep_id in sweep_ids:
                 print(f"Launching {args.launch_agents} agent(s) for {episode_count} episodes (sweep: {sweep_id})")
                 for agent_idx in range(args.launch_agents):
-                    # Launch agent in background
+                    # Launch agent in background using shell command
                     log_file = Path(f"sweep_agent_{args.method}_{episode_count}ep_agent{agent_idx}.log")
 
-                    # Open file handle that stays open (don't use 'with')
-                    f = open(log_file, 'w', buffering=1)
+                    # Run the exact shell command that works manually
+                    # The </dev/null prevents stdin blocking, > redirects output, & backgrounds it
+                    cmd = f"wandb agent {sweep_id} </dev/null > {log_file} 2>&1 &"
+                    subprocess.run(cmd, shell=True)
 
-                    # Write header to log file
-                    f.write(f"=== Wandb Agent Log for {sweep_id} ===\n")
-                    f.write(f"Started at: {subprocess.run(['date'], capture_output=True, text=True).stdout}")
-                    f.write(f"Command: wandb agent {sweep_id}\n")
-                    f.write("="*60 + "\n\n")
-                    f.flush()
-
-                    process = subprocess.Popen(
-                        ['wandb', 'agent', sweep_id],
-                        stdin=subprocess.DEVNULL,  # Close stdin - prevents wandb from blocking
-                        stdout=f,
-                        stderr=subprocess.STDOUT,
-                        bufsize=1,
-                        universal_newlines=True
-                    )
-                    agent_processes.append((episode_count, agent_idx, sweep_id, process, log_file))
-                    print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
+                    agent_processes.append((episode_count, agent_idx, sweep_id, log_file))
+                    print(f"  Agent {agent_idx+1} started (log: {log_file})")
 
             print(f"\n{'='*60}")
             print(f"All agents launched! Monitor progress:")
             print(f"{'='*60}\n")
-            for episode_count, agent_idx, sweep_id, process, log_file in agent_processes:
+            for episode_count, agent_idx, sweep_id, log_file in agent_processes:
                 print(f"tail -f {log_file}  # {episode_count}ep agent {agent_idx+1}")
             print(f"\nOr view sweeps at: https://wandb.ai")
-            print(f"\nTo stop agents, use: kill <PID>")
+            print(f"\nTo stop agents, use: pkill -f 'wandb agent'")
 
         else:
             print("All sweeps created! Run agents with:")
