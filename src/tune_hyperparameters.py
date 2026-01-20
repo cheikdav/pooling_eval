@@ -104,6 +104,27 @@ def main():
         # Default to 1 if not specified
         method_config.n_initializations = 1
 
+    # Pre-declare all metrics for multiple initializations so wandb creates panels for them
+    if method_config.n_initializations > 1:
+        print(f"Pre-declaring wandb metrics for {method_config.n_initializations} initializations")
+        for init_idx in range(method_config.n_initializations):
+            suffix = f"_{init_idx}"
+            # Define train metrics
+            wandb.define_metric(f"train{suffix}/loss")
+            wandb.define_metric(f"train{suffix}/mse")
+            wandb.define_metric(f"train{suffix}/mae")
+            wandb.define_metric(f"train{suffix}/mc_loss_train")
+            wandb.define_metric(f"train{suffix}/best_mc_loss")
+            wandb.define_metric(f"train{suffix}/mean_value")
+            wandb.define_metric(f"train{suffix}/mean_target")
+            # Define validation metrics
+            wandb.define_metric(f"val{suffix}/mc_loss")
+            wandb.define_metric(f"val{suffix}/min_mc_loss")
+            # Define final metrics
+            wandb.define_metric(f"final{suffix}/best_mc_loss")
+            wandb.define_metric(f"final{suffix}/mc_loss_train")
+            wandb.define_metric(f"final{suffix}/mc_loss_val")
+
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
     output_dir = config.get_estimators_dir() / "sweeps" / args.method / wandb.run.id
