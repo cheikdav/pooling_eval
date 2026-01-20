@@ -25,6 +25,7 @@ def main():
     parser.add_argument("--ridge-lambda", type=float, default=None)
     parser.add_argument("--n-components", type=int, default=None)
     parser.add_argument("--preprocess-fraction", type=float, default=None)
+    parser.add_argument("--n-initializations", type=int, default=None)
     args = parser.parse_args()
 
     # Initialize wandb (will pick up sweep config automatically)
@@ -95,8 +96,13 @@ def main():
     if preprocess_fraction is not None and hasattr(method_config, 'preprocess_fraction'):
         method_config.preprocess_fraction = preprocess_fraction
 
-    # Force single initialization for tuning
-    method_config.n_initializations = 1
+    # Override n_initializations from wandb sweep or CLI
+    n_initializations = wandb.config.get('n_initializations', args.n_initializations)
+    if n_initializations is not None:
+        method_config.n_initializations = n_initializations
+    else:
+        # Default to 1 if not specified
+        method_config.n_initializations = 1
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"

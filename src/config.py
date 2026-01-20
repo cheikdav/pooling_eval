@@ -2,9 +2,48 @@
 
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 from dataclasses import dataclass, field
 from enum import Enum
+
+
+def resolve_param_for_episodes(param_value: Union[Any, Dict], num_episodes: int) -> Any:
+    """Resolve a parameter value for a specific episode count.
+
+    If param_value is a dict with 'default' key, returns the episode-specific
+    value if present, otherwise returns the default. If param_value is not a dict,
+    returns it as-is.
+
+    Args:
+        param_value: Either a scalar value or a dict like {default: val, 100: val2, ...}
+        num_episodes: Number of episodes to resolve for
+
+    Returns:
+        Resolved parameter value
+
+    Examples:
+        >>> resolve_param_for_episodes(0.001, 100)
+        0.001
+        >>> resolve_param_for_episodes({default: 0.001, 1000: 0.002}, 100)
+        0.001
+        >>> resolve_param_for_episodes({default: 0.001, 1000: 0.002}, 1000)
+        0.002
+    """
+    if not isinstance(param_value, dict):
+        return param_value
+
+    if 'default' not in param_value:
+        raise ValueError(f"Dict-based parameter must have 'default' key: {param_value}")
+
+    # Try exact match first
+    if num_episodes in param_value:
+        return param_value[num_episodes]
+
+    # Try string key (YAML might parse as string)
+    if str(num_episodes) in param_value:
+        return param_value[str(num_episodes)]
+
+    return param_value['default']
 
 
 @dataclass
@@ -69,12 +108,45 @@ class EstimatorType(str, Enum):
 
 @dataclass
 class BaseEstimatorConfig:
-    """Base configuration with parameters common to all estimators."""
+    """Base configuration with parameters common to all estimators.
+
+    Hyperparameters can be specified as:
+    - Scalars: Apply to all episode counts (e.g., learning_rate: 0.001)
+    - Dicts: Specify default and per-episode overrides (e.g., learning_rate: {default: 0.001, 1000: 0.002})
+    """
     name: str  # Name for this method config (used in output paths, logs, etc.)
     type: EstimatorType  # Method type
-    learning_rate: float = 0.001
-    n_initializations: int = 1  # Number of random initializations to try
-    max_epochs: Optional[int] = None  # Override global max_epochs if set
+    learning_rate: Union[float, Dict] = 0.001
+    n_initializations: Union[int, Dict] = 1  # Number of random initializations to try
+    max_epochs: Optional[Union[int, Dict]] = None  # Override global max_epochs if set
+
+    def resolve_for_episodes(self, num_episodes: int) -> "BaseEstimatorConfig":
+        """Create a copy of this config with all parameters resolved for a specific episode count.
+
+        Args:
+            num_episodes: Number of episodes to resolve for
+
+        Returns:
+            New config instance with resolved scalar values
+        """
+        import copy
+        resolved = copy.deepcopy(self)
+
+        # Collect all annotations from this class and parent classes via MRO
+        all_annotations = {}
+        for cls in reversed(type(resolved).__mro__):
+            if hasattr(cls, '__annotations__'):
+                all_annotations.update(cls.__annotations__)
+
+        # Resolve each field that might be a dict
+        for field_name in all_annotations:
+            if field_name in ['name', 'type']:  # Skip non-resolvable fields
+                continue
+            if hasattr(resolved, field_name):
+                current_value = getattr(resolved, field_name)
+                setattr(resolved, field_name, resolve_param_for_episodes(current_value, num_episodes))
+
+        return resolved
 
 
 @dataclass
@@ -86,7 +158,7 @@ class MonteCarloConfig(BaseEstimatorConfig):
 @dataclass
 class DQNConfig(BaseEstimatorConfig):
     """DQN estimator configuration."""
-    target_update_rate: float = 1.0e-5
+    target_update_rate: Union[float, Dict] = 1.0e-5
 
 
 @dataclass
@@ -94,9 +166,9 @@ class LeastSquaresMCConfig(BaseEstimatorConfig):
     """Least Squares Monte Carlo estimator configuration."""
     policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
     algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
-    ridge_lambda: float = 1e-6  # Ridge regularization parameter
-    preprocess_fraction: float = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
-    n_components: Optional[int] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
+    ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
+    preprocess_fraction: Union[float, Dict] = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
+    n_components: Optional[Union[int, Dict]] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
 
 
 @dataclass
@@ -104,9 +176,9 @@ class LeastSquaresTDConfig(BaseEstimatorConfig):
     """Least Squares Temporal Difference estimator configuration."""
     policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
     algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
-    ridge_lambda: float = 1e-6  # Ridge regularization parameter
-    preprocess_fraction: float = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
-    n_components: Optional[int] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
+    ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
+    preprocess_fraction: Union[float, Dict] = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
+    n_components: Optional[Union[int, Dict]] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
 
 
 # Registry mapping EstimatorType to config class

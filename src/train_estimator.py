@@ -33,7 +33,7 @@ def get_method_abbreviation(method_name: str) -> str:
     return abbreviations.get(method_name, method_name)
 
 
-def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, experiment_config=None):
+def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, num_episodes: int, experiment_config=None):
     """Create an estimator instance from configuration using registry.
 
     Args:
@@ -41,21 +41,25 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
         network_config: Network configuration
         obs_dim: Observation dimension
         gamma: Discount factor (from training config)
+        num_episodes: Number of episodes (used to resolve per-episode hyperparameters)
         experiment_config: ExperimentConfig (needed for auto-setting policy_path)
 
     Returns:
         Estimator instance
     """
+    # Resolve hyperparameters for this episode count
+    resolved_config = method_config.resolve_for_episodes(num_episodes)
+
     # Auto-set policy_path for LeastSquares methods if not provided
-    if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and method_config.policy_path is None:
+    if isinstance(resolved_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and resolved_config.policy_path is None:
         if experiment_config is None:
             raise ValueError("experiment_config is required when policy_path is not set in LeastSquares config")
         policy_path = experiment_config.get_policy_dir() / "policy_final.zip"
-        method_config.policy_path = str(policy_path)
+        resolved_config.policy_path = str(policy_path)
         print(f"Auto-set policy_path to: {policy_path}")
 
-    EstimatorClass = ESTIMATOR_REGISTRY[type(method_config)]
-    return EstimatorClass.from_config(method_config, network_config, obs_dim, gamma)
+    EstimatorClass = ESTIMATOR_REGISTRY[type(resolved_config)]
+    return EstimatorClass.from_config(resolved_config, network_config, obs_dim, gamma)
 
 
 def load_batch_data(batch_path: Path, max_episodes: int = None) -> dict:
@@ -120,7 +124,8 @@ def train_single_initialization(
     num_episodes: int,
     init_idx: int,
     use_wandb: bool,
-    sweep_mode: bool = False
+    sweep_mode: bool = False,
+    n_inits: int = 1
 ):
     """Train a single initialization and return its final MC loss.
 
@@ -135,6 +140,7 @@ def train_single_initialization(
         init_idx: Initialization index
         use_wandb: Whether to use wandb
         sweep_mode: If True, skip wandb.init() (run already initialized by sweep)
+        n_inits: Total number of initializations (for logging prefix)
 
     Returns:
         Final MC loss value (test set if available, otherwise train set)
@@ -176,6 +182,9 @@ def train_single_initialization(
     # Track convergence state
     min_loss = float('inf')
     last_improvement_epoch = 0
+
+    # Determine logging prefix for multiple initializations
+    init_suffix = f"_{init_idx}" if n_inits > 1 else ""
 
     # Create dataset once
     dataset = TransitionDataset(train_batch)
@@ -242,17 +251,17 @@ def train_single_initialization(
 
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
-                'train/loss': avg_metrics['loss'],
-                'train/mse': avg_metrics['loss'],
-                'train/mae': avg_metrics['mae'],
-                'train/mean_value': avg_metrics['mean_value'],
-                'train/mean_target': avg_metrics['mean_target'],
-                'train/mc_loss_train': final_mc_loss_train,
-                'train/best_mc_loss': best_mc_loss,
+                f'train{init_suffix}/loss': avg_metrics['loss'],
+                f'train{init_suffix}/mse': avg_metrics['loss'],
+                f'train{init_suffix}/mae': avg_metrics['mae'],
+                f'train{init_suffix}/mean_value': avg_metrics['mean_value'],
+                f'train{init_suffix}/mean_target': avg_metrics['mean_target'],
+                f'train{init_suffix}/mc_loss_train': final_mc_loss_train,
+                f'train{init_suffix}/best_mc_loss': best_mc_loss,
             }
             if use_validation:
-                log_dict['val/mc_loss'] = final_mc_loss_val
-                log_dict['val/min_mc_loss'] = min_loss
+                log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
+                log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
             wandb.log(log_dict, step=epoch)
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
@@ -274,18 +283,18 @@ def train_single_initialization(
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
         final_log_dict = {
-            'train/loss': avg_metrics['loss'],
-            'train/mse': avg_metrics['loss'],
-            'train/mae': avg_metrics['mae'],
-            'train/mean_value': avg_metrics['mean_value'],
-            'train/mean_target': avg_metrics['mean_target'],
-            'train/mc_loss_train': final_mc_loss_train,
-            'train/best_mc_loss': best_mc_loss,
-            'stop_reason': 'convergence' if converged else 'max_epochs',
+            f'train{init_suffix}/loss': avg_metrics['loss'],
+            f'train{init_suffix}/mse': avg_metrics['loss'],
+            f'train{init_suffix}/mae': avg_metrics['mae'],
+            f'train{init_suffix}/mean_value': avg_metrics['mean_value'],
+            f'train{init_suffix}/mean_target': avg_metrics['mean_target'],
+            f'train{init_suffix}/mc_loss_train': final_mc_loss_train,
+            f'train{init_suffix}/best_mc_loss': best_mc_loss,
+            f'train{init_suffix}/stop_reason': 'convergence' if converged else 'max_epochs',
         }
         if use_validation:
-            final_log_dict['val/mc_loss'] = final_mc_loss_val
-            final_log_dict['val/min_mc_loss'] = min_loss
+            final_log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
+            final_log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
         wandb.log(final_log_dict, step=final_epoch)
 
     # Print training summary
@@ -305,39 +314,41 @@ def train_single_initialization(
     print(f"    Best MC loss: {best_mc_loss:.6f}")
 
     if use_wandb and config.logging.use_wandb:
-        final_log = {'final/best_mc_loss': best_mc_loss}
+        # Log per-initialization final metrics
+        final_log = {f'final{init_suffix}/best_mc_loss': best_mc_loss}
         if use_validation:
-            final_log['final/mc_loss_train'] = final_mc_loss_train
-            final_log['final/mc_loss_val'] = final_mc_loss_val
-            final_log['final/best_val_mc_loss'] = best_mc_loss  # Explicitly log validation metric for sweeps
+            final_log[f'final{init_suffix}/mc_loss_train'] = final_mc_loss_train
+            final_log[f'final{init_suffix}/mc_loss_val'] = final_mc_loss_val
         else:
-            final_log['final/mc_loss_train'] = final_mc_loss_train
+            final_log[f'final{init_suffix}/mc_loss_train'] = final_mc_loss_train
         wandb.log(final_log)
 
-        # wandb.run.dir points to 'files' subdirectory; sync needs parent directory
-        if config.logging.wandb_mode == "offline":
-            run_dir = str(Path(wandb.run.dir).parent)
-            print(f"\n  [DEBUG] Wandb run directory: {run_dir}")
-        else:
-            run_dir = None
+        # Only finish wandb run if not in sweep mode (sweep manages the run lifecycle)
+        if not sweep_mode:
+            # wandb.run.dir points to 'files' subdirectory; sync needs parent directory
+            if config.logging.wandb_mode == "offline":
+                run_dir = str(Path(wandb.run.dir).parent)
+                print(f"\n  [DEBUG] Wandb run directory: {run_dir}")
+            else:
+                run_dir = None
 
-        wandb.finish()
+            wandb.finish()
 
-        if config.logging.wandb_mode == "offline" and run_dir:
-            print(f"\n  Syncing offline run to W&B...")
-            print(f"  [DEBUG] Syncing directory: {run_dir}")
-            import subprocess
-            try:
-                subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
-                print(f"  ✓ Successfully synced to W&B")
-            except subprocess.CalledProcessError as e:
-                print(f"  ✗ Warning: Failed to sync offline run")
-                print(f"  Error: {e}")
-                if e.stdout:
-                    print(f"  stdout: {e.stdout}")
-                if e.stderr:
-                    print(f"  stderr: {e.stderr}")
-                print(f"  You can manually sync later with: wandb sync {run_dir}")
+            if config.logging.wandb_mode == "offline" and run_dir:
+                print(f"\n  Syncing offline run to W&B...")
+                print(f"  [DEBUG] Syncing directory: {run_dir}")
+                import subprocess
+                try:
+                    subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
+                    print(f"  ✓ Successfully synced to W&B")
+                except subprocess.CalledProcessError as e:
+                    print(f"  ✗ Warning: Failed to sync offline run")
+                    print(f"  Error: {e}")
+                    if e.stdout:
+                        print(f"  stdout: {e.stdout}")
+                    if e.stderr:
+                        print(f"  stderr: {e.stderr}")
+                    print(f"  You can manually sync later with: wandb sync {run_dir}")
 
     print(f"\n  [DEBUG] End of training:")
     print(f"  [DEBUG] best_estimator is None: {best_estimator is None}")
@@ -447,11 +458,12 @@ def train_estimator(
 
         best_mc_loss = float('inf')
         best_estimator = None
+        all_mc_losses = []  # Collect MC losses from all initializations
 
         for init_idx in range(n_inits):
             torch.manual_seed(config.seed + init_idx)
             np.random.seed(config.seed + init_idx)
-            estimator = create_estimator(method_config, config.network, obs_dim, gamma, config)
+            estimator = create_estimator(method_config, config.network, obs_dim, gamma, n_episodes, config)
 
             # Fit PCA projection if preprocessing data available
             if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):
@@ -459,19 +471,30 @@ def train_estimator(
                 estimator.fit_pca_projection(preprocess_batch)
 
             final_mc_loss, estimator = train_single_initialization(
-                estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode
+                estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode, n_inits
             )
 
             print(f"  [DEBUG] Received estimator from train_single_initialization, is None: {estimator is None}")
+
+            all_mc_losses.append(final_mc_loss)
 
             if final_mc_loss < best_mc_loss:
                 best_mc_loss = final_mc_loss
                 best_estimator = estimator
                 print(f"  -> New best!")
 
+        # Compute statistics across all initializations
+        min_mc_loss = float(np.min(all_mc_losses))
+        mean_mc_loss = float(np.mean(all_mc_losses))
+        std_mc_loss = float(np.std(all_mc_losses))
+
         print(f"\n[DEBUG] Before saving:")
         print(f"[DEBUG] best_estimator is None: {best_estimator is None}")
         print(f"[DEBUG] best_mc_loss: {best_mc_loss}")
+        print(f"\nStatistics across {n_inits} initialization(s):")
+        print(f"  Min MC loss:  {min_mc_loss:.6f}")
+        print(f"  Mean MC loss: {mean_mc_loss:.6f}")
+        print(f"  Std MC loss:  {std_mc_loss:.6f}")
         print(f"\nSaving best estimator (MC loss={best_mc_loss:.6f}) to {checkpoint_path}")
         best_estimator.save(checkpoint_path)
 
@@ -481,6 +504,10 @@ def train_estimator(
             'n_episodes': n_episodes,
             'n_initializations': n_inits,
             'best_mc_loss': best_mc_loss,
+            'min_mc_loss': min_mc_loss,
+            'mean_mc_loss': mean_mc_loss,
+            'std_mc_loss': std_mc_loss,
+            'all_mc_losses': all_mc_losses,
         }
 
         stats_path = episodes_dir / "training_stats.json"
@@ -511,6 +538,32 @@ def train_estimator(
         metadata_path = episodes_dir / "estimator_metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(estimator_metadata, f, indent=2)
+
+        # Log aggregate statistics to wandb in sweep mode
+        if sweep_mode and use_wandb and config.logging.use_wandb:
+            import wandb
+            aggregate_log = {
+                'final/min_mc_loss': min_mc_loss,
+                'final/mean_mc_loss': mean_mc_loss,
+                'final/std_mc_loss': std_mc_loss,
+                'final/best_mc_loss': best_mc_loss,
+                'final/best_val_mc_loss': best_mc_loss,  # For sweep optimization
+            }
+
+            # Create scatter plot: mean vs std
+            # This will show the relationship between mean loss and variability across initializations
+            data = [[mean_mc_loss, std_mc_loss]]
+            table = wandb.Table(data=data, columns=["mean_mc_loss", "std_mc_loss"])
+            aggregate_log['final/mean_vs_std_scatter'] = wandb.plot.scatter(
+                table, "mean_mc_loss", "std_mc_loss",
+                title="Mean vs Std MC Loss (across initializations)"
+            )
+
+            wandb.log(aggregate_log)
+            print(f"\nLogged aggregate statistics to wandb:")
+            print(f"  Min MC loss:  {min_mc_loss:.6f}")
+            print(f"  Mean MC loss: {mean_mc_loss:.6f}")
+            print(f"  Std MC loss:  {std_mc_loss:.6f}")
 
         print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes.\n")
 
