@@ -11,7 +11,7 @@ command:
   - -m
   - src.tune_hyperparameters
   - ${args}
-method: random  # bayes, grid, or random
+method: bayes  # bayes, grid, or random
 metric:
   name: final/best_val_mc_loss
   goal: minimize
