@@ -61,6 +61,12 @@ def main():
         available_methods = [mc.name for mc in config.value_estimators.method_configs]
         raise ValueError(f"Method '{args.method}' not found in config. Available methods: {available_methods}")
 
+    # Debug: Print wandb config
+    print(f"\n[DEBUG] wandb.config contents:")
+    print(f"  Full config: {dict(wandb.config)}")
+    print(f"  n_initializations value: {wandb.config.get('n_initializations', 'NOT FOUND')}")
+    print()
+
     # Override hyperparameters from wandb sweep or CLI
     learning_rate = wandb.config.get('learning_rate', args.learning_rate)
     if learning_rate is not None:
@@ -98,11 +104,16 @@ def main():
 
     # Override n_initializations from wandb sweep or CLI
     n_initializations = wandb.config.get('n_initializations', args.n_initializations)
+    print(f"[DEBUG] n_initializations from wandb.config or CLI: {n_initializations}")
     if n_initializations is not None:
         method_config.n_initializations = n_initializations
+        print(f"[DEBUG] Set method_config.n_initializations to: {method_config.n_initializations}")
     else:
         # Default to 1 if not specified
         method_config.n_initializations = 1
+        print(f"[DEBUG] Using default n_initializations: 1")
+
+    print(f"[DEBUG] Final method_config.n_initializations before training: {method_config.n_initializations}\n")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
