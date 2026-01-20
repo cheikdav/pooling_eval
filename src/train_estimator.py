@@ -33,7 +33,7 @@ def get_method_abbreviation(method_name: str) -> str:
     return abbreviations.get(method_name, method_name)
 
 
-def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, experiment_config=None):
+def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim: int, gamma: float, num_episodes: int, experiment_config=None):
     """Create an estimator instance from configuration using registry.
 
     Args:
@@ -41,21 +41,25 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
         network_config: Network configuration
         obs_dim: Observation dimension
         gamma: Discount factor (from training config)
+        num_episodes: Number of episodes (used to resolve per-episode hyperparameters)
         experiment_config: ExperimentConfig (needed for auto-setting policy_path)
 
     Returns:
         Estimator instance
     """
+    # Resolve hyperparameters for this episode count
+    resolved_config = method_config.resolve_for_episodes(num_episodes)
+
     # Auto-set policy_path for LeastSquares methods if not provided
-    if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and method_config.policy_path is None:
+    if isinstance(resolved_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and resolved_config.policy_path is None:
         if experiment_config is None:
             raise ValueError("experiment_config is required when policy_path is not set in LeastSquares config")
         policy_path = experiment_config.get_policy_dir() / "policy_final.zip"
-        method_config.policy_path = str(policy_path)
+        resolved_config.policy_path = str(policy_path)
         print(f"Auto-set policy_path to: {policy_path}")
 
-    EstimatorClass = ESTIMATOR_REGISTRY[type(method_config)]
-    return EstimatorClass.from_config(method_config, network_config, obs_dim, gamma)
+    EstimatorClass = ESTIMATOR_REGISTRY[type(resolved_config)]
+    return EstimatorClass.from_config(resolved_config, network_config, obs_dim, gamma)
 
 
 def load_batch_data(batch_path: Path, max_episodes: int = None) -> dict:
@@ -451,7 +455,7 @@ def train_estimator(
         for init_idx in range(n_inits):
             torch.manual_seed(config.seed + init_idx)
             np.random.seed(config.seed + init_idx)
-            estimator = create_estimator(method_config, config.network, obs_dim, gamma, config)
+            estimator = create_estimator(method_config, config.network, obs_dim, gamma, n_episodes, config)
 
             # Fit PCA projection if preprocessing data available
             if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):
