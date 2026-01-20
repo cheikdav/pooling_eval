@@ -190,10 +190,32 @@ def main():
                     # Run the exact shell command that works manually
                     # The </dev/null prevents stdin blocking, > redirects output, & backgrounds it
                     cmd = f"wandb agent {sweep_id} </dev/null > {log_file} 2>&1 &"
-                    subprocess.run(cmd, shell=True)
+                    print(f"  Running: {cmd}")
+
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    print(f"  Return code: {result.returncode}")
+                    if result.stdout:
+                        print(f"  Stdout: {result.stdout}")
+                    if result.stderr:
+                        print(f"  Stderr: {result.stderr}")
+
+                    # Wait a moment and check if process started
+                    import time
+                    time.sleep(1)
+
+                    # Check log file
+                    if log_file.exists():
+                        with open(log_file) as f:
+                            content = f.read()
+                            if content:
+                                print(f"  Log has {len(content)} bytes")
+                            else:
+                                print(f"  ⚠️  Log file is empty")
+                    else:
+                        print(f"  ⚠️  Log file doesn't exist yet")
 
                     agent_processes.append((episode_count, agent_idx, sweep_id, log_file))
-                    print(f"  Agent {agent_idx+1} started (log: {log_file})")
+                    print(f"  Agent {agent_idx+1} log: {log_file}")
 
             print(f"\n{'='*60}")
             print(f"All agents launched! Monitor progress:")
