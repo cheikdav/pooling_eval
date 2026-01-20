@@ -186,23 +186,26 @@ def main():
                 for agent_idx in range(args.launch_agents):
                     # Launch agent in background
                     log_file = Path(f"sweep_agent_{args.method}_{episode_count}ep_agent{agent_idx}.log")
-                    with open(log_file, 'w', buffering=1) as f:
-                        # Write header to log file
-                        f.write(f"=== Wandb Agent Log for {sweep_id} ===\n")
-                        f.write(f"Started at: {subprocess.run(['date'], capture_output=True, text=True).stdout}")
-                        f.write(f"Command: wandb agent {sweep_id}\n")
-                        f.write("="*60 + "\n\n")
-                        f.flush()
 
-                        process = subprocess.Popen(
-                            ['wandb', 'agent', sweep_id],
-                            stdout=f,
-                            stderr=subprocess.STDOUT,
-                            bufsize=1,
-                            universal_newlines=True
-                        )
-                        agent_processes.append((episode_count, agent_idx, sweep_id, process, log_file))
-                        print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
+                    # Open file handle that stays open (don't use 'with')
+                    f = open(log_file, 'w', buffering=1)
+
+                    # Write header to log file
+                    f.write(f"=== Wandb Agent Log for {sweep_id} ===\n")
+                    f.write(f"Started at: {subprocess.run(['date'], capture_output=True, text=True).stdout}")
+                    f.write(f"Command: wandb agent {sweep_id}\n")
+                    f.write("="*60 + "\n\n")
+                    f.flush()
+
+                    process = subprocess.Popen(
+                        ['wandb', 'agent', sweep_id],
+                        stdout=f,
+                        stderr=subprocess.STDOUT,
+                        bufsize=1,
+                        universal_newlines=True
+                    )
+                    agent_processes.append((episode_count, agent_idx, sweep_id, process, log_file))
+                    print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
 
             print(f"\n{'='*60}")
             print(f"All agents launched! Monitor progress:")
