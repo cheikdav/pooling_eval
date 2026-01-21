@@ -43,11 +43,22 @@ def create_sweep_config(base_config: dict, method: str, episode_count: int, conf
     return config
 
 
-def run_agent(sweep_id: str, log_file: Path):
+def run_agent(sweep_id: str, config_path: Path, method: str, episode_count: int, agent_idx: int):
     """Run a wandb agent in a subprocess (called via multiprocessing)."""
+    # Load config early to get paths
+    config_temp = ExperimentConfig.from_yaml(config_path)
+
     # Redirect stdout/stderr to log file
+    log_dir = config_temp.get_estimators_dir() / "sweeps" / method / "agent_logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"agent_{episode_count}ep_{agent_idx}.log"
+
     sys.stdout = open(log_file, 'w', buffering=1)
     sys.stderr = sys.stdout
+
+    print(f"Sweep agent starting for {episode_count} episodes (agent {agent_idx})")
+    print(f"Sweep ID: {sweep_id}")
+    print(f"Logging to: {log_file}\n")
 
     # Run the agent using wandb Python API
     wandb.agent(sweep_id)
@@ -202,22 +213,24 @@ def main():
             print(f"Launching {args.launch_agents} agent(s) per sweep...")
             print(f"{'='*60}\n")
 
+            # Load config to get log directory path for display
+            exp_config = ExperimentConfig.from_yaml(args.config)
+            agent_log_dir = exp_config.get_estimators_dir() / "sweeps" / args.method / "agent_logs"
+
             agent_processes = []
             for episode_count, sweep_id in sweep_ids:
                 print(f"Launching {args.launch_agents} agent(s) for {episode_count} episodes (sweep: {sweep_id})")
                 for agent_idx in range(args.launch_agents):
-                    # Launch agent in background using Python multiprocessing
-                    log_file = Path(f"sweep_agent_{args.method}_{episode_count}ep_agent{agent_idx}.log")
-
                     # Use multiprocessing to run agent in separate process
                     # This avoids all subprocess/shell/stdin issues
                     process = multiprocessing.Process(
                         target=run_agent,
-                        args=(sweep_id, log_file),
-                        daemon=True  # Daemonize so it doesn't block parent exit
+                        args=(sweep_id, args.config, args.method, episode_count, agent_idx),
+                        daemon=False  # Daemonize so it doesn't block parent exit
                     )
                     process.start()
 
+                    log_file = agent_log_dir / f"agent_{episode_count}ep_{agent_idx}.log"
                     agent_processes.append((episode_count, agent_idx, sweep_id, log_file))
                     print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
 

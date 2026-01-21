@@ -8,6 +8,7 @@ import argparse
 from pathlib import Path
 import sys
 import wandb
+from io import StringIO
 
 from src.config import ExperimentConfig
 from src.train_estimator import train_estimator
@@ -28,6 +29,11 @@ def main():
     parser.add_argument("--n-initializations", type=int, default=None)
     args = parser.parse_args()
 
+    # Capture all output in buffer until we have the run ID
+    buffer = StringIO()
+    sys.stdout = buffer
+    sys.stderr = buffer
+
     # Initialize wandb (will pick up sweep config automatically)
     # Force online mode for sweeps to ensure real-time syncing
     print(f"[SWEEP] Initializing wandb in ONLINE mode (forced)")
@@ -37,13 +43,19 @@ def main():
     # Load config early to get paths
     config_temp = ExperimentConfig.from_yaml(args.config)
 
-    # Redirect stdout/stderr to log file
+    # Setup log file with run ID
     log_dir = config_temp.get_estimators_dir() / "sweeps" / args.method / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"{wandb.run.id}.log"
 
+    # Redirect stdout/stderr to log file
     sys.stdout = open(log_file, 'w', buffering=1)
     sys.stderr = sys.stdout
+
+    # Write buffered content to log file
+    buffered_content = buffer.getvalue()
+    if buffered_content:
+        print(buffered_content, end='')
 
     print(f"Sweep agent {wandb.run.id} starting - logging to {log_file}")
 
@@ -143,6 +155,11 @@ def main():
         use_wandb=True,
         sweep_mode=True
     )
+
+    # Properly finish wandb run to ensure all data is synced and run is marked complete
+    print(f"\nFinishing wandb run...")
+    wandb.finish()
+    print(f"Wandb run finished and synced")
 
 
 if __name__ == "__main__":
