@@ -21,6 +21,8 @@ run_cap: 30  # Maximum number of runs before sweep terminates
 parameters:
   method:
     value: monte_carlo
+  wandb-mode:
+    value: offline
   learning-rate:
     min: 0.0001
     max: 0.01

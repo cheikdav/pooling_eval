@@ -21,6 +21,8 @@ run_cap: 30  # Maximum number of runs before sweep terminates
 parameters:
   method:
     value: dqn
+  wandb-mode:
+    value: offline
   learning-rate:
     min: 0.001
     max: 0.1

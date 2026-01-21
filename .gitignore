@@ -44,3 +44,6 @@ run_pipeline.py
 
 # Testing config
 configs/test_config.yaml
+configs/config_test*.yaml
+configs/sweeps/sweep_test*.yaml
+test_*.py

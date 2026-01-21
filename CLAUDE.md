@@ -130,7 +130,7 @@ uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 - Uses random search to find optimal values
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
 - **Optimizes validation MC loss** (`final/best_val_mc_loss`) to prevent overfitting
-- **Sweeps always run in online mode** for real-time monitoring (regardless of config settings)
+- **W&B mode**: Set `wandb-mode: offline` in sweep config to avoid rate limits (syncs at end) or `online` for real-time monitoring
 - Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/`
 - All runs tracked in W&B for comparison
 
@@ -143,7 +143,8 @@ uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 
 **Customizing sweeps:**
 - Edit `configs/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, n_components, preprocess_fraction
+- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, n_components, preprocess_fraction, wandb_mode
+- Set `wandb-mode: offline` to avoid rate limits with many parallel agents (recommended for large sweeps)
 
 ## Architecture
 

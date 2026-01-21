@@ -19,6 +19,8 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--method", type=str, required=True,
                        help="Method name (corresponds to 'name' field in method config)")
+    parser.add_argument("--wandb-mode", type=str, choices=["online", "offline"], default="online",
+                       help="W&B logging mode: online (real-time sync) or offline (sync at end)")
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--target-update-rate", type=float, default=None)
     parser.add_argument("--num-episodes", type=int, default=None)
@@ -35,9 +37,8 @@ def main():
     sys.stderr = buffer
 
     # Initialize wandb (will pick up sweep config automatically)
-    # Force online mode for sweeps to ensure real-time syncing
-    print(f"[SWEEP] Initializing wandb in ONLINE mode (forced)")
-    run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode="online")
+    print(f"[SWEEP] Initializing wandb in {args.wandb_mode.upper()} mode")
+    run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode)
     print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
 
     # Load config early to get paths
@@ -158,8 +159,32 @@ def main():
 
     # Properly finish wandb run to ensure all data is synced and run is marked complete
     print(f"\nFinishing wandb run...")
+
+    # Get run directory for offline sync
+    if args.wandb_mode == "offline":
+        run_dir = str(Path(wandb.run.dir).parent)
+        print(f"[DEBUG] Wandb run directory: {run_dir}")
+
     wandb.finish()
-    print(f"Wandb run finished and synced")
+
+    # Sync offline run to W&B
+    if args.wandb_mode == "offline":
+        print(f"Syncing offline run to W&B...")
+        print(f"[DEBUG] Syncing directory: {run_dir}")
+        import subprocess
+        try:
+            subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
+            print(f"✓ Successfully synced to W&B")
+        except subprocess.CalledProcessError as e:
+            print(f"✗ Warning: Failed to sync offline run")
+            print(f"Error: {e}")
+            if e.stdout:
+                print(f"stdout: {e.stdout}")
+            if e.stderr:
+                print(f"stderr: {e.stderr}")
+            print(f"You can manually sync later with: wandb sync {run_dir}")
+    else:
+        print(f"Wandb run finished and synced")
 
 
 if __name__ == "__main__":
