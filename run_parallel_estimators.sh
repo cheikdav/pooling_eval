@@ -2,13 +2,14 @@
 set -e
 
 # Run all estimator training jobs in parallel across GPUs
-# Usage: ./run_parallel_estimators.sh <config_file> <methods> <n_batches> <overwrite>
+# Usage: ./run_parallel_estimators.sh <config_file> <methods> <n_batches> <overwrite> <timestamp>
 #   methods: comma-separated list (e.g., "monte_carlo,dqn")
 #   overwrite: "true" or "false"
+#   timestamp: training session timestamp
 
-if [ $# -lt 4 ]; then
-    echo "Usage: $0 <config_file> <methods> <n_batches> <overwrite>"
-    echo "Example: $0 configs/example.yaml monte_carlo,dqn 10 false"
+if [ $# -lt 5 ]; then
+    echo "Usage: $0 <config_file> <methods> <n_batches> <overwrite> <timestamp>"
+    echo "Example: $0 configs/example.yaml monte_carlo,dqn 10 false 20240101_120000"
     exit 1
 fi
 
@@ -16,6 +17,7 @@ CONFIG="$1"
 METHODS="$2"
 N_BATCHES="$3"
 OVERWRITE="$4"
+TIMESTAMP="$5"
 
 if [ "$OVERWRITE" = "true" ]; then
     OVERWRITE_FLAG="--overwrite"
@@ -57,14 +59,16 @@ for method in "${METHOD_ARRAY[@]}"; do
                 --config "$CONFIG" \
                 --method "$method" \
                 --batch-idx "$batch_idx" \
-                $OVERWRITE_FLAG &
+                $OVERWRITE_FLAG \
+                --timestamp "$TIMESTAMP" &
         else
             echo "Starting: method=$method batch=$batch_idx"
             python -m src.train_estimator \
                 --config "$CONFIG" \
                 --method "$method" \
                 --batch-idx "$batch_idx" \
-                $OVERWRITE_FLAG &
+                $OVERWRITE_FLAG \
+                --timestamp "$TIMESTAMP" &
         fi
 
         job_count=$((job_count + 1))

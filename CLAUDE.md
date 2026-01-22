@@ -123,6 +123,19 @@ uv run launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
 uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agents per sweep
 ```
 
+**Parallel Initialization:**
+- By default, multiple initializations within a sweep run are trained sequentially
+- To speed up sweeps, enable parallel initialization training in sweep configs:
+  ```yaml
+  parameters:
+    parallel-inits:
+      value: true
+    n-jobs:
+      value: 4  # Number of parallel processes
+  ```
+- This trains all initializations for a hyperparameter combo in parallel, then aggregates results
+- Each hyperparameter combo still appears as a single W&B run with aggregate metrics
+
 **How it works:**
 - Sweep configs in `configs/sweep_*.yaml` define hyperparameter search space
 - **Monte Carlo / DQN**: Tunes learning rate, batch size, num episodes

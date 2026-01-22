@@ -29,6 +29,10 @@ def main():
     parser.add_argument("--n-components", type=int, default=None)
     parser.add_argument("--preprocess-fraction", type=float, default=None)
     parser.add_argument("--n-initializations", type=int, default=None)
+    parser.add_argument("--parallel-inits", type=lambda x: str(x).lower() == 'true', default=False,
+                       help="Train initializations in parallel")
+    parser.add_argument("--n-jobs", type=int, default=None,
+                       help="Number of parallel jobs (default: number of CPUs)")
     args = parser.parse_args()
 
     # Capture all output in buffer until we have the run ID
@@ -36,18 +40,22 @@ def main():
     sys.stdout = buffer
     sys.stderr = buffer
 
-    # Initialize wandb (will pick up sweep config automatically)
-    print(f"[SWEEP] Initializing wandb in {args.wandb_mode.upper()} mode")
-    run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode)
-    print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
-
     # Load config early to get paths
     config_temp = ExperimentConfig.from_yaml(args.config)
 
-    # Setup log file with run ID
-    log_dir = config_temp.get_estimators_dir() / "sweeps" / args.method / "logs"
+    # Initialize wandb (will pick up sweep config automatically)
+    print(f"[SWEEP] Initializing wandb in {args.wandb_mode.upper()} mode")
+
+    # For offline mode, set wandb dir (will be refined after getting run_id)
+    base_wandb_dir = str(config_temp.get_wandb_dir() / "sweep" / config_temp.experiment_id) if args.wandb_mode == "offline" else None
+    run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode, dir=base_wandb_dir)
+    print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
+
+    # Setup log directory: logs/sweep/<exp_id>/<sweep_id>/<run_id>/
+    sweep_id = wandb.run.sweep_id or "no_sweep"
+    log_dir = config_temp.get_logs_dir() / "sweep" / config_temp.experiment_id / sweep_id / wandb.run.id
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"{wandb.run.id}.log"
+    log_file = log_dir / "main.log"
 
     # Redirect stdout/stderr to log file
     sys.stdout = open(log_file, 'w', buffering=1)
@@ -58,7 +66,8 @@ def main():
     if buffered_content:
         print(buffered_content, end='')
 
-    print(f"Sweep agent {wandb.run.id} starting - logging to {log_file}")
+    print(f"Sweep agent {wandb.run.id} starting")
+    print(f"Logs: {log_dir}")
 
     # Load base config
     config = ExperimentConfig.from_yaml(args.config)
@@ -154,7 +163,10 @@ def main():
         batch_name="tuning",
         overwrite=True,
         use_wandb=True,
-        sweep_mode=True
+        sweep_mode=True,
+        parallel_inits=args.parallel_inits,
+        n_jobs=args.n_jobs,
+        log_dir=log_dir
     )
 
     # Properly finish wandb run to ensure all data is synced and run is marked complete

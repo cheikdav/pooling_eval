@@ -31,3 +31,7 @@ parameters:
     values: [64, 128, 256, 512]
   n-initializations:
     value: 5
+  parallel-inits:
+    value: true
+  n-jobs:
+    value: 4

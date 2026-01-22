@@ -259,6 +259,22 @@ class ExperimentConfig:
         """
         return Path(self.results_root) / "experiments" / self.experiment_id / "results"
 
+    def get_logs_dir(self) -> Path:
+        """Get the base logs directory path.
+
+        Returns:
+            Path to experiments/logs
+        """
+        return Path(self.policy_root) / "experiments" / "logs"
+
+    def get_wandb_dir(self) -> Path:
+        """Get the base wandb directory path.
+
+        Returns:
+            Path to experiments/wandb
+        """
+        return Path(self.policy_root) / "experiments" / "wandb"
+
     @classmethod
     def from_yaml(cls, path: Path) -> "ExperimentConfig":
         """Load configuration from YAML file."""

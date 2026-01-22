@@ -33,3 +33,7 @@ parameters:
     values: [0.05, 0.1, 0.2]
   n-initializations:
     value: 5
+  parallel-inits:
+    value: true
+  n-jobs:
+    value: 4
