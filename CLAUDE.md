@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Factored**: Factor code as much as possible, in the limit of readability.
 - **Comments**: Write only high level comments and no need for detailed documentation.
 - **Git Commits**: Never include Claude Code references, attributions, or Co-Authored-By tags in commit messages. Keep commits clean, professional, and concise (short subject line with optional bulleted details).
+- **Python Execution**: Always use `uv run` to execute Python scripts, never use `python` directly. Example: `uv run -m src.train_policy` instead of `python -m src.train_policy`.
 
 
 ## Project Overview
@@ -35,34 +36,34 @@ pip install -e .          # Alternative
 ./run_experiment.sh
 
 # Or run steps individually:
-python -m src.train_policy --config configs/example_config.yaml
-python -m src.generate_data --config configs/example_config.yaml
-python -m src.train_estimator --config configs/example_config.yaml --method monte_carlo --batch-idx 0 --no-overwrite
+uv run -m src.train_policy --config configs/example_config.yaml
+uv run -m src.generate_data --config configs/example_config.yaml
+uv run -m src.train_estimator --config configs/example_config.yaml --method monte_carlo --batch-idx 0 --no-overwrite
 
 # Generate specific range of batches:
-python -m src.generate_data --config configs/example_config.yaml --start-batch-idx 0 --end-batch-idx 10  # Batches 0-9
-python -m src.generate_data --config configs/example_config.yaml --start-batch-idx 10  # Resume from batch 10
+uv run -m src.generate_data --config configs/example_config.yaml --start-batch-idx 0 --end-batch-idx 10  # Batches 0-9
+uv run -m src.generate_data --config configs/example_config.yaml --start-batch-idx 10  # Resume from batch 10
 ```
 
 ### Run All Estimators (Multiple Methods × Multiple Batches)
 ```bash
 # Sequential (simple, good for debugging)
-python -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --no-overwrite
+uv run -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --no-overwrite
 
 # Parallel across GPUs (local machine)
-python -m src.run_all_estimators --config configs/example_config.yaml --mode parallel --no-overwrite
+uv run -m src.run_all_estimators --config configs/example_config.yaml --mode parallel --no-overwrite
 
 # Cluster mode (SGE array jobs)
-python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster --no-overwrite
+uv run -m src.run_all_estimators --config configs/example_config.yaml --mode cluster --no-overwrite
 
 # Cluster mode with custom settings
-python -m src.run_all_estimators --config configs/example_config.yaml --mode cluster \
+uv run -m src.run_all_estimators --config configs/example_config.yaml --mode cluster \
     --grid-mem 16g \
     --max-concurrent 10 \
     --no-overwrite
 
 # To overwrite existing models, use --overwrite instead of --no-overwrite
-python -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --overwrite
+uv run -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --overwrite
 
 # Or call the bash script directly for parallel mode
 ./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,dqn 10 false
@@ -84,7 +85,7 @@ python -m src.run_all_estimators --config configs/example_config.yaml --mode seq
 ### Evaluate Results
 ```bash
 # Generate predictions from trained models
-python -m src.evaluate --config configs/example_config.yaml
+uv run -m src.evaluate --config configs/example_config.yaml
 # Generates: experiments/<exp_id>/results/predictions.csv
 
 # Launch interactive dashboard for analysis
@@ -94,7 +95,7 @@ uv run streamlit run src/analysis/app.py
 
 ### Disable Weights & Biases
 ```bash
-python -m src.train_estimator ... --no-wandb
+uv run -m src.train_estimator ... --no-wandb
 # Or set use_wandb: false in config
 ```
 
@@ -112,15 +113,28 @@ wandb sweep configs/sweep_monte_carlo.yaml
 wandb agent <sweep-id>
 
 # Launch separate sweeps per episode count (uses episodes from sweep config by default)
-python launch_episode_sweeps.py --method monte_carlo
-python launch_episode_sweeps.py --method least_squares_mc
+uv run launch_episode_sweeps.py --method monte_carlo
+uv run launch_episode_sweeps.py --method least_squares_mc
 
 # Or specify custom episode counts
-python launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
+uv run launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
 
 # Auto-launch multiple agents per sweep to parallelize
-python launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agents per sweep
+uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agents per sweep
 ```
+
+**Parallel Initialization:**
+- By default, multiple initializations within a sweep run are trained sequentially
+- To speed up sweeps, enable parallel initialization training in sweep configs:
+  ```yaml
+  parameters:
+    parallel-inits:
+      value: true
+    n-jobs:
+      value: 4  # Number of parallel processes
+  ```
+- This trains all initializations for a hyperparameter combo in parallel, then aggregates results
+- Each hyperparameter combo still appears as a single W&B run with aggregate metrics
 
 **How it works:**
 - Sweep configs in `configs/sweep_*.yaml` define hyperparameter search space
@@ -129,7 +143,7 @@ python launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 - Uses random search to find optimal values
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
 - **Optimizes validation MC loss** (`final/best_val_mc_loss`) to prevent overfitting
-- **Sweeps always run in online mode** for real-time monitoring (regardless of config settings)
+- **W&B mode**: Set `wandb-mode: offline` in sweep config to avoid rate limits (syncs at end) or `online` for real-time monitoring
 - Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/`
 - All runs tracked in W&B for comparison
 
@@ -142,7 +156,8 @@ python launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 
 **Customizing sweeps:**
 - Edit `configs/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, n_components, preprocess_fraction
+- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, n_components, preprocess_fraction, wandb_mode
+- Set `wandb-mode: offline` to avoid rate limits with many parallel agents (recommended for large sweeps)
 
 ## Architecture
 
@@ -400,7 +415,7 @@ cat experiments/<exp_id>/estimators/monte_carlo/batch_0/training_stats.json | jq
 
 Monitor convergence:
 ```bash
-python -c "import json; stats = json.load(open('training_stats.json')); print([s['eval_loss'] for s in stats])"
+uv run python -c "import json; stats = json.load(open('training_stats.json')); print([s['eval_loss'] for s in stats])"
 ```
 
 ### Resuming Interrupted Experiments
@@ -408,25 +423,25 @@ python -c "import json; stats = json.load(open('training_stats.json')); print([s
 **For data generation**, use `--start-batch-idx` and `--end-batch-idx` to control which batches to generate:
 ```bash
 # Resume from batch 10 onwards
-python -m src.generate_data --config config.yaml --start-batch-idx 10
+uv run -m src.generate_data --config config.yaml --start-batch-idx 10
 
 # Generate only batches 5-15 (exclusive end)
-python -m src.generate_data --config config.yaml --start-batch-idx 5 --end-batch-idx 15
+uv run -m src.generate_data --config config.yaml --start-batch-idx 5 --end-batch-idx 15
 
 # Generate first 20 batches only
-python -m src.generate_data --config config.yaml --end-batch-idx 20
+uv run -m src.generate_data --config config.yaml --end-batch-idx 20
 ```
 
 **For estimator training**, use `--no-overwrite` to skip already-trained models:
 ```bash
-python -m src.run_all_estimators --config config.yaml --mode sequential --no-overwrite
+uv run -m src.run_all_estimators --config config.yaml --mode sequential --no-overwrite
 ```
 
 The framework checks for existing `estimator_episodes_*.pt` files and skips training if found.
 
 To force retraining all models, use `--overwrite`:
 ```bash
-python -m src.run_all_estimators --config config.yaml --mode sequential --overwrite
+uv run -m src.run_all_estimators --config config.yaml --mode sequential --overwrite
 ```
 
 ## Supported Environments

@@ -42,7 +42,8 @@ data_generation:
 
 # Value estimator training
 value_estimators:
-  # Shared training parameters
+  # Shared training parameter
+  
   training:
     max_epochs: 80000
     batch_size: 256

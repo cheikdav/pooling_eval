@@ -4,10 +4,11 @@ import argparse
 import numpy as np
 from pathlib import Path
 import torch
-from tqdm import tqdm
 import wandb
 import json
 import copy
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing as mp
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
@@ -115,9 +116,10 @@ def check_convergence(current_epoch: int, current_loss: float, min_loss: float,
 
 
 def train_single_initialization(
-    estimator,
+    method_config: BaseEstimatorConfig,
     train_batch: dict,
     test_batch: dict,
+    preprocess_batch: dict,
     config: ExperimentConfig,
     method_name: str,
     batch_name: str,
@@ -125,14 +127,16 @@ def train_single_initialization(
     init_idx: int,
     use_wandb: bool,
     sweep_mode: bool = False,
-    n_inits: int = 1
+    n_inits: int = 1,
+    log_frequency: int = 10
 ):
     """Train a single initialization and return its final MC loss.
 
     Args:
-        estimator: Estimator instance to train
+        method_config: Method-specific configuration
         train_batch: Training batch data (preprocessed)
         test_batch: Test batch data (preprocessed, None if no test set)
+        preprocess_batch: Preprocessing batch for PCA (None if not needed)
         config: Experiment configuration
         method_name: Method name (from method_config.name)
         batch_name: Batch name (e.g., '0', '1', 'tuning', 'eval')
@@ -141,10 +145,20 @@ def train_single_initialization(
         use_wandb: Whether to use wandb
         sweep_mode: If True, skip wandb.init() (run already initialized by sweep)
         n_inits: Total number of initializations (for logging prefix)
+        log_frequency: Log progress every N epochs (0 = no periodic logging)
 
     Returns:
         Final MC loss value (test set if available, otherwise train set)
     """
+    # Create estimator
+    gamma = config.value_estimators.training.gamma
+    obs_dim = train_batch['observations'].shape[-1]
+    estimator = create_estimator(method_config, config.network, obs_dim, gamma, num_episodes, config)
+
+    # Fit PCA projection if needed
+    if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):
+        print("Fitting PCA projection")
+        estimator.fit_pca_projection(preprocess_batch)
     if use_wandb and config.logging.use_wandb and not sweep_mode:
         method_abbr = get_method_abbreviation(method_name)
         run_name = f"{method_abbr} ({config.environment.name}, #{batch_name}, #ep {num_episodes}, init {init_idx})"
@@ -207,7 +221,7 @@ def train_single_initialization(
     # Offset step for wandb logging to ensure monotonicity across initializations
     step_offset = init_idx * max_epochs
 
-    for epoch in tqdm(range(max_epochs), desc=f"Init {init_idx}", leave=False):
+    for epoch in range(max_epochs):
         final_epoch = epoch
         # Recreate dataloader when needed for shuffling
         if (dataloader is None or
@@ -252,6 +266,7 @@ def train_single_initialization(
                 final_mc_loss_val = torch.nn.functional.mse_loss(val_values, val_mc_returns).item()
             val_mc_loss_history.append(final_mc_loss_val)
 
+        # Log to wandb periodically
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
                 f'train{init_suffix}/loss': avg_metrics['loss'],
@@ -264,8 +279,16 @@ def train_single_initialization(
             }
             if use_validation:
                 log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
-                log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
+                log_dict[f'val{init_suffix}/min_loss'] = min_loss
             wandb.log(log_dict, step=epoch + step_offset)
+
+        # Log to file periodically (for init logs)
+        if log_frequency > 0 and epoch % log_frequency == 0:
+            print(f"Epoch {epoch+1}/{max_epochs}: train_loss={final_mc_loss_train:.6f}, best_loss={best_mc_loss:.6f}", end="")
+            if use_validation:
+                print(f", val_loss={final_mc_loss_val:.6f}")
+            else:
+                print()
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
         final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
@@ -277,8 +300,6 @@ def train_single_initialization(
         if last_improvement_epoch == epoch:
             best_mc_loss = final_mc_loss
             best_estimator = copy.deepcopy(estimator)
-            print(f"  [DEBUG] Epoch {epoch}: Updated best_estimator (MC loss: {best_mc_loss:.6f})")
-            print(f"  [DEBUG] best_estimator is None: {best_estimator is None}")
         if converged:
             break
 
@@ -331,7 +352,6 @@ def train_single_initialization(
             # wandb.run.dir points to 'files' subdirectory; sync needs parent directory
             if config.logging.wandb_mode == "offline":
                 run_dir = str(Path(wandb.run.dir).parent)
-                print(f"\n  [DEBUG] Wandb run directory: {run_dir}")
             else:
                 run_dir = None
 
@@ -339,7 +359,6 @@ def train_single_initialization(
 
             if config.logging.wandb_mode == "offline" and run_dir:
                 print(f"\n  Syncing offline run to W&B...")
-                print(f"  [DEBUG] Syncing directory: {run_dir}")
                 import subprocess
                 try:
                     subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
@@ -353,12 +372,52 @@ def train_single_initialization(
                         print(f"  stderr: {e.stderr}")
                     print(f"  You can manually sync later with: wandb sync {run_dir}")
 
-    print(f"\n  [DEBUG] End of training:")
-    print(f"  [DEBUG] best_estimator is None: {best_estimator is None}")
-    print(f"  [DEBUG] best_mc_loss: {best_mc_loss}")
-    print(f"  [DEBUG] Returning estimator is None: {(best_estimator if best_estimator is not None else estimator) is None}")
-
     return best_mc_loss, best_estimator if best_estimator is not None else estimator
+
+
+def train_initialization_worker(
+    init_idx: int,
+    config: ExperimentConfig,
+    method_config: BaseEstimatorConfig,
+    train_batch: dict,
+    test_batch: dict,
+    preprocess_batch: dict,
+    method_name: str,
+    batch_name: str,
+    n_episodes: int,
+    n_inits: int,
+    output_dir: Path,
+    log_dir: Path,
+) -> tuple[float, Path]:
+    """Train one initialization with per-init logging, used by both parallel and sequential modes."""
+    import sys
+
+    # Redirect to per-init log
+    log_file = log_dir / f"init_{init_idx}.log"
+    sys.stdout = open(log_file, 'w', buffering=1)
+    sys.stderr = sys.stdout
+
+    print(f"[Init {init_idx}] Starting training")
+
+    # Set seeds
+    torch.manual_seed(config.seed + init_idx)
+    np.random.seed(config.seed + init_idx)
+
+    # Train (creates estimator and fits PCA internally)
+    final_mc_loss, trained_estimator = train_single_initialization(
+        method_config, train_batch, test_batch, preprocess_batch, config, method_name, batch_name,
+        n_episodes, init_idx, use_wandb=False, sweep_mode=False, n_inits=n_inits, log_frequency=50
+    )
+
+    print(f"[Init {init_idx}] Complete: MC loss = {final_mc_loss:.6f}")
+
+    # Save and return path (can't return model objects across processes)
+    model_path = output_dir / f"estimator_init_{init_idx}.pt"
+    trained_estimator.save(model_path)
+
+    sys.stdout.close()
+
+    return final_mc_loss, model_path
 
 
 def train_estimator(
@@ -369,7 +428,11 @@ def train_estimator(
     batch_name: str,
     overwrite: bool,
     use_wandb: bool = True,
-    sweep_mode: bool = False
+    sweep_mode: bool = False,
+    parallel_inits: bool = False,
+    n_jobs: int = None,
+    log_dir: Path = None,
+    timestamp: str = None
 ):
     """Train multiple estimator initializations and keep the best one.
 
@@ -382,6 +445,10 @@ def train_estimator(
         overwrite: If True, overwrite existing models; if False, skip training if model exists
         use_wandb: Whether to use wandb logging
         sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
+        parallel_inits: If True, train initializations in parallel using ProcessPoolExecutor
+        n_jobs: Number of parallel jobs (default: number of CPUs)
+        log_dir: Directory for per-init logs (if None, creates one using timestamp)
+        timestamp: Timestamp for this training session (shared across batches/episodes)
     """
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
@@ -457,43 +524,91 @@ def train_estimator(
         print(f"\nTraining {n_inits} initialization(s) of {method_name}")
         print(f"Episodes used: {n_episodes}")
         print(f"Max epochs: {max_epochs_to_use}")
+        if parallel_inits and n_inits > 1:
+            print(f"Mode: Parallel (n_jobs={n_jobs or mp.cpu_count()})")
+        else:
+            print(f"Mode: Sequential")
         print()
 
         best_mc_loss = float('inf')
         best_estimator = None
         all_mc_losses = []  # Collect MC losses from all initializations
 
-        for init_idx in range(n_inits):
-            torch.manual_seed(config.seed + init_idx)
-            np.random.seed(config.seed + init_idx)
-            estimator = create_estimator(method_config, config.network, obs_dim, gamma, n_episodes, config)
+        # Setup log directory for per-init logs (used by both parallel and sequential)
+        if log_dir is None:
+            # Non-sweep training: logs/estimator/<exp_id>/<method>/<timestamp>/<n_episodes>/batch_<name>/
+            log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / method_name / timestamp / str(n_episodes) / f"batch_{batch_name}"
+            log_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Per-initialization logs: {log_dir}/init_*.log")
 
-            # Fit PCA projection if preprocessing data available
-            if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):
-                print(f"Fitting PCA projection on preprocessing batch")
-                estimator.fit_pca_projection(preprocess_batch)
+        # Train all initializations (parallel or sequential)
+        if parallel_inits and n_inits > 1:
+            # Parallel mode: train all initializations concurrently
+            print("Starting parallel training...")
+            available_cpus = mp.cpu_count()
+            max_workers = n_jobs if n_jobs is not None else available_cpus
+            max_workers = min(max_workers, n_inits)
+            print(f"Available CPUs: {available_cpus}, Using {max_workers} workers")
 
-            final_mc_loss, estimator = train_single_initialization(
-                estimator, train_batch, test_batch, config, method_name, batch_name, n_episodes, init_idx, use_wandb, sweep_mode, n_inits
-            )
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                futures = []
+                for init_idx in range(n_inits):
+                    future = executor.submit(
+                        train_initialization_worker,
+                        init_idx, config, method_config, train_batch, test_batch,
+                        preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir
+                    )
+                    futures.append((init_idx, future))
 
-            print(f"  [DEBUG] Received estimator from train_single_initialization, is None: {estimator is None}")
+                results = []
+                for init_idx, future in futures:
+                    try:
+                        final_mc_loss, model_path = future.result()
+                        results.append((init_idx, final_mc_loss, model_path))
+                        print(f"  Init {init_idx} completed: MC loss = {final_mc_loss:.6f}")
+                    except Exception as e:
+                        print(f"  Init {init_idx} failed with error: {e}")
+                        raise
 
+            results.sort(key=lambda x: x[0])
+
+        else:
+            # Sequential mode: train initializations one by one
+            results = []
+            for init_idx in range(n_inits):
+                print(f"Starting init {init_idx}...")
+
+                final_mc_loss, model_path = train_initialization_worker(
+                    init_idx, config, method_config, train_batch, test_batch,
+                    preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir
+                )
+
+                results.append((init_idx, final_mc_loss, model_path))
+                print(f"  Init {init_idx} completed: MC loss = {final_mc_loss:.6f}")
+
+        # Process results: find best model and compute statistics
+        best_model_path = None
+        for init_idx, final_mc_loss, model_path in results:
             all_mc_losses.append(final_mc_loss)
-
             if final_mc_loss < best_mc_loss:
                 best_mc_loss = final_mc_loss
-                best_estimator = estimator
-                print(f"  -> New best!")
+                best_model_path = model_path
+                print(f"  -> New best from init {init_idx}!")
+
+        # Load best estimator from disk
+        best_estimator = create_estimator(method_config, config.network, obs_dim, gamma, n_episodes, config)
+        best_estimator.load(best_model_path)
+
+        # Clean up temporary model files
+        for init_idx, _, model_path in results:
+            if model_path.exists():
+                model_path.unlink()
 
         # Compute statistics across all initializations
         min_mc_loss = float(np.min(all_mc_losses))
         mean_mc_loss = float(np.mean(all_mc_losses))
         std_mc_loss = float(np.std(all_mc_losses))
 
-        print(f"\n[DEBUG] Before saving:")
-        print(f"[DEBUG] best_estimator is None: {best_estimator is None}")
-        print(f"[DEBUG] best_mc_loss: {best_mc_loss}")
         print(f"\nStatistics across {n_inits} initialization(s):")
         print(f"  Min MC loss:  {min_mc_loss:.6f}")
         print(f"  Mean MC loss: {mean_mc_loss:.6f}")
@@ -586,6 +701,8 @@ def main():
                        help="Skip training if model already exists")
     parser.add_argument("--no-wandb", action="store_true",
                        help="Disable wandb logging")
+    parser.add_argument("--timestamp", type=str, default=None,
+                       help="Timestamp for grouping logs (auto-generated if not provided)")
     args = parser.parse_args()
 
     # Determine batch index: use argument if provided, otherwise check SGE_TASK_ID
@@ -622,6 +739,13 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 
+    # Get or generate timestamp for this training session
+    if args.timestamp:
+        timestamp = args.timestamp
+    else:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # Train estimator
     train_estimator(
         config=config,
@@ -630,7 +754,8 @@ def main():
         output_dir=output_dir,
         batch_name=batch_name,
         overwrite=args.overwrite,
-        use_wandb=not args.no_wandb
+        use_wandb=not args.no_wandb,
+        timestamp=timestamp
     )
 
 

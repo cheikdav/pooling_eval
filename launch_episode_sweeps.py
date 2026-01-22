@@ -12,20 +12,26 @@ import sys
 import wandb
 import multiprocessing
 
+from src.config import ExperimentConfig
 
-def create_sweep_config(base_config: dict, method: str, episode_count: int) -> dict:
+
+def create_sweep_config(base_config: dict, method: str, episode_count: int, config_path: str) -> dict:
     """Create a sweep config for a specific episode count.
 
     Args:
         base_config: Base sweep configuration to use as template
         method: Method name (monte_carlo, dqn, etc.)
         episode_count: Number of episodes for this sweep
+        config_path: Path to experiment config file
 
     Returns:
         Modified sweep configuration
     """
     import copy
     config = copy.deepcopy(base_config)
+
+    # Set the experiment config path
+    config['parameters']['config'] = {'value': config_path}
 
     # Fix the episode count for this sweep
     config['parameters']['num-episodes'] = {'value': episode_count}
@@ -37,11 +43,25 @@ def create_sweep_config(base_config: dict, method: str, episode_count: int) -> d
     return config
 
 
-def run_agent(sweep_id: str, log_file: Path):
+def run_agent(sweep_id: str, config_path: Path, method: str, episode_count: int, agent_idx: int):
     """Run a wandb agent in a subprocess (called via multiprocessing)."""
-    # Redirect stdout/stderr to log file
+    # Load config early to get paths
+    config_temp = ExperimentConfig.from_yaml(config_path)
+
+    # Extract sweep ID hash from full sweep path (e.g., "user/project/abc123" -> "abc123")
+    sweep_id_hash = sweep_id.split('/')[-1] if '/' in sweep_id else sweep_id
+
+    # Redirect stdout/stderr to log file: logs/sweep/<exp_id>/<sweep_id>/agent_<episodes>ep_<idx>.log
+    log_dir = config_temp.get_logs_dir() / "sweep" / config_temp.experiment_id / sweep_id_hash
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"agent_{episode_count}ep_{agent_idx}.log"
+
     sys.stdout = open(log_file, 'w', buffering=1)
     sys.stderr = sys.stdout
+
+    print(f"Sweep agent starting for {episode_count} episodes (agent {agent_idx})")
+    print(f"Sweep ID: {sweep_id}")
+    print(f"Logging to: {log_file}\n")
 
     # Run the agent using wandb Python API
     wandb.agent(sweep_id)
@@ -106,6 +126,12 @@ def main():
         description="Launch separate W&B sweeps for each episode count"
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Experiment config file (e.g., configs/config_humanoid.yaml)"
+    )
+    parser.add_argument(
         "--method",
         type=str,
         required=True,
@@ -116,7 +142,7 @@ def main():
         type=int,
         nargs='+',
         default=None,
-        help="Episode counts to sweep over (default: use values from sweep config)"
+        help="Episode counts to sweep over (default: use values from experiment config)"
     )
     parser.add_argument(
         "--sweep-config",
@@ -148,18 +174,16 @@ def main():
     with open(args.sweep_config, 'r') as f:
         base_config = yaml.safe_load(f)
 
-    # If no episodes specified, use values from sweep config
+    # Verify experiment config exists
+    if not args.config.exists():
+        print(f"Error: Experiment config not found: {args.config}")
+        sys.exit(1)
+
+    # If no episodes specified, read from experiment config
     if args.episodes is None:
-        if 'num-episodes' in base_config.get('parameters', {}):
-            num_episodes_param = base_config['parameters']['num-episodes']
-            if 'values' in num_episodes_param:
-                args.episodes = num_episodes_param['values']
-            else:
-                print(f"Error: num-episodes parameter in sweep config must have 'values' field")
-                sys.exit(1)
-        else:
-            print(f"Error: No --episodes specified and num-episodes not found in sweep config")
-            sys.exit(1)
+        exp_config = ExperimentConfig.from_yaml(args.config)
+        args.episodes = exp_config.value_estimators.training.episode_subsets
+        print(f"Using episode counts from {args.config}: {args.episodes}")
 
     print(f"Launching {len(args.episodes)} sweeps for {args.method}")
     print(f"Episode counts: {args.episodes}\n")
@@ -167,7 +191,7 @@ def main():
     sweep_ids = []
 
     for episode_count in args.episodes:
-        sweep_config = create_sweep_config(base_config, args.method, episode_count)
+        sweep_config = create_sweep_config(base_config, args.method, episode_count, str(args.config))
 
         if args.dry_run:
             print(f"\n{'='*60}")
@@ -192,22 +216,25 @@ def main():
             print(f"Launching {args.launch_agents} agent(s) per sweep...")
             print(f"{'='*60}\n")
 
+            # Load config to get log directory path for display
+            exp_config = ExperimentConfig.from_yaml(args.config)
+
             agent_processes = []
             for episode_count, sweep_id in sweep_ids:
                 print(f"Launching {args.launch_agents} agent(s) for {episode_count} episodes (sweep: {sweep_id})")
                 for agent_idx in range(args.launch_agents):
-                    # Launch agent in background using Python multiprocessing
-                    log_file = Path(f"sweep_agent_{args.method}_{episode_count}ep_agent{agent_idx}.log")
-
                     # Use multiprocessing to run agent in separate process
                     # This avoids all subprocess/shell/stdin issues
                     process = multiprocessing.Process(
                         target=run_agent,
-                        args=(sweep_id, log_file),
-                        daemon=True  # Daemonize so it doesn't block parent exit
+                        args=(sweep_id, args.config, args.method, episode_count, agent_idx),
+                        daemon=False  # Daemonize so it doesn't block parent exit
                     )
                     process.start()
 
+                    # Calculate log path for display
+                    sweep_id_hash = sweep_id.split('/')[-1] if '/' in sweep_id else sweep_id
+                    log_file = exp_config.get_logs_dir() / "sweep" / exp_config.experiment_id / sweep_id_hash / f"agent_{episode_count}ep_{agent_idx}.log"
                     agent_processes.append((episode_count, agent_idx, sweep_id, log_file))
                     print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
 

@@ -17,6 +17,11 @@ def run_sequential(config: ExperimentConfig, config_path: Path, overwrite: bool)
     print(f"Batches: {n_batches}")
     print(f"Overwrite: {overwrite}\n")
 
+    # Generate timestamp for this training session (shared across all jobs)
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    print(f"Training session timestamp: {timestamp}\n")
+
     for method_config in method_configs:
         for batch_idx in range(n_batches):
             batch_name = str(batch_idx)
@@ -30,7 +35,8 @@ def run_sequential(config: ExperimentConfig, config_path: Path, overwrite: bool)
                 "--config", str(config_path),
                 "--method", method_config.name,
                 "--batch-idx", str(batch_idx),
-                overwrite_flag
+                overwrite_flag,
+                "--timestamp", timestamp
             ], check=True)
 
     print(f"\n{'='*60}")
@@ -44,6 +50,11 @@ def run_parallel(config: ExperimentConfig, config_path: Path, overwrite: bool):
     n_batches = str(config.data_generation.n_batches)
     overwrite_flag = "true" if overwrite else "false"
 
+    # Generate timestamp for this training session
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    print(f"Training session timestamp: {timestamp}\n")
+
     script_path = Path(__file__).parent.parent / "run_parallel_estimators.sh"
 
     subprocess.run([
@@ -51,7 +62,8 @@ def run_parallel(config: ExperimentConfig, config_path: Path, overwrite: bool):
         str(config_path),
         method_names,
         n_batches,
-        overwrite_flag
+        overwrite_flag,
+        timestamp
     ], check=True)
 
 
@@ -78,6 +90,11 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
     print(f"Overwrite: {overwrite}")
     if max_concurrent:
         print(f"Max concurrent per method: {max_concurrent}")
+
+    # Generate timestamp for this training session
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    print(f"Training session timestamp: {timestamp}")
     print()
 
     # Build array specification
@@ -100,7 +117,8 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
             "uv run", "-m", "src.train_estimator",
             "--config", str(config_path.absolute()),
             "--method", method_config.name,
-            overwrite_flag
+            overwrite_flag,
+            "--timestamp", timestamp
         ], check=True, capture_output=True, text=True)
 
         # Try to extract job ID from output

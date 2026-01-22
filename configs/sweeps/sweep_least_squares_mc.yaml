@@ -1,7 +1,6 @@
 # W&B Sweep configuration for Least Squares Monte Carlo estimator
 # Usage:
-#   1. wandb sweep configs/sweep_least_squares_mc.yaml
-#   2. wandb agent <sweep-id>
+#   python launch_episode_sweeps.py --config configs/config_humanoid.yaml --method least_squares_mc
 
 program: uv
 command:
@@ -20,10 +19,10 @@ metric:
 run_cap: 30  # Maximum number of runs before sweep terminates
 
 parameters:
-  config:
-    value: configs/config_humanoid.yaml
   method:
     value: least_squares_mc
+  wandb-mode:
+    value: offline
   ridge-lambda:
     min: 1.0e-8
     max: 1.0
@@ -32,7 +31,9 @@ parameters:
     values: [16, 32, 64, 128, 256]
   preprocess-fraction:
     values: [0.05, 0.1, 0.2]
-  num-episodes:
-    values: [50, 100, 200, 400]
   n-initializations:
     value: 5
+  parallel-inits:
+    value: true
+  n-jobs:
+    value: 4
