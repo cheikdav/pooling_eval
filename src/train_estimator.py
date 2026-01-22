@@ -406,7 +406,7 @@ def train_initialization_worker(
     # Train (creates estimator and fits PCA internally)
     final_mc_loss, trained_estimator = train_single_initialization(
         method_config, train_batch, test_batch, preprocess_batch, config, method_name, batch_name,
-        n_episodes, init_idx, use_wandb=False, sweep_mode=False, n_inits=n_inits, log_frequency=50
+        n_episodes, init_idx, use_wandb=False, sweep_mode=False, n_inits=n_inits, log_frequency=config.logging.log_frequency
     )
 
     print(f"[Init {init_idx}] Complete: MC loss = {final_mc_loss:.6f}")
