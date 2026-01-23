@@ -142,6 +142,53 @@ def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10
     return decile_stats
 
 
+@st.cache_data
+def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10):
+    """Compute average variance divided by average mean per decile of state values.
+
+    For each method/episode number:
+    1. Sort states by mean value
+    2. Group into 10 deciles (10% bins)
+    3. Compute average variance / average mean in each decile
+
+    Args:
+        baseline_stats: Not used (kept for signature compatibility)
+        method_stats: DataFrame with columns [state_idx, n_episodes, mean, variance, ...]
+        epsilon: Small value added to avoid division by zero
+
+    Returns:
+        DataFrame with columns [decile, metric_value] where:
+        - decile: 0-9 (0 = lowest 10% by mean value, 9 = highest 10%)
+        - metric_value: average variance / average mean in that decile
+    """
+    result = method_stats.copy()
+
+    # Sort states by mean value and assign deciles
+    result = result.sort_values('mean').reset_index(drop=True)
+    result['decile'] = pd.qcut(result['mean'], q=10, labels=False, duplicates='drop')
+
+    # Compute average variance and mean per decile
+    decile_stats = result.groupby('decile').agg({
+        'variance': 'mean',
+        'mean': 'mean'
+    }).reset_index()
+
+    # Normalize: variance / mean (add epsilon to avoid division by zero)
+    decile_stats['metric_value'] = decile_stats['variance'] / (decile_stats['mean'].abs() + epsilon)
+
+    # Keep only necessary columns
+    decile_stats = decile_stats[['decile', 'metric_value']]
+
+    # Add n_episodes for consistency
+    decile_stats['n_episodes'] = method_stats['n_episodes'].iloc[0]
+
+    if decile_stats['metric_value'].isnull().any():
+        null_count = decile_stats['metric_value'].isnull().sum()
+        st.error(f"Found {null_count} NaN values after computation!")
+
+    return decile_stats
+
+
 METRICS = {
     'log_variance_ratio': {
         'name': 'Log Variance Ratio',
@@ -177,6 +224,13 @@ METRICS = {
         'reference_line': None,
         'reference_label': None,
         'compute_fn': compute_variance_by_value_decile
+    },
+    'normalized_variance_by_value_decile': {
+        'name': 'Normalized Variance by Value Decile',
+        'description': 'Average (variance / mean) per decile of state mean values (0=lowest 10%, 9=highest 10%)',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_normalized_variance_by_value_decile
     }
 }
 
