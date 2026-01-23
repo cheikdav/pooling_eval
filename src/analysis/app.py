@@ -37,6 +37,33 @@ def load_predictions_data(experiments_dir):
     return pd.DataFrame(all_preds)
 
 
+def apply_data_filters(stats, filter_high_variance=0, filter_extreme_mean=0):
+    """Apply filtering to remove outliers from statistics.
+
+    Args:
+        stats: DataFrame with variance and mean columns
+        filter_high_variance: Percentage of top variance states to exclude (0-50)
+        filter_extreme_mean: Percentage of top and bottom mean states to exclude (0-25)
+
+    Returns:
+        Filtered DataFrame
+    """
+    result = stats.copy()
+
+    # Filter high variance outliers
+    if filter_high_variance > 0:
+        variance_threshold = np.percentile(result['variance'], 100 - filter_high_variance)
+        result = result[result['variance'] <= variance_threshold]
+
+    # Filter extreme mean values
+    if filter_extreme_mean > 0:
+        mean_lower = np.percentile(result['mean'], filter_extreme_mean)
+        mean_upper = np.percentile(result['mean'], 100 - filter_extreme_mean)
+        result = result[(result['mean'] >= mean_lower) & (result['mean'] <= mean_upper)]
+
+    return result
+
+
 @st.cache_data
 def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42):
     """Load predictions and compute statistics aggregated across batches.
@@ -185,11 +212,33 @@ def show_selection_filters(metadata_df):
         help="Number of buckets for decile-based metrics (variance by value decile)"
     )
 
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Data Filtering**")
+
+    # Filtering options
+    filter_high_variance = st.sidebar.slider(
+        "Exclude Top % Variance",
+        min_value=0,
+        max_value=50,
+        value=0,
+        step=1,
+        help="Exclude states with top x% variance (outliers)"
+    )
+
+    filter_extreme_mean = st.sidebar.slider(
+        "Exclude Top/Bottom % Mean",
+        min_value=0,
+        max_value=25,
+        value=0,
+        step=1,
+        help="Exclude states with extreme mean values (top x% and bottom x%)"
+    )
+
     # Ensure baseline method is included in the data
     methods_to_load = list(set(selected_methods + [baseline_method]))
     filtered = filtered[filtered['method'].isin(methods_to_load)]
 
-    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets
+    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean
 
 
 def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10):
@@ -523,7 +572,7 @@ if metadata_df.empty:
     st.stop()
 
 # Sidebar filters
-filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets = show_selection_filters(metadata_df)
+filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean = show_selection_filters(metadata_df)
 
 if not methods:
     st.warning("Please select at least one method")
@@ -541,6 +590,14 @@ with col3:
 with col4:
     dataset_label = "Full" if dataset_type == "full" else "Differences"
     st.metric("Dataset", dataset_label)
+
+if filter_high_variance > 0 or filter_extreme_mean > 0:
+    filters_active = []
+    if filter_high_variance > 0:
+        filters_active.append(f"Excluding top {filter_high_variance}% variance")
+    if filter_extreme_mean > 0:
+        filters_active.append(f"Excluding top/bottom {filter_extreme_mean}% mean")
+    st.info(f"**Active Filters:** {', '.join(filters_active)}")
 
 st.markdown("---")
 
@@ -563,6 +620,8 @@ for _, row in filtered_for_n_ep.iterrows():
     if row['method'] in methods_to_load:
         print(row['method'])
         stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type)
+        # Apply data filters
+        stats = apply_data_filters(stats, filter_high_variance, filter_extreme_mean)
         stats_dict_single[row['method']] = stats
 
 if not stats_dict_single or baseline_method not in stats_dict_single:
