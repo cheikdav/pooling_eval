@@ -144,12 +144,13 @@ def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10
 
 @st.cache_data
 def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10):
-    """Compute average variance divided by average mean per decile of state values.
+    """Compute average of (variance / mean²) per decile of state values.
 
     For each method/episode number:
-    1. Sort states by mean value
-    2. Group into 10 deciles (10% bins)
-    3. Compute average variance / average mean in each decile
+    1. Compute variance / mean² for each state
+    2. Sort states by mean value
+    3. Group into 10 deciles (10% bins)
+    4. Average the ratios within each decile
 
     Args:
         baseline_stats: Not used (kept for signature compatibility)
@@ -159,25 +160,20 @@ def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, ep
     Returns:
         DataFrame with columns [decile, metric_value] where:
         - decile: 0-9 (0 = lowest 10% by mean value, 9 = highest 10%)
-        - metric_value: average variance / average mean in that decile
+        - metric_value: average of (variance / mean²) in that decile
     """
     result = method_stats.copy()
+
+    # Compute normalized variance for each state FIRST
+    result['normalized_variance'] = result['variance'] / ((result['mean'].abs() + epsilon) ** 2)
 
     # Sort states by mean value and assign deciles
     result = result.sort_values('mean').reset_index(drop=True)
     result['decile'] = pd.qcut(result['mean'], q=10, labels=False, duplicates='drop')
 
-    # Compute average variance and mean per decile
-    decile_stats = result.groupby('decile').agg({
-        'variance': 'mean',
-        'mean': 'mean'
-    }).reset_index()
-
-    # Normalize: variance / mean (add epsilon to avoid division by zero)
-    decile_stats['metric_value'] = decile_stats['variance'] / (decile_stats['mean'].abs() + epsilon)
-
-    # Keep only necessary columns
-    decile_stats = decile_stats[['decile', 'metric_value']]
+    # Average the normalized variance per decile
+    decile_stats = result.groupby('decile')['normalized_variance'].mean().reset_index()
+    decile_stats.columns = ['decile', 'metric_value']
 
     # Add n_episodes for consistency
     decile_stats['n_episodes'] = method_stats['n_episodes'].iloc[0]
@@ -227,7 +223,7 @@ METRICS = {
     },
     'normalized_variance_by_value_decile': {
         'name': 'Normalized Variance by Value Decile',
-        'description': 'Average (variance / mean) per decile of state mean values (0=lowest 10%, 9=highest 10%)',
+        'description': 'Average (variance / mean²) per decile of state mean values (0=lowest 10%, 9=highest 10%)',
         'reference_line': None,
         'reference_label': None,
         'compute_fn': compute_normalized_variance_by_value_decile
