@@ -257,7 +257,7 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
 
 
 def plot_variance_deciles(stats_dict, methods, n_episodes):
-    """Create plot showing variance distribution by deciles.
+    """Create plot showing variance distribution by percentiles.
 
     Args:
         stats_dict: Dict mapping method names to DataFrames with variance column
@@ -266,7 +266,7 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
     """
     fig = go.Figure()
 
-    deciles = np.arange(0, 101, 10)  # 0th, 10th, 20th, ..., 100th percentile
+    percentiles = np.arange(1, 100, 1)  # 1st, 2nd, 3rd, ..., 99th percentile
 
     for method in methods:
         if method not in stats_dict:
@@ -275,18 +275,18 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
         variance_values = stats_dict[method]['variance'].values
 
         # Compute percentiles
-        percentile_values = np.percentile(variance_values, deciles)
+        percentile_values = np.percentile(variance_values, percentiles)
 
         fig.add_trace(go.Scatter(
-            x=deciles,
+            x=percentiles,
             y=percentile_values,
-            mode='lines+markers',
+            mode='lines',
             name=get_method_display_name(method),
-            marker=dict(size=8)
+            line=dict(width=2)
         ))
 
     fig.update_layout(
-        title=f"Variance Distribution by Decile ({n_episodes} episodes)",
+        title=f"Variance Distribution by Percentile ({n_episodes} episodes)",
         xaxis_title="Percentile",
         yaxis_title="Variance",
         height=500,
@@ -296,7 +296,7 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10):
+def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10, metric_key='variance_by_value_decile'):
     """Create bar chart showing average variance per decile of state values.
 
     Args:
@@ -304,9 +304,10 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
         methods: List of methods to display
         n_episodes: Number of episodes (for display)
         baseline_method: Baseline method name (not used for this metric)
-        epsilon: Small value added before taking log (not used for this metric)
+        epsilon: Small value added before taking log
+        metric_key: Which decile metric to compute
     """
-    from metrics import compute_variance_by_value_decile
+    from metrics import METRICS, compute_metric
 
     # Compute decile stats for each method
     decile_list = []
@@ -315,7 +316,7 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
             continue
 
         method_stats = stats_dict[method]
-        decile_df = compute_variance_by_value_decile(None, method_stats, epsilon=epsilon)
+        decile_df = compute_metric(None, method_stats, metric_key, epsilon=epsilon)
         decile_df['method'] = get_method_display_name(method)
         decile_list.append(decile_df)
 
@@ -325,6 +326,8 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
 
     combined = pd.concat(decile_list, ignore_index=True)
 
+    metric_info = METRICS[metric_key]
+
     # Create grouped bar chart
     fig = px.bar(
         combined,
@@ -332,10 +335,10 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
         y='metric_value',
         color='method',
         barmode='group',
-        title=f"Average Variance by Value Decile ({n_episodes} episodes)",
+        title=f"{metric_info['name']} ({n_episodes} episodes)",
         labels={
             'decile': 'Value Decile (0=lowest 10%, 9=highest 10%)',
-            'metric_value': 'Average Variance'
+            'metric_value': metric_info['name']
         }
     )
 
@@ -564,9 +567,9 @@ metric_key_single = st.selectbox(
 
 st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
 
-# Use specialized plot for variance_by_value_decile
-if metric_key_single == 'variance_by_value_decile':
-    plot_variance_by_value_decile(stats_dict_single, methods, selected_n_ep, baseline_method, epsilon)
+# Use specialized plot for decile-based metrics
+if metric_key_single in ['variance_by_value_decile', 'normalized_variance_by_value_decile']:
+    plot_variance_by_value_decile(stats_dict_single, methods, selected_n_ep, baseline_method, epsilon, metric_key_single)
 else:
     plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method, epsilon)
 
