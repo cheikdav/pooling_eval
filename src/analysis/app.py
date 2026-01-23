@@ -257,7 +257,7 @@ def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseli
 
 
 def plot_variance_deciles(stats_dict, methods, n_episodes):
-    """Create plot showing variance distribution by deciles.
+    """Create plot showing variance distribution by percentiles.
 
     Args:
         stats_dict: Dict mapping method names to DataFrames with variance column
@@ -266,7 +266,7 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
     """
     fig = go.Figure()
 
-    deciles = np.arange(0, 101, 10)  # 0th, 10th, 20th, ..., 100th percentile
+    percentiles = np.arange(1, 100, 1)  # 1st, 2nd, 3rd, ..., 99th percentile
 
     for method in methods:
         if method not in stats_dict:
@@ -275,18 +275,18 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
         variance_values = stats_dict[method]['variance'].values
 
         # Compute percentiles
-        percentile_values = np.percentile(variance_values, deciles)
+        percentile_values = np.percentile(variance_values, percentiles)
 
         fig.add_trace(go.Scatter(
-            x=deciles,
+            x=percentiles,
             y=percentile_values,
-            mode='lines+markers',
+            mode='lines',
             name=get_method_display_name(method),
-            marker=dict(size=8)
+            line=dict(width=2)
         ))
 
     fig.update_layout(
-        title=f"Variance Distribution by Decile ({n_episodes} episodes)",
+        title=f"Variance Distribution by Percentile ({n_episodes} episodes)",
         xaxis_title="Percentile",
         yaxis_title="Variance",
         height=500,
