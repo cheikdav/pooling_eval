@@ -175,11 +175,21 @@ def show_selection_filters(metadata_df):
     epsilon = 10 ** log_epsilon
     st.sidebar.caption(f"ε = {epsilon:.2e}")
 
+    # Number of buckets for decile-based metrics
+    n_buckets = st.sidebar.slider(
+        "Number of Buckets",
+        min_value=2,
+        max_value=20,
+        value=10,
+        step=1,
+        help="Number of buckets for decile-based metrics (variance by value decile)"
+    )
+
     # Ensure baseline method is included in the data
     methods_to_load = list(set(selected_methods + [baseline_method]))
     filtered = filtered[filtered['method'].isin(methods_to_load)]
 
-    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type
+    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets
 
 
 def plot_metric_distribution(stats_dict, metric_key, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10):
@@ -296,8 +306,8 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10, metric_key='variance_by_value_decile'):
-    """Create bar chart showing average variance per decile of state values.
+def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10, metric_key='variance_by_value_decile', n_buckets=10):
+    """Create bar chart showing average variance per bucket of state values.
 
     Args:
         stats_dict: Dict mapping method names to DataFrames
@@ -306,17 +316,18 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
         baseline_method: Baseline method name (not used for this metric)
         epsilon: Small value added before taking log
         metric_key: Which decile metric to compute
+        n_buckets: Number of buckets to divide states into
     """
     from metrics import METRICS, compute_metric
 
-    # Compute decile stats for each method
+    # Compute bucket stats for each method
     decile_list = []
     for method in methods:
         if method not in stats_dict:
             continue
 
         method_stats = stats_dict[method]
-        decile_df = compute_metric(None, method_stats, metric_key, epsilon=epsilon)
+        decile_df = compute_metric(None, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets)
         decile_df['method'] = get_method_display_name(method)
         decile_list.append(decile_df)
 
@@ -335,9 +346,9 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
         y='metric_value',
         color='method',
         barmode='group',
-        title=f"{metric_info['name']} ({n_episodes} episodes)",
+        title=f"{metric_info['name']} ({n_episodes} episodes, {n_buckets} buckets)",
         labels={
-            'decile': 'Value Decile (0=lowest 10%, 9=highest 10%)',
+            'decile': f'Value Bucket (0=lowest, {n_buckets-1}=highest)',
             'metric_value': metric_info['name']
         }
     )
@@ -346,7 +357,7 @@ def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_meth
     st.plotly_chart(fig, use_container_width=True)
 
     # Show statistics table
-    st.markdown("**Statistics by Decile**")
+    st.markdown("**Statistics by Bucket**")
     pivot = combined.pivot(index='decile', columns='method', values='metric_value')
     st.dataframe(pivot, use_container_width=True)
 
@@ -512,7 +523,7 @@ if metadata_df.empty:
     st.stop()
 
 # Sidebar filters
-filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type = show_selection_filters(metadata_df)
+filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets = show_selection_filters(metadata_df)
 
 if not methods:
     st.warning("Please select at least one method")
@@ -569,7 +580,7 @@ st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_sing
 
 # Use specialized plot for decile-based metrics
 if metric_key_single in ['variance_by_value_decile', 'normalized_variance_by_value_decile']:
-    plot_variance_by_value_decile(stats_dict_single, methods, selected_n_ep, baseline_method, epsilon, metric_key_single)
+    plot_variance_by_value_decile(stats_dict_single, methods, selected_n_ep, baseline_method, epsilon, metric_key_single, n_buckets)
 else:
     plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method, epsilon)
 

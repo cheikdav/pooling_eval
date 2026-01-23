@@ -104,31 +104,32 @@ def compute_variance(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
-def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10):
-    """Compute average variance per decile of state values.
+def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+    """Compute average variance per bucket of state values.
 
     For each method/episode number:
     1. Sort states by mean value
-    2. Group into 10 deciles (10% bins)
-    3. Compute average variance in each decile
+    2. Group into n_buckets bins
+    3. Compute average variance in each bucket
 
     Args:
         baseline_stats: Not used (kept for signature compatibility)
         method_stats: DataFrame with columns [state_idx, n_episodes, mean, variance, ...]
         epsilon: Not used (kept for signature compatibility)
+        n_buckets: Number of buckets to divide states into (default: 10)
 
     Returns:
         DataFrame with columns [decile, metric_value] where:
-        - decile: 0-9 (0 = lowest 10% by mean value, 9 = highest 10%)
-        - metric_value: average variance in that decile
+        - decile: 0 to n_buckets-1 (0 = lowest bucket by mean value)
+        - metric_value: average variance in that bucket
     """
     result = method_stats.copy()
 
-    # Sort states by mean value and assign deciles
+    # Sort states by mean value and assign buckets
     result = result.sort_values('mean').reset_index(drop=True)
-    result['decile'] = pd.qcut(result['mean'], q=10, labels=False, duplicates='drop')
+    result['decile'] = pd.qcut(result['mean'], q=n_buckets, labels=False, duplicates='drop')
 
-    # Compute average variance per decile
+    # Compute average variance per bucket
     decile_stats = result.groupby('decile')['variance'].mean().reset_index()
     decile_stats.columns = ['decile', 'metric_value']
 
@@ -143,35 +144,36 @@ def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10
 
 
 @st.cache_data
-def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10):
-    """Compute average of (variance / mean²) per decile of state values.
+def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+    """Compute average of (variance / mean²) per bucket of state values.
 
     For each method/episode number:
     1. Compute variance / mean² for each state
     2. Sort states by mean value
-    3. Group into 10 deciles (10% bins)
-    4. Average the ratios within each decile
+    3. Group into n_buckets bins
+    4. Average the ratios within each bucket
 
     Args:
         baseline_stats: Not used (kept for signature compatibility)
         method_stats: DataFrame with columns [state_idx, n_episodes, mean, variance, ...]
         epsilon: Small value added to avoid division by zero
+        n_buckets: Number of buckets to divide states into (default: 10)
 
     Returns:
         DataFrame with columns [decile, metric_value] where:
-        - decile: 0-9 (0 = lowest 10% by mean value, 9 = highest 10%)
-        - metric_value: average of (variance / mean²) in that decile
+        - decile: 0 to n_buckets-1 (0 = lowest bucket by mean value)
+        - metric_value: average of (variance / mean²) in that bucket
     """
     result = method_stats.copy()
 
     # Compute normalized variance for each state FIRST
     result['normalized_variance'] = result['variance'] / ((result['mean'].abs() + epsilon) ** 2)
 
-    # Sort states by mean value and assign deciles
+    # Sort states by mean value and assign buckets
     result = result.sort_values('mean').reset_index(drop=True)
-    result['decile'] = pd.qcut(result['mean'], q=10, labels=False, duplicates='drop')
+    result['decile'] = pd.qcut(result['mean'], q=n_buckets, labels=False, duplicates='drop')
 
-    # Average the normalized variance per decile
+    # Average the normalized variance per bucket
     decile_stats = result.groupby('decile')['normalized_variance'].mean().reset_index()
     decile_stats.columns = ['decile', 'metric_value']
 
@@ -232,7 +234,7 @@ METRICS = {
 
 
 @st.cache_data
-def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10):
+def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10, n_buckets=10):
     """Compute the specified metric with error handling.
 
     Args:
@@ -240,6 +242,7 @@ def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10):
         method_stats: DataFrame with method stats to compare
         metric_key: Key identifying which metric to compute
         epsilon: Small value added before taking log to avoid log(0)
+        n_buckets: Number of buckets for decile-based metrics
 
     Returns:
         DataFrame with metric_value column
@@ -249,7 +252,12 @@ def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10):
             raise ValueError(f"Unknown metric: {metric_key}")
 
         compute_fn = METRICS[metric_key]['compute_fn']
-        return compute_fn(baseline_stats, method_stats, epsilon=epsilon)
+
+        # Pass n_buckets parameter for decile-based metrics
+        if metric_key in ['variance_by_value_decile', 'normalized_variance_by_value_decile']:
+            return compute_fn(baseline_stats, method_stats, epsilon=epsilon, n_buckets=n_buckets)
+        else:
+            return compute_fn(baseline_stats, method_stats, epsilon=epsilon)
     except Exception as e:
         st.error(f"Error computing {metric_key}: {str(e)}")
         import traceback
