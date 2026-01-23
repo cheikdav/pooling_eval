@@ -296,6 +296,58 @@ def plot_variance_deciles(stats_dict, methods, n_episodes):
     st.plotly_chart(fig, use_container_width=True)
 
 
+def plot_variance_by_value_decile(stats_dict, methods, n_episodes, baseline_method='monte_carlo', epsilon=1e-10):
+    """Create bar chart showing average variance per decile of state values.
+
+    Args:
+        stats_dict: Dict mapping method names to DataFrames
+        methods: List of methods to display
+        n_episodes: Number of episodes (for display)
+        baseline_method: Baseline method name (not used for this metric)
+        epsilon: Small value added before taking log (not used for this metric)
+    """
+    from metrics import compute_variance_by_value_decile
+
+    # Compute decile stats for each method
+    decile_list = []
+    for method in methods:
+        if method not in stats_dict:
+            continue
+
+        method_stats = stats_dict[method]
+        decile_df = compute_variance_by_value_decile(None, method_stats, epsilon=epsilon)
+        decile_df['method'] = get_method_display_name(method)
+        decile_list.append(decile_df)
+
+    if not decile_list:
+        st.warning("No data available")
+        return
+
+    combined = pd.concat(decile_list, ignore_index=True)
+
+    # Create grouped bar chart
+    fig = px.bar(
+        combined,
+        x='decile',
+        y='metric_value',
+        color='method',
+        barmode='group',
+        title=f"Average Variance by Value Decile ({n_episodes} episodes)",
+        labels={
+            'decile': 'Value Decile (0=lowest 10%, 9=highest 10%)',
+            'metric_value': 'Average Variance'
+        }
+    )
+
+    fig.update_layout(height=500)
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Show statistics table
+    st.markdown("**Statistics by Decile**")
+    pivot = combined.pivot(index='decile', columns='method', values='metric_value')
+    st.dataframe(pivot, use_container_width=True)
+
+
 def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon=1e-10, dataset_type='full'):
     """Create evolution plot across n_episodes.
 
@@ -511,7 +563,12 @@ metric_key_single = st.selectbox(
 )
 
 st.markdown(f"**{METRICS[metric_key_single]['name']}**: {METRICS[metric_key_single]['description']}")
-plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method, epsilon)
+
+# Use specialized plot for variance_by_value_decile
+if metric_key_single == 'variance_by_value_decile':
+    plot_variance_by_value_decile(stats_dict_single, methods, selected_n_ep, baseline_method, epsilon)
+else:
+    plot_metric_distribution(stats_dict_single, metric_key_single, methods, selected_n_ep, baseline_method, epsilon)
 
 st.markdown("### Variance Distribution by Percentile")
 st.markdown("Shows how variance is distributed across states (0th percentile = minimum, 50th = median, 100th = maximum)")
