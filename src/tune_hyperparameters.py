@@ -4,6 +4,10 @@ Simple wrapper that modifies learning rate and calls core training logic.
 Uses batch_tuning.npz for all hyperparameter search.
 """
 
+# Enable file tracking FIRST before any other imports
+from src.debug_file_tracking import enable_file_tracking
+enable_file_tracking()
+
 import argparse
 from pathlib import Path
 import sys
@@ -197,6 +201,10 @@ def main():
             print(f"You can manually sync later with: wandb sync {run_dir}")
     else:
         print(f"Wandb run finished and synced")
+
+    # Print any files still open at exit
+    from src.debug_file_tracking import print_open_files
+    print_open_files()
 
 
 if __name__ == "__main__":
