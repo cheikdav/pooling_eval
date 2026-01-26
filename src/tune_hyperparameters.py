@@ -174,25 +174,35 @@ def main():
     )
 
     # Properly finish wandb run to ensure all data is synced and run is marked complete
-    print(f"\nFinishing wandb run...")
+    print(f"\n[DEBUG] About to finish wandb run...")
+    sys.stdout.flush()
+    sys.stderr.flush()
 
     # Get run directory for offline sync
     if args.wandb_mode == "offline":
         run_dir = str(Path(wandb.run.dir).parent)
         print(f"[DEBUG] Wandb run directory: {run_dir}")
 
+    print(f"[DEBUG] Calling wandb.finish()...")
+    sys.stdout.flush()
+    sys.stderr.flush()
     wandb.finish()
+    print(f"[DEBUG] wandb.finish() completed")
+    sys.stdout.flush()
+    sys.stderr.flush()
 
     # Sync offline run to W&B
     if args.wandb_mode == "offline":
-        print(f"Syncing offline run to W&B...")
+        print(f"[DEBUG] Starting offline sync...")
+        sys.stdout.flush()
+        sys.stderr.flush()
         print(f"[DEBUG] Syncing directory: {run_dir}")
         import subprocess
         try:
             subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
-            print(f"✓ Successfully synced to W&B")
+            print(f"[DEBUG] ✓ Successfully synced to W&B")
         except subprocess.CalledProcessError as e:
-            print(f"✗ Warning: Failed to sync offline run")
+            print(f"[DEBUG] ✗ Warning: Failed to sync offline run")
             print(f"Error: {e}")
             if e.stdout:
                 print(f"stdout: {e.stdout}")
@@ -200,11 +210,18 @@ def main():
                 print(f"stderr: {e.stderr}")
             print(f"You can manually sync later with: wandb sync {run_dir}")
     else:
-        print(f"Wandb run finished and synced")
+        print(f"[DEBUG] Wandb run finished and synced")
 
     # Print any files still open at exit
+    print(f"[DEBUG] Printing open files before exit...")
+    sys.stdout.flush()
+    sys.stderr.flush()
     from src.debug_file_tracking import print_open_files
     print_open_files()
+
+    print(f"[DEBUG] Main function completed, returning...")
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 
 if __name__ == "__main__":
