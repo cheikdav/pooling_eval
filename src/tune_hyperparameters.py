@@ -51,9 +51,9 @@ def main():
     run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode, dir=base_wandb_dir)
     print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
 
-    # Setup log directory: logs/sweep/<exp_id>/<sweep_id>/<run_id>/
+    # Setup log directory: logs/sweep/<exp_id>/<method>/<sweep_id>/<run_id>/
     sweep_id = wandb.run.sweep_id or "no_sweep"
-    log_dir = config_temp.get_logs_dir() / "sweep" / config_temp.experiment_id / sweep_id / wandb.run.id
+    log_dir = config_temp.get_logs_dir() / "sweep" / config_temp.experiment_id / args.method / sweep_id / wandb.run.id
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "main.log"
 
