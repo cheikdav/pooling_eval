@@ -5,12 +5,49 @@ Import and call enable_file_tracking() at the start of your script to log all fi
 
 import sys
 import builtins
-import io
 
 
 _original_open = None
 _open_files = {}
 _tracking_enabled = False
+
+
+class FileWrapper:
+    """Wrapper that logs close operations."""
+
+    def __init__(self, file_obj, file_path):
+        self._file = file_obj
+        self._path = file_path
+        self._addr = hex(id(file_obj))
+
+    def close(self):
+        """Log and close the file."""
+        try:
+            print(f"[FILE_DEBUG] CLOSE: {self._path} -> {self._addr}", file=sys.stderr, flush=True)
+        except:
+            pass
+
+        if self._addr in _open_files:
+            del _open_files[self._addr]
+
+        return self._file.close()
+
+    def __enter__(self):
+        return self._file.__enter__()
+
+    def __exit__(self, *args):
+        self.close()
+        return False
+
+    def __getattr__(self, name):
+        """Delegate all other attributes to the wrapped file."""
+        return getattr(self._file, name)
+
+    def __iter__(self):
+        return iter(self._file)
+
+    def __next__(self):
+        return next(self._file)
 
 
 def _debug_open(*args, **kwargs):
@@ -26,26 +63,8 @@ def _debug_open(*args, **kwargs):
     except:
         pass
 
-    return file_obj
-
-
-def _make_close_wrapper(original_close):
-    """Create a wrapper around file.close() that logs closure."""
-    def close_wrapper(self):
-        addr = hex(id(self))
-        file_path = _open_files.get(addr, 'unknown')
-
-        # Try to write to stderr, but don't fail if it's redirected/closed
-        try:
-            print(f"[FILE_DEBUG] CLOSE: {file_path} -> {addr}", file=sys.stderr, flush=True)
-        except:
-            pass
-
-        if addr in _open_files:
-            del _open_files[addr]
-
-        return original_close(self)
-    return close_wrapper
+    # Return wrapped file that will log on close
+    return FileWrapper(file_obj, file_path)
 
 
 def enable_file_tracking():
@@ -60,11 +79,6 @@ def enable_file_tracking():
     # Save original open and patch it
     _original_open = builtins.open
     builtins.open = _debug_open
-
-    # Patch close methods for different file types
-    io.TextIOWrapper.close = _make_close_wrapper(io.TextIOWrapper.close)
-    io.BufferedWriter.close = _make_close_wrapper(io.BufferedWriter.close)
-    io.BufferedReader.close = _make_close_wrapper(io.BufferedReader.close)
 
     _tracking_enabled = True
 
