@@ -756,6 +756,24 @@ class LeastSquaresEstimator(ValueEstimator):
                 'mc_loss': mc_loss.item(),
             }
 
+    def get_matrix_diagnostics(self) -> Dict[str, float]:
+        """Compute eigenvalue diagnostics for the A matrix.
+
+        Returns:
+            Dictionary with min/max eigenvalues and condition number
+        """
+        with torch.no_grad():
+            eigenvalues = torch.linalg.eigvalsh(self.A)
+            min_eig = eigenvalues.min().item()
+            max_eig = eigenvalues.max().item()
+            condition_num = max_eig / (abs(min_eig) + 1e-10)
+
+            return {
+                'min_eigenvalue': min_eig,
+                'max_eigenvalue': max_eig,
+                'condition_number': condition_num,
+            }
+
     def predict(self, observations: np.ndarray) -> np.ndarray:
         """Predict values for given observations."""
         self.repr_extractor.eval()

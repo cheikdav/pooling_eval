@@ -286,9 +286,13 @@ def train_single_initialization(
         if log_frequency > 0 and epoch % log_frequency == 0:
             print(f"Epoch {epoch+1}/{max_epochs}: train_loss={final_mc_loss_train:.6f}, best_loss={best_mc_loss:.6f}", end="")
             if use_validation:
-                print(f", val_loss={final_mc_loss_val:.6f}")
-            else:
-                print()
+                print(f", val_loss={final_mc_loss_val:.6f}", end="")
+            print()
+
+            # Print matrix diagnostics for least squares methods
+            if hasattr(estimator, 'get_matrix_diagnostics'):
+                diagnostics = estimator.get_matrix_diagnostics()
+                print(f"  Matrix: min_eig={diagnostics['min_eigenvalue']:.2e}, max_eig={diagnostics['max_eigenvalue']:.2e}, cond={diagnostics['condition_number']:.2e}")
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
         final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
