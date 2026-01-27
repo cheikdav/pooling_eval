@@ -305,8 +305,19 @@ class ExperimentConfig:
                 estimator_type = EstimatorType(method_dict['type'])
                 config_class = ESTIMATOR_CONFIG_REGISTRY[estimator_type]
 
+                # Convert any dict values with integer keys to string keys
+                # (YAML parses numeric keys as integers, but we need strings for per-episode configs)
+                cleaned_dict = {}
+                for key, value in method_dict.items():
+                    if isinstance(value, dict):
+                        # Convert integer keys to strings
+                        cleaned_value = {str(k): v for k, v in value.items()}
+                        cleaned_dict[key] = cleaned_value
+                    else:
+                        cleaned_dict[key] = value
+
                 # Create the config instance
-                method_config = config_class(**method_dict)
+                method_config = config_class(**cleaned_dict)
                 method_configs.append(method_config)
 
         value_estimators_config = ValueEstimatorsConfig(
