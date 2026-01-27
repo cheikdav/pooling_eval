@@ -392,10 +392,15 @@ def train_initialization_worker(
     """Train one initialization with per-init logging, used by both parallel and sequential modes."""
     import sys
 
+    # Save original stdout/stderr to restore before closing
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
     # Redirect to per-init log
     log_file = log_dir / f"init_{init_idx}.log"
-    sys.stdout = open(log_file, 'w', buffering=1)
-    sys.stderr = sys.stdout
+    log_file_handle = open(log_file, 'w', buffering=1)
+    sys.stdout = log_file_handle
+    sys.stderr = log_file_handle
 
     print(f"[Init {init_idx}] Starting training")
 
@@ -421,7 +426,11 @@ def train_initialization_worker(
     import gc
     gc.collect()
 
-    sys.stdout.close()
+    # Restore stdout/stderr before closing log file
+    # This prevents errors if any remaining cleanup code tries to write
+    sys.stdout = original_stdout
+    sys.stderr = original_stderr
+    log_file_handle.close()
 
     return final_mc_loss, model_path
 
