@@ -218,6 +218,9 @@ def train_single_initialization(
     else:
         max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
 
+    # Use method-specific batch_size if set, otherwise use global
+    batch_size = method_config.batch_size if (method_config and method_config.batch_size is not None) else training_config.batch_size
+
     # Offset step for wandb logging to ensure monotonicity across initializations
     step_offset = init_idx * max_epochs
 
@@ -226,7 +229,7 @@ def train_single_initialization(
         # Recreate dataloader when needed for shuffling
         if (dataloader is None or
             (training_config.shuffle_frequency > 0 and epoch % training_config.shuffle_frequency == 0)):
-            dataloader = DataLoader(dataset, batch_size=training_config.batch_size, shuffle=True)
+            dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         # Accumulate metrics across mini-batches
         epoch_losses = []
