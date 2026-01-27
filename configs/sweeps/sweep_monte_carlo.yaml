@@ -34,4 +34,4 @@ parameters:
   parallel-inits:
     value: true
   n-jobs:
-    value: 4
+    value: 5

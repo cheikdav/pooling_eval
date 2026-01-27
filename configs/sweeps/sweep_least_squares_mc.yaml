@@ -16,7 +16,7 @@ metric:
   goal: minimize
 
 # Termination conditions
-run_cap: 30  # Maximum number of runs before sweep terminates
+run_cap: 40  # Maximum number of runs before sweep terminates
 
 parameters:
   method:
@@ -32,8 +32,8 @@ parameters:
   preprocess-fraction:
     values: [0.0, 0.05, 0.1, 0.2]
   n-initializations:
-    value: 5
+    value: 1
   parallel-inits:
     value: true
   n-jobs:
-    value: 4
+    value: 1
