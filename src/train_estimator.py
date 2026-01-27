@@ -293,6 +293,10 @@ def train_single_initialization(
             if hasattr(estimator, 'get_matrix_diagnostics'):
                 diagnostics = estimator.get_matrix_diagnostics()
                 print(f"  Matrix: min_eig={diagnostics['min_eigenvalue']:.2e}, max_eig={diagnostics['max_eigenvalue']:.2e}, cond={diagnostics['condition_number']:.2e}")
+                top_5_str = ", ".join([f"{x:.2e}" for x in diagnostics['top_5_abs']])
+                bottom_5_str = ", ".join([f"{x:.2e}" for x in diagnostics['bottom_5_abs']])
+                print(f"  Top 5 (by |λ|): [{top_5_str}]")
+                print(f"  Bottom 5 (by |λ|): [{bottom_5_str}]")
 
         # Check convergence based on validation MC loss (or training MC loss if no validation)
         final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
@@ -392,6 +396,8 @@ def train_initialization_worker(
     n_inits: int,
     output_dir: Path,
     log_dir: Path,
+    use_wandb: bool = False,
+    sweep_mode: bool = False,
 ) -> tuple[float, Path]:
     """Train one initialization with per-init logging, used by both parallel and sequential modes."""
     import sys
@@ -415,7 +421,7 @@ def train_initialization_worker(
     # Train (creates estimator and fits PCA internally)
     final_mc_loss, trained_estimator = train_single_initialization(
         method_config, train_batch, test_batch, preprocess_batch, config, method_name, batch_name,
-        n_episodes, init_idx, use_wandb=False, sweep_mode=False, n_inits=n_inits, log_frequency=config.logging.log_frequency
+        n_episodes, init_idx, use_wandb=use_wandb, sweep_mode=sweep_mode, n_inits=n_inits, log_frequency=config.logging.log_frequency
     )
 
     print(f"[Init {init_idx}] Complete: MC loss = {final_mc_loss:.6f}")
@@ -575,7 +581,8 @@ def train_estimator(
                     future = executor.submit(
                         train_initialization_worker,
                         init_idx, config, method_config, train_batch, test_batch,
-                        preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir
+                        preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir,
+                        use_wandb, sweep_mode
                     )
                     futures.append((init_idx, future))
 
@@ -599,7 +606,8 @@ def train_estimator(
 
                 final_mc_loss, model_path = train_initialization_worker(
                     init_idx, config, method_config, train_batch, test_batch,
-                    preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir
+                    preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir,
+                    use_wandb, sweep_mode
                 )
 
                 results.append((init_idx, final_mc_loss, model_path))
