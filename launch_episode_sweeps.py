@@ -51,8 +51,8 @@ def run_agent(sweep_id: str, config_path: Path, method: str, episode_count: int,
     # Extract sweep ID hash from full sweep path (e.g., "user/project/abc123" -> "abc123")
     sweep_id_hash = sweep_id.split('/')[-1] if '/' in sweep_id else sweep_id
 
-    # Redirect stdout/stderr to log file: logs/sweep/<exp_id>/<sweep_id>/agent_<episodes>ep_<idx>.log
-    log_dir = config_temp.get_logs_dir() / "sweep" / config_temp.experiment_id / sweep_id_hash
+    # Redirect stdout/stderr to log file: logs/sweep/<exp_id>/<method>/<sweep_id>/agent_<episodes>ep_<idx>.log
+    log_dir = config_temp.get_logs_dir() / "sweep" / config_temp.experiment_id / method / sweep_id_hash
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"agent_{episode_count}ep_{agent_idx}.log"
 
@@ -234,7 +234,7 @@ def main():
 
                     # Calculate log path for display
                     sweep_id_hash = sweep_id.split('/')[-1] if '/' in sweep_id else sweep_id
-                    log_file = exp_config.get_logs_dir() / "sweep" / exp_config.experiment_id / sweep_id_hash / f"agent_{episode_count}ep_{agent_idx}.log"
+                    log_file = exp_config.get_logs_dir() / "sweep" / exp_config.experiment_id / args.method / sweep_id_hash / f"agent_{episode_count}ep_{agent_idx}.log"
                     agent_processes.append((episode_count, agent_idx, sweep_id, log_file))
                     print(f"  Agent {agent_idx+1} started (PID: {process.pid}, log: {log_file})")
 
