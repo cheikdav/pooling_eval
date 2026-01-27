@@ -768,10 +768,21 @@ class LeastSquaresEstimator(ValueEstimator):
             max_eig = eigenvalues.max().item()
             condition_num = max_eig / (abs(min_eig) + 1e-10)
 
+            # Sort by absolute value
+            abs_eigenvalues = torch.abs(eigenvalues)
+            sorted_indices = torch.argsort(abs_eigenvalues, descending=True)
+            sorted_eigs = eigenvalues[sorted_indices]
+
+            # Get top 5 and bottom 5 by absolute value
+            top_5 = sorted_eigs[:5].cpu().numpy()
+            bottom_5 = sorted_eigs[-5:].cpu().numpy()
+
             return {
                 'min_eigenvalue': min_eig,
                 'max_eigenvalue': max_eig,
                 'condition_number': condition_num,
+                'top_5_abs': top_5,
+                'bottom_5_abs': bottom_5,
             }
 
     def predict(self, observations: np.ndarray) -> np.ndarray:
