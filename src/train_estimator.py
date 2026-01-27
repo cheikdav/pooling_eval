@@ -415,6 +415,12 @@ def train_initialization_worker(
     model_path = output_dir / f"estimator_init_{init_idx}.pt"
     trained_estimator.save(model_path)
 
+    # Explicitly delete the estimator to trigger cleanup of any SB3 policy objects
+    # This ensures cleanup happens while log file is still open
+    del trained_estimator
+    import gc
+    gc.collect()
+
     sys.stdout.close()
 
     return final_mc_loss, model_path
@@ -585,7 +591,7 @@ def train_estimator(
 
                 results.append((init_idx, final_mc_loss, model_path))
                 print(f"  Init {init_idx} completed: MC loss = {final_mc_loss:.6f}")
-
+        
         # Process results: find best model and compute statistics
         best_model_path = None
         for init_idx, final_mc_loss, model_path in results:
