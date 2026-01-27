@@ -4,8 +4,6 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
-from stable_baselines3.common.vec_env import VecNormalize
-import numpy as np
 
 
 ALGORITHM_MAP = {
