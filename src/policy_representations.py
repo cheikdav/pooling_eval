@@ -118,13 +118,13 @@ def load_policy_representation_extractor(policy_path: Path, algorithm: str, devi
         # Load the pickle file directly to extract normalization stats
         import pickle
         with open(vec_normalize_path, 'rb') as f:
-            vec_normalize_data = pickle.load(f)
+            vec_normalize_obj = pickle.load(f)
 
         # Extract normalization statistics as torch tensors
         vec_normalize_stats = {
-            'obs_mean': torch.FloatTensor(vec_normalize_data['obs_rms'].mean),
-            'obs_var': torch.FloatTensor(vec_normalize_data['obs_rms'].var),
-            'epsilon': vec_normalize_data['epsilon']
+            'obs_mean': torch.FloatTensor(vec_normalize_obj.obs_rms.mean),
+            'obs_var': torch.FloatTensor(vec_normalize_obj.obs_rms.var),
+            'epsilon': vec_normalize_obj.epsilon
         }
         print(f"  Obs mean shape: {vec_normalize_stats['obs_mean'].shape}")
         print(f"  Obs var shape: {vec_normalize_stats['obs_var'].shape}")
