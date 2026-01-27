@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
+from stable_baselines3.common.vec_env import VecNormalize
+import numpy as np
 
 
 ALGORITHM_MAP = {
@@ -17,9 +19,10 @@ ALGORITHM_MAP = {
 class PolicyRepresentationExtractor(nn.Module):
     """Extracts frozen representations from policy network's last hidden layer."""
 
-    def __init__(self, policy_model, algorithm: str):
+    def __init__(self, policy_model, algorithm: str, vec_normalize_stats=None):
         super().__init__()
         self.algorithm = algorithm
+        self.vec_normalize_stats = vec_normalize_stats
 
         # Extract the policy network and freeze it
         if algorithm in ["PPO", "A2C"]:
@@ -46,6 +49,19 @@ class PolicyRepresentationExtractor(nn.Module):
 
         self.eval()
 
+    def _normalize_obs(self, obs: torch.Tensor) -> torch.Tensor:
+        """Apply VecNormalize observation normalization if available."""
+        if self.vec_normalize_stats is None:
+            return obs
+
+        obs_mean = self.vec_normalize_stats['obs_mean']
+        obs_var = self.vec_normalize_stats['obs_var']
+        epsilon = self.vec_normalize_stats['epsilon']
+
+        # Normalize: (obs - mean) / sqrt(var + epsilon)
+        normalized = (obs - obs_mean) / torch.sqrt(obs_var + epsilon)
+        return normalized
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Extract representation from observations.
 
@@ -56,6 +72,9 @@ class PolicyRepresentationExtractor(nn.Module):
             representations: (batch_size, repr_dim)
         """
         with torch.no_grad():
+            # Apply observation normalization if available
+            obs = self._normalize_obs(obs)
+
             if self.algorithm in ["PPO", "A2C"]:
                 # Extract features
                 features = self.features_extractor(obs)
@@ -91,11 +110,38 @@ def load_policy_representation_extractor(policy_path: Path, algorithm: str, devi
     AlgorithmClass = ALGORITHM_MAP[algorithm]
     policy_model = AlgorithmClass.load(policy_path)
 
+    # Check for VecNormalize stats file
+    vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
+    vec_normalize_stats = None
+
+    if vec_normalize_path.exists():
+        print(f"Loading VecNormalize stats from {vec_normalize_path}")
+        vec_normalize = VecNormalize.load(vec_normalize_path, venv=None)
+
+        # Extract normalization statistics as torch tensors
+        vec_normalize_stats = {
+            'obs_mean': torch.FloatTensor(vec_normalize.obs_rms.mean),
+            'obs_var': torch.FloatTensor(vec_normalize.obs_rms.var),
+            'epsilon': vec_normalize.epsilon
+        }
+        print(f"  Obs mean shape: {vec_normalize_stats['obs_mean'].shape}")
+        print(f"  Obs var shape: {vec_normalize_stats['obs_var'].shape}")
+    else:
+        print(f"No VecNormalize stats found at {vec_normalize_path}, proceeding without normalization")
+
     # Create extractor
     if device == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
-        device = torch.device(device)
+        device_obj = torch.device(device)
 
-    extractor = PolicyRepresentationExtractor(policy_model, algorithm).to(device)
+    # Move normalization stats to device if they exist
+    if vec_normalize_stats is not None:
+        vec_normalize_stats = {
+            'obs_mean': vec_normalize_stats['obs_mean'].to(device_obj),
+            'obs_var': vec_normalize_stats['obs_var'].to(device_obj),
+            'epsilon': vec_normalize_stats['epsilon']
+        }
+
+    extractor = PolicyRepresentationExtractor(policy_model, algorithm, vec_normalize_stats).to(device_obj)
     return extractor

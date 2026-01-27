@@ -776,6 +776,7 @@ class LeastSquaresEstimator(ValueEstimator):
         torch.save({
             'value_net_state_dict': self.value_net.state_dict(),
             'repr_extractor_state_dict': self.repr_extractor.state_dict(),
+            'vec_normalize_stats': self.repr_extractor.vec_normalize_stats,
             'A': self.A,
             'b': self.b,
             'w': self.w,
@@ -826,6 +827,12 @@ class LeastSquaresEstimator(ValueEstimator):
 
         self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
         self.repr_extractor.load_state_dict(checkpoint['repr_extractor_state_dict'])
+
+        # Restore VecNormalize stats if they exist
+        vec_normalize_stats = checkpoint.get('vec_normalize_stats', None)
+        if vec_normalize_stats is not None:
+            self.repr_extractor.vec_normalize_stats = vec_normalize_stats
+
         self.A = checkpoint['A']
         self.b = checkpoint['b']
         self.w = checkpoint['w']
