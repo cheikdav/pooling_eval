@@ -225,9 +225,6 @@ def train_single_initialization(
     batch_size_raw = method_config.batch_size if (method_config and method_config.batch_size is not None) else training_config.batch_size
     batch_size = resolve_param_for_episodes(batch_size_raw, num_episodes)
 
-    # Offset step for wandb logging to ensure monotonicity across initializations
-    step_offset = init_idx * max_epochs
-
     for epoch in range(max_epochs):
         final_epoch = epoch
         # Recreate dataloader when needed for shuffling
@@ -276,6 +273,7 @@ def train_single_initialization(
         # Log to wandb periodically
         if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
             log_dict = {
+                f'step{init_suffix}': epoch,
                 f'train{init_suffix}/loss': avg_metrics['loss'],
                 f'train{init_suffix}/mse': avg_metrics['loss'],
                 f'train{init_suffix}/mae': avg_metrics['mae'],
@@ -287,7 +285,7 @@ def train_single_initialization(
             if use_validation:
                 log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
                 log_dict[f'val{init_suffix}/min_loss'] = min_loss
-            wandb.log(log_dict, step=epoch + step_offset)
+            wandb.log(log_dict)
 
         # Log to file periodically (for init logs)
         if log_frequency > 0 and epoch % log_frequency == 0:
@@ -322,6 +320,7 @@ def train_single_initialization(
     # Log final epoch metrics to wandb (ensures last epoch is always logged)
     if use_wandb and config.logging.use_wandb:
         final_log_dict = {
+            f'step{init_suffix}': final_epoch,
             f'train{init_suffix}/loss': avg_metrics['loss'],
             f'train{init_suffix}/mse': avg_metrics['loss'],
             f'train{init_suffix}/mae': avg_metrics['mae'],
@@ -334,7 +333,7 @@ def train_single_initialization(
         if use_validation:
             final_log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
             final_log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
-        wandb.log(final_log_dict, step=final_epoch + step_offset)
+        wandb.log(final_log_dict)
 
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")

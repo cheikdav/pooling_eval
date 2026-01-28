@@ -126,26 +126,27 @@ def main():
         # Default to 1 if not specified
         method_config.n_initializations = 1
 
-    # Pre-declare all metrics for multiple initializations so wandb creates panels for them
-    if method_config.n_initializations > 1:
-        print(f"Pre-declaring wandb metrics for {method_config.n_initializations} initializations")
-        for init_idx in range(method_config.n_initializations):
-            suffix = f"_{init_idx}"
-            # Define train metrics
-            wandb.define_metric(f"train{suffix}/loss")
-            wandb.define_metric(f"train{suffix}/mse")
-            wandb.define_metric(f"train{suffix}/mae")
-            wandb.define_metric(f"train{suffix}/mc_loss_train")
-            wandb.define_metric(f"train{suffix}/best_mc_loss")
-            wandb.define_metric(f"train{suffix}/mean_value")
-            wandb.define_metric(f"train{suffix}/mean_target")
-            # Define validation metrics
-            wandb.define_metric(f"val{suffix}/mc_loss")
-            wandb.define_metric(f"val{suffix}/min_mc_loss")
-            # Define final metrics
-            wandb.define_metric(f"final{suffix}/best_mc_loss")
-            wandb.define_metric(f"final{suffix}/mc_loss_train")
-            wandb.define_metric(f"final{suffix}/mc_loss_val")
+    # Pre-declare all metrics with independent step counters to avoid conflicts in parallel mode
+    print(f"Pre-declaring wandb metrics for {method_config.n_initializations} initializations")
+    for init_idx in range(method_config.n_initializations):
+        suffix = f"_{init_idx}"
+        # Define independent step counter for this initialization to avoid conflicts in parallel mode
+        wandb.define_metric(f"step{suffix}")
+        # Define train metrics with independent step counter
+        wandb.define_metric(f"train{suffix}/loss", step_metric=f"step{suffix}")
+        wandb.define_metric(f"train{suffix}/mse", step_metric=f"step{suffix}")
+        wandb.define_metric(f"train{suffix}/mae", step_metric=f"step{suffix}")
+        wandb.define_metric(f"train{suffix}/mc_loss_train", step_metric=f"step{suffix}")
+        wandb.define_metric(f"train{suffix}/best_mc_loss", step_metric=f"step{suffix}")
+        wandb.define_metric(f"train{suffix}/mean_value", step_metric=f"step{suffix}")
+        wandb.define_metric(f"train{suffix}/mean_target", step_metric=f"step{suffix}")
+        # Define validation metrics with independent step counter
+        wandb.define_metric(f"val{suffix}/mc_loss", step_metric=f"step{suffix}")
+        wandb.define_metric(f"val{suffix}/min_mc_loss", step_metric=f"step{suffix}")
+        # Define final metrics
+        wandb.define_metric(f"final{suffix}/best_mc_loss")
+        wandb.define_metric(f"final{suffix}/mc_loss_train")
+        wandb.define_metric(f"final{suffix}/mc_loss_val")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
