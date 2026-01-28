@@ -161,3 +161,32 @@ def load_predictions_for_trajectory(predictions_path):
     mean_df = mean_df.groupby('episode_idx', group_keys=False).apply(add_step_index)
 
     return mean_df
+
+
+@st.cache_data
+def load_ground_truth_returns(results_path):
+    """Load ground truth returns from results directory.
+
+    Args:
+        results_path: Path to results directory (e.g., experiments/exp_id/results)
+
+    Returns:
+        DataFrame with episode_idx, state_idx, ground_truth_return, step_in_episode
+        or None if ground truth file doesn't exist
+    """
+    ground_truth_file = Path(results_path) / "ground_truth" / "ground_truth_returns.parquet"
+
+    if not ground_truth_file.exists():
+        return None
+
+    df = pd.read_parquet(ground_truth_file)
+
+    # For each episode, create step_in_episode (0, 1, 2, ...) by sorting by state_idx
+    def add_step_index(group):
+        group = group.sort_values('state_idx')
+        group['step_in_episode'] = range(len(group))
+        return group
+
+    df = df.groupby('episode_idx', group_keys=False).apply(add_step_index)
+
+    return df

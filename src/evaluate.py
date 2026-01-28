@@ -42,6 +42,45 @@ def load_evaluation_batch(data_dir: Path) -> Dict:
     return dict(batch)
 
 
+def compute_ground_truth_returns(eval_batch: Dict, gamma: float) -> pd.DataFrame:
+    """Compute ground truth discounted returns for each state.
+
+    For each state s_t at timestep t in an episode, computes:
+        Return_t = Σ γ^(τ-t) * r_τ for τ from t to end of episode
+
+    Args:
+        eval_batch: Evaluation batch data with rewards
+        gamma: Discount factor
+
+    Returns:
+        DataFrame with columns: state_idx, episode_idx, ground_truth_return
+    """
+    eval_obs_list = eval_batch['observations']
+    rewards_list = eval_batch['rewards']
+
+    ground_truth_data = []
+    state_idx = 0
+
+    for ep_idx, (obs_array, rewards_array) in enumerate(zip(eval_obs_list, rewards_list)):
+        episode_length = len(rewards_array)
+
+        # Compute discounted return from each timestep
+        for t in range(episode_length):
+            # Return_t = sum of discounted future rewards from timestep t
+            discounted_return = 0.0
+            for tau in range(t, episode_length):
+                discounted_return += (gamma ** (tau - t)) * rewards_array[tau]
+
+            ground_truth_data.append({
+                'state_idx': state_idx,
+                'episode_idx': ep_idx,
+                'ground_truth_return': float(discounted_return)
+            })
+            state_idx += 1
+
+    return pd.DataFrame(ground_truth_data)
+
+
 def load_estimator_model(model_path: Path, method_name: str, device: str = "cpu"):
     """Load a trained estimator model using the class's load_from_checkpoint method.
 
@@ -270,8 +309,20 @@ def main():
     eval_batch = load_evaluation_batch(data_dir)
     print(f"Loaded evaluation batch with {len(eval_batch['observations'])} episodes")
 
+    # Compute and save ground truth returns
+    print("\nComputing ground truth returns...")
+    gamma = config.policy.gamma
+    ground_truth_df = compute_ground_truth_returns(eval_batch, gamma)
+
+    ground_truth_dir = results_dir / "ground_truth"
+    ground_truth_dir.mkdir(parents=True, exist_ok=True)
+    ground_truth_file = ground_truth_dir / "ground_truth_returns.parquet"
+    ground_truth_df.to_parquet(ground_truth_file, index=False)
+    print(f"Saved ground truth returns to: {ground_truth_file}")
+    print(f"  States: {len(ground_truth_df)}, Episodes: {ground_truth_df['episode_idx'].nunique()}, Gamma: {gamma}")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    print(f"\nUsing device: {device}")
 
     prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device)
 

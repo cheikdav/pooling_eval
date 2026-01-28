@@ -4,7 +4,8 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 
-from common import get_method_display_name, load_predictions_for_trajectory
+from common import get_method_display_name, load_predictions_for_trajectory, load_ground_truth_returns
+from pathlib import Path
 
 
 def render_tab(filtered_metadata, methods, baseline_method):
@@ -67,6 +68,16 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
     st.markdown("---")
 
+    # Get results path (go up from predictions path to results dir)
+    first_predictions_path = filtered_metadata[
+        (filtered_metadata['method'] == selected_methods[0]) &
+        (filtered_metadata['n_episodes'] == selected_n_ep)
+    ].iloc[0]['predictions_path']
+    results_path = Path(first_predictions_path).parents[2]
+
+    # Load ground truth returns
+    ground_truth_df = load_ground_truth_returns(str(results_path))
+
     # Load predictions for each method
     fig = go.Figure()
     episode_length = None
@@ -108,6 +119,19 @@ def render_tab(filtered_metadata, methods, baseline_method):
             line=dict(width=2),
             marker=dict(size=6)
         ))
+
+    # Add ground truth if available
+    if ground_truth_df is not None:
+        ground_truth_episode = ground_truth_df[ground_truth_df['episode_idx'] == selected_episode].copy()
+        if not ground_truth_episode.empty:
+            fig.add_trace(go.Scatter(
+                x=ground_truth_episode['step_in_episode'].values,
+                y=ground_truth_episode['ground_truth_return'].values,
+                mode='lines',
+                name='Ground Truth',
+                line=dict(width=3, color='black', dash='dash'),
+                opacity=0.7
+            ))
 
     # Update layout
     fig.update_layout(
