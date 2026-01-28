@@ -136,8 +136,7 @@ def render_tab(filtered_metadata, methods, baseline_method):
                 y=ground_truth_episode['ground_truth_return'].values,
                 mode='lines',
                 name='Ground Truth',
-                line=dict(width=3, color='black', dash='dash'),
-                opacity=0.7
+                line=dict(width=3, color='white', dash='dash')
             ))
 
     # Update layout
