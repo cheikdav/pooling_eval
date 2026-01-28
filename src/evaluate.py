@@ -311,7 +311,7 @@ def main():
 
     # Compute and save ground truth returns
     print("\nComputing ground truth returns...")
-    gamma = config.policy.gamma
+    gamma = config.value_estimators.training.gamma
     ground_truth_df = compute_ground_truth_returns(eval_batch, gamma)
 
     ground_truth_dir = results_dir / "ground_truth"
