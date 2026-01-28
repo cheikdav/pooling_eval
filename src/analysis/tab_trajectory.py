@@ -78,6 +78,13 @@ def render_tab(filtered_metadata, methods, baseline_method):
     # Load ground truth returns
     ground_truth_df = load_ground_truth_returns(str(results_path))
 
+    # Show info about ground truth
+    if ground_truth_df is None:
+        expected_path = Path(results_path) / "ground_truth" / "ground_truth_returns.parquet"
+        st.info(f"Ground truth file not found at: {expected_path}. Run evaluation to generate it.")
+    else:
+        st.success(f"Loaded ground truth with {len(ground_truth_df)} states from {ground_truth_df['episode_idx'].nunique()} episodes")
+
     # Load predictions for each method
     fig = go.Figure()
     episode_length = None
