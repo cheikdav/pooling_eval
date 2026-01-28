@@ -213,13 +213,17 @@ def train_single_initialization(
 
     # Use method-specific max_epochs if set, otherwise use global
     # For least squares methods, default to 1 epoch (closed-form solution)
+    from src.config import resolve_param_for_episodes
     if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
-        max_epochs = method_config.max_epochs if method_config.max_epochs is not None else 1
+        max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else 1
     else:
-        max_epochs = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
+        max_epochs_raw = method_config.max_epochs if (method_config and method_config.max_epochs is not None) else training_config.max_epochs
+    max_epochs = resolve_param_for_episodes(max_epochs_raw, num_episodes)
 
     # Use method-specific batch_size if set, otherwise use global
-    batch_size = method_config.batch_size if (method_config and method_config.batch_size is not None) else training_config.batch_size
+    # Resolve dict-based batch_size for the specific episode count
+    batch_size_raw = method_config.batch_size if (method_config and method_config.batch_size is not None) else training_config.batch_size
+    batch_size = resolve_param_for_episodes(batch_size_raw, num_episodes)
 
     # Offset step for wandb logging to ensure monotonicity across initializations
     step_offset = init_idx * max_epochs
@@ -540,14 +544,18 @@ def train_estimator(
         train_batch = preprocess_episodes(train_batch_raw, gamma)
 
         obs_dim = train_batch['observations'].shape[-1]
-        n_inits = method_config.n_initializations
+
+        # Resolve n_initializations for this episode count
+        from src.config import resolve_param_for_episodes
+        n_inits = resolve_param_for_episodes(method_config.n_initializations, n_episodes)
 
         # Use method-specific max_epochs if set, otherwise use global
         # For least squares methods, default to 1 epoch (closed-form solution)
         if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
-            max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else 1
+            max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else 1
         else:
-            max_epochs_to_use = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
+            max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
+        max_epochs_to_use = resolve_param_for_episodes(max_epochs_raw, n_episodes)
 
         print(f"\nTraining {n_inits} initialization(s) of {method_name}")
         print(f"Episodes used: {n_episodes}")
