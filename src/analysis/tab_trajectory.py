@@ -3,9 +3,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from pathlib import Path
 
-from common import get_method_display_name, load_episode_data, load_predictions_for_trajectory
+from common import get_method_display_name, load_predictions_for_trajectory
 
 
 def render_tab(filtered_metadata, methods, baseline_method):
@@ -23,17 +22,10 @@ def render_tab(filtered_metadata, methods, baseline_method):
         st.error("No data available")
         return
 
-    # Get experiment path (assume all rows have same experiment)
-    experiment_path = Path(filtered_metadata.iloc[0]['predictions_path']).parents[2]
-
-    # Load episode data using shared loader
-    episode_data = load_episode_data(str(experiment_path))
-
-    if episode_data is None:
-        st.error(f"Evaluation batch not found at {experiment_path}/data/batch_eval.npz")
-        return
-
-    n_eval_episodes = len(episode_data['observations'])
+    # Load predictions from first method to get episode info
+    first_predictions_path = filtered_metadata.iloc[0]['predictions_path']
+    first_pred_df = load_predictions_for_trajectory(first_predictions_path)
+    n_eval_episodes = first_pred_df['episode_idx'].nunique()
 
     st.markdown("---")
 
@@ -75,27 +67,9 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
     st.markdown("---")
 
-    # Get episode info
-    episode_obs = episode_data['observations'][selected_episode]
-    episode_length = len(episode_obs)
-    episode_rewards = episode_data['rewards'][selected_episode] if 'rewards' in episode_data else None
-    episode_return = episode_data['episode_returns'][selected_episode] if 'episode_returns' in episode_data else None
-
-    # Show episode info
-    info_col1, info_col2, info_col3 = st.columns(3)
-    with info_col1:
-        st.metric("Episode Length", episode_length)
-    with info_col2:
-        if episode_return is not None:
-            st.metric("Episode Return", f"{episode_return:.2f}")
-    with info_col3:
-        if episode_rewards is not None:
-            st.metric("Mean Reward", f"{episode_rewards.mean():.2f}")
-
-    st.markdown("---")
-
-    # Load predictions for each method using shared loader
+    # Load predictions for each method
     fig = go.Figure()
+    episode_length = None
 
     for method in selected_methods:
         # Filter metadata for this method and n_episodes
@@ -114,15 +88,15 @@ def render_tab(filtered_metadata, methods, baseline_method):
         # Filter to this episode
         episode_preds = pred_df[pred_df['episode_idx'] == selected_episode].copy()
 
-        # Sort by state_idx to maintain order
-        episode_preds = episode_preds.sort_values('state_idx')
-
-        if len(episode_preds) != episode_length:
-            st.warning(f"Warning: {method} has {len(episode_preds)} predictions but episode has {episode_length} states")
+        if episode_preds.empty:
             continue
 
-        # Create step indices (0, 1, 2, ...)
-        steps = list(range(len(episode_preds)))
+        # Get episode length from first method
+        if episode_length is None:
+            episode_length = len(episode_preds)
+
+        # Use step_in_episode from the dataframe
+        steps = episode_preds['step_in_episode'].values
         values = episode_preds['mean_value'].values
 
         # Add trace
@@ -153,29 +127,14 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Optional: Show rewards overlay
-    if episode_rewards is not None:
-        with st.expander("Show rewards along trajectory"):
-            fig_rewards = go.Figure()
+    # Show episode info after plot
+    if episode_length is not None:
+        st.metric("Episode Length", episode_length)
 
-            fig_rewards.add_trace(go.Bar(
-                x=list(range(episode_length)),
-                y=episode_rewards,
-                name="Reward",
-                marker_color='lightblue'
-            ))
-
-            fig_rewards.update_layout(
-                title="Rewards Along Episode",
-                xaxis_title="Step in Episode",
-                yaxis_title="Reward",
-                height=300
-            )
-
-            st.plotly_chart(fig_rewards, use_container_width=True)
+    st.markdown("---")
 
     # Show statistics
-    with st.expander("Show statistics"):
+    with st.expander("Show value statistics"):
         stats_records = []
 
         for method in selected_methods:
@@ -199,7 +158,8 @@ def render_tab(filtered_metadata, methods, baseline_method):
                     'Std': f"{values.std():.4f}",
                     'Min': f"{values.min():.4f}",
                     'Max': f"{values.max():.4f}",
-                    'Range': f"{values.max() - values.min():.4f}"
+                    'Range': f"{values.max() - values.min():.4f}",
+                    'Num Steps': len(values)
                 })
 
         if stats_records:

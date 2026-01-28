@@ -137,24 +137,6 @@ def apply_data_filters(stats, filter_high_variance=0, filter_extreme_mean=0):
 
 
 @st.cache_data
-def load_episode_data(experiment_path):
-    """Load evaluation batch to get episode structure.
-
-    Args:
-        experiment_path: Path to experiment directory
-
-    Returns:
-        Dictionary with episode data or None if not found
-    """
-    batch_path = Path(experiment_path) / "data" / "batch_eval.npz"
-    if not batch_path.exists():
-        return None
-
-    batch = np.load(batch_path, allow_pickle=True)
-    return dict(batch)
-
-
-@st.cache_data
 def load_predictions_for_trajectory(predictions_path):
     """Load predictions and compute mean across batches for each state.
 
@@ -162,12 +144,20 @@ def load_predictions_for_trajectory(predictions_path):
         predictions_path: Path to predictions.parquet file
 
     Returns:
-        DataFrame with state_idx, episode_idx, mean_value
+        DataFrame with episode_idx, state_idx, mean_value, step_in_episode
     """
     df = pd.read_parquet(predictions_path)
 
     # Compute mean across batches for each state
     mean_df = df.groupby(['state_idx', 'episode_idx'])['predicted_value'].mean().reset_index()
     mean_df.rename(columns={'predicted_value': 'mean_value'}, inplace=True)
+
+    # For each episode, create step_in_episode (0, 1, 2, ...) by sorting by state_idx
+    def add_step_index(group):
+        group = group.sort_values('state_idx')
+        group['step_in_episode'] = range(len(group))
+        return group
+
+    mean_df = mean_df.groupby('episode_idx', group_keys=False).apply(add_step_index)
 
     return mean_df
