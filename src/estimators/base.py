@@ -399,7 +399,7 @@ class NeuralNetEstimator(ValueEstimator):
         Args:
             path: Path to save checkpoint
         """
-        torch.save({
+        checkpoint = {
             'value_net_state_dict': self.value_net.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'training_step': self.training_step,
@@ -409,7 +409,13 @@ class NeuralNetEstimator(ValueEstimator):
             'learning_rate': self.learning_rate,
             'normalize_observations': self.normalize_observations,
             'discount_factor': self.discount_factor,
-        }, path)
+        }
+
+        # Save observation normalizer state if it exists
+        if self.value_net.obs_normalizer is not None:
+            checkpoint['obs_normalizer_state'] = self.value_net.obs_normalizer.state_dict()
+
+        torch.save(checkpoint, path)
 
     def load(self, path: Path):
         """Load estimator from disk.
@@ -421,6 +427,10 @@ class NeuralNetEstimator(ValueEstimator):
         self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.training_step = checkpoint['training_step']
+
+        # Restore observation normalizer state if it exists
+        if 'obs_normalizer_state' in checkpoint and self.value_net.obs_normalizer is not None:
+            self.value_net.obs_normalizer.load_state_dict(checkpoint['obs_normalizer_state'])
 
     @classmethod
     def load_from_checkpoint(cls, path: Path, device: str = "auto"):

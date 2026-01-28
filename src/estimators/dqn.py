@@ -130,6 +130,11 @@ class DQNEstimator(NeuralNetEstimator):
             'target_update_rate': self.target_update_rate,
             'normalize_observations': self.normalize_observations,
         }
+
+        # Save observation normalizer state if it exists
+        if self.value_net.obs_normalizer is not None:
+            checkpoint['obs_normalizer_state'] = self.value_net.obs_normalizer.state_dict()
+
         torch.save(checkpoint, path)
 
     def load(self, path):
@@ -140,6 +145,10 @@ class DQNEstimator(NeuralNetEstimator):
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.training_step = checkpoint['training_step']
         self.steps_since_target_update = checkpoint['steps_since_target_update']
+
+        # Restore observation normalizer state if it exists (shared between value_net and target_net)
+        if 'obs_normalizer_state' in checkpoint and self.value_net.obs_normalizer is not None:
+            self.value_net.obs_normalizer.load_state_dict(checkpoint['obs_normalizer_state'])
 
     @classmethod
     def load_from_checkpoint(cls, path, device: str = "auto"):
