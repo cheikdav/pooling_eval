@@ -187,50 +187,110 @@ def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, ep
     return decile_stats
 
 
+@st.cache_data
+def compute_variance_percentiles(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+    """Compute variance at different percentiles.
+
+    Args:
+        baseline_stats: Not used (kept for signature compatibility)
+        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
+        epsilon: Not used (kept for signature compatibility)
+        n_buckets: Not used (kept for signature compatibility)
+
+    Returns:
+        DataFrame with columns [percentile, metric_value]
+    """
+    result = method_stats.copy()
+    percentiles = np.arange(1, 100, 1)  # 1st to 99th percentile
+
+    percentile_values = np.percentile(result['variance'].values, percentiles)
+
+    df = pd.DataFrame({
+        'percentile': percentiles,
+        'metric_value': percentile_values,
+        'n_episodes': method_stats['n_episodes'].iloc[0]
+    })
+
+    return df
+
+
 METRICS = {
     'log_variance_ratio': {
         'name': 'Log Variance Ratio',
         'description': 'log(Method Variance + ε) - log(Baseline Variance + ε)',
         'reference_line': 0,
         'reference_label': 'Equal to Baseline',
-        'compute_fn': compute_log_variance_ratio
+        'compute_fn': compute_log_variance_ratio,
+        'is_comparison': True,
+        'plot_type': 'histogram'
     },
     'log_mean_ratio': {
         'name': 'Log Mean Ratio',
         'description': 'log(|Method Mean| + ε) - log(|Baseline Mean| + ε)',
         'reference_line': 0,
         'reference_label': 'Equal to Baseline',
-        'compute_fn': compute_log_mean_ratio
+        'compute_fn': compute_log_mean_ratio,
+        'is_comparison': True,
+        'plot_type': 'histogram'
     },
     'log_variance': {
         'name': 'Log Variance',
         'description': 'log(Variance + ε)',
         'reference_line': None,
         'reference_label': None,
-        'compute_fn': compute_log_variance
+        'compute_fn': compute_log_variance,
+        'is_comparison': False,
+        'plot_type': 'histogram'
     },
     'variance': {
         'name': 'Variance',
         'description': 'Raw variance values',
         'reference_line': None,
         'reference_label': None,
-        'compute_fn': compute_variance
+        'compute_fn': compute_variance,
+        'is_comparison': False,
+        'plot_type': 'histogram'
     },
     'variance_by_value_decile': {
         'name': 'Variance by Value Decile',
         'description': 'Average variance per decile of state mean values (0=lowest 10%, 9=highest 10%)',
         'reference_line': None,
         'reference_label': None,
-        'compute_fn': compute_variance_by_value_decile
+        'compute_fn': compute_variance_by_value_decile,
+        'is_comparison': False,
+        'plot_type': 'bar'
     },
     'normalized_variance_by_value_decile': {
         'name': 'Normalized Variance by Value Decile',
         'description': 'Average (variance / mean²) per decile of state mean values (0=lowest 10%, 9=highest 10%)',
         'reference_line': None,
         'reference_label': None,
-        'compute_fn': compute_normalized_variance_by_value_decile
+        'compute_fn': compute_normalized_variance_by_value_decile,
+        'is_comparison': False,
+        'plot_type': 'bar'
+    },
+    'variance_percentiles': {
+        'name': 'Variance by Percentile',
+        'description': 'Variance values at each percentile (shows distribution from min to max)',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_variance_percentiles,
+        'is_comparison': False,
+        'plot_type': 'line'
     }
 }
+
+
+def get_metrics_by_type(is_comparison):
+    """Get metric keys filtered by comparison type.
+
+    Args:
+        is_comparison: If True, return comparison metrics; if False, return absolute metrics
+
+    Returns:
+        List of metric keys
+    """
+    return [key for key, info in METRICS.items() if info['is_comparison'] == is_comparison]
 
 
 @st.cache_data
