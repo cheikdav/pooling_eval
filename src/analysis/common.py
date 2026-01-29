@@ -44,6 +44,7 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
     Returns:
         DataFrame with columns: state_idx, n_episodes, mean, variance, std, count
         where statistics are aggregated across all batches for each state
+        Also includes metadata: predictions_path, results_dir (for ground truth access)
     """
     # Load raw predictions
     df = pd.read_parquet(predictions_path)
@@ -57,6 +58,15 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
             count='count'
         ).reset_index()
         stats['n_episodes'] = n_episodes
+
+        # Add metadata for metrics that need access to raw predictions or ground truth
+        # predictions_path format: experiments/<exp_id>/results/<method>/<n_episodes>/predictions.parquet
+        # results_dir: experiments/<exp_id>/results
+        predictions_path_obj = Path(predictions_path)
+        results_dir = str(predictions_path_obj.parent.parent.parent)
+        stats['predictions_path'] = predictions_path
+        stats['results_dir'] = results_dir
+
         del df
         return stats
 
@@ -101,6 +111,12 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
         ).reset_index()
         stats_diff.rename(columns={'state_idx_s1': 'state_idx'}, inplace=True)
         stats_diff['n_episodes'] = n_episodes
+
+        # Add metadata for metrics that need access to raw predictions or ground truth
+        predictions_path_obj = Path(predictions_path)
+        results_dir = str(predictions_path_obj.parent.parent.parent)
+        stats_diff['predictions_path'] = predictions_path
+        stats_diff['results_dir'] = results_dir
 
         del df, df_s1, df_s2, df_merged
         return stats_diff

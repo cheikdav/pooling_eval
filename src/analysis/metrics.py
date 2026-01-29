@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+from pathlib import Path
 
 
 @st.cache_data
@@ -214,6 +215,62 @@ def compute_variance_percentiles(baseline_stats, method_stats, epsilon=1e-10, n_
     return df
 
 
+@st.cache_data
+def compute_ground_truth_error(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+    """Compute prediction error relative to ground truth returns.
+
+    Args:
+        baseline_stats: Not used (kept for signature compatibility)
+        method_stats: DataFrame with metadata columns predictions_path and results_dir
+        epsilon: Not used (kept for signature compatibility)
+        n_buckets: Not used (kept for signature compatibility)
+
+    Returns:
+        DataFrame with metric_value column containing (predicted - ground_truth)
+    """
+    # Extract metadata from method_stats
+    if 'predictions_path' not in method_stats.columns or 'results_dir' not in method_stats.columns:
+        st.error("Ground truth metric requires predictions_path and results_dir in stats")
+        return pd.DataFrame()
+
+    predictions_path = method_stats['predictions_path'].iloc[0]
+    results_dir = method_stats['results_dir'].iloc[0]
+
+    # Load ground truth
+    ground_truth_file = Path(results_dir) / "ground_truth" / "ground_truth_returns.parquet"
+    if not ground_truth_file.exists():
+        st.warning(f"Ground truth file not found: {ground_truth_file}")
+        return pd.DataFrame()
+
+    ground_truth_df = pd.read_parquet(ground_truth_file)
+
+    # Load predictions (need raw predictions, not aggregated stats)
+    predictions_df = pd.read_parquet(predictions_path)
+
+    # Compute mean prediction per state across all batches
+    pred_mean = predictions_df.groupby('state_idx')['predicted_value'].mean().reset_index()
+    pred_mean.columns = ['state_idx', 'mean_predicted']
+
+    # Merge with ground truth
+    merged = pred_mean.merge(
+        ground_truth_df[['state_idx', 'ground_truth_return']],
+        on='state_idx',
+        how='inner'
+    )
+
+    # Compute error: predicted - ground_truth
+    merged['metric_value'] = merged['mean_predicted'] - merged['ground_truth_return']
+
+    result = merged[['state_idx', 'metric_value']].copy()
+    result['n_episodes'] = method_stats['n_episodes'].iloc[0]
+
+    if result['metric_value'].isnull().any():
+        null_count = result['metric_value'].isnull().sum()
+        st.error(f"Found {null_count} NaN values in ground truth error computation!")
+
+    return result
+
+
 METRICS = {
     'log_variance_ratio': {
         'name': 'Log Variance Ratio',
@@ -277,6 +334,15 @@ METRICS = {
         'compute_fn': compute_variance_percentiles,
         'is_comparison': False,
         'plot_type': 'line'
+    },
+    'ground_truth_error': {
+        'name': 'Ground Truth Error',
+        'description': 'Prediction error relative to ground truth (Predicted - Ground Truth)',
+        'reference_line': 0,
+        'reference_label': 'Perfect Prediction',
+        'compute_fn': compute_ground_truth_error,
+        'is_comparison': False,
+        'plot_type': 'histogram'
     }
 }
 
