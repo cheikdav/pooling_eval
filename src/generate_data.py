@@ -6,7 +6,9 @@ import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
 from tqdm import tqdm
-from typing import Dict, List
+from typing import Dict, List, Tuple
+import gymnasium as gym
+import scipy.stats as stats
 
 from src.config import ExperimentConfig
 from src.env_utils import create_vec_env
@@ -187,7 +189,202 @@ def save_and_log_batch(batch_data: dict, output_path: Path, batch_name: str) -> 
     }
 
 
-def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None):
+def is_classic_control_env(env_name: str) -> bool:
+    """Check if environment is Classic Control (supports state setting from observation)."""
+    classic_control = ['CartPole', 'Acrobot', 'MountainCar', 'Pendulum']
+    return any(name in env_name for name in classic_control)
+
+
+def restore_state_from_observation(env, obs):
+    """Restore environment state from observation (Classic Control only)."""
+    if hasattr(env.unwrapped, 'state'):
+        env.unwrapped.state = obs.copy()
+    else:
+        raise ValueError(f"Environment {type(env)} does not support state restoration from observation")
+
+
+def generate_trajectory_from_state(env, model, initial_obs, gamma: float = 0.99, deterministic: bool = False) -> float:
+    """Generate a single trajectory from an initial state and return discounted return.
+
+    Args:
+        env: Gymnasium environment (single env, not vectorized)
+        model: Trained SB3 model
+        initial_obs: Initial observation to start from
+        gamma: Discount factor
+        deterministic: Whether to use deterministic policy
+
+    Returns:
+        Discounted return for the trajectory
+    """
+    restore_state_from_observation(env, initial_obs)
+
+    obs = initial_obs.copy()
+    done = False
+    truncated = False
+    episode_return = 0.0
+    discount = 1.0
+
+    while not (done or truncated):
+        action, _ = model.predict(obs, deterministic=deterministic)
+        obs, reward, done, truncated, info = env.step(action)
+        episode_return += discount * reward
+        discount *= gamma
+
+    return episode_return
+
+
+def sample_state_pairs(env, config: ExperimentConfig) -> List[Tuple[np.ndarray, np.ndarray]]:
+    """Sample state pairs by resetting environment.
+
+    Args:
+        env: Gymnasium environment
+        config: Experiment configuration
+
+    Returns:
+        List of tuples: (obs1, obs2)
+    """
+    pairs = []
+
+    for _ in range(config.paired_state.n_pairs):
+        # Reset twice to get two different initial states
+        obs1 = env.reset()[0] if isinstance(env.reset(), tuple) else env.reset()
+        obs2 = env.reset()[0] if isinstance(env.reset(), tuple) else env.reset()
+
+        pairs.append((obs1, obs2))
+
+    return pairs
+
+
+def compute_confidence_interval(returns: np.ndarray, confidence: float = 0.95) -> Tuple[float, float]:
+    """Compute confidence interval using t-distribution.
+
+    Args:
+        returns: Array of returns
+        confidence: Confidence level (default 0.95 for 95% CI)
+
+    Returns:
+        (lower_bound, upper_bound)
+    """
+    mean = np.mean(returns)
+    std = np.std(returns, ddof=1)
+    n = len(returns)
+
+    t_value = stats.t.ppf((1 + confidence) / 2, n - 1)
+    margin = t_value * std / np.sqrt(n)
+
+    return mean - margin, mean + margin
+
+
+def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, gamma: float):
+    """Generate paired state evaluations with ground truth confidence intervals.
+
+    Args:
+        config: Experiment configuration
+        model: Trained SB3 model
+        output_dir: Directory where to save results
+        gamma: Discount factor for value computation
+    """
+    if not is_classic_control_env(config.environment.name):
+        print(f"\nSkipping paired state generation: {config.environment.name} is not a Classic Control environment")
+        return
+
+    print(f"\nGenerating paired state evaluations")
+    print(f"Number of pairs: {config.paired_state.n_pairs}")
+    print(f"Trajectories per state: {config.paired_state.n_trajectories_per_state}")
+
+    env = gym.make(config.environment.name)
+    env.reset(seed=config.paired_state.seed)
+
+    print("Sampling state pairs by resetting environment...")
+    state_pairs = sample_state_pairs(env, config)
+
+    print("Generating trajectories from sampled states...")
+
+    results = {
+        'pair_indices': [],
+        'state1_obs': [],
+        'state2_obs': [],
+        's1_returns': [],
+        's2_returns': [],
+        's1_mean': [],
+        's1_std': [],
+        's1_ci_lower': [],
+        's1_ci_upper': [],
+        's2_mean': [],
+        's2_std': [],
+        's2_ci_lower': [],
+        's2_ci_upper': [],
+        'diff_mean': [],
+        'diff_std': [],
+        'diff_ci_lower': [],
+        'diff_ci_upper': [],
+    }
+
+    for pair_idx, (obs1, obs2) in enumerate(tqdm(state_pairs)):
+        s1_returns = []
+        for _ in range(config.paired_state.n_trajectories_per_state):
+            ret = generate_trajectory_from_state(env, model, obs1, gamma=gamma, deterministic=False)
+            s1_returns.append(ret)
+
+        s2_returns = []
+        for _ in range(config.paired_state.n_trajectories_per_state):
+            ret = generate_trajectory_from_state(env, model, obs2, gamma=gamma, deterministic=False)
+            s2_returns.append(ret)
+
+        s1_returns = np.array(s1_returns)
+        s2_returns = np.array(s2_returns)
+
+        s1_mean = np.mean(s1_returns)
+        s1_std = np.std(s1_returns, ddof=1)
+        s1_ci_lower, s1_ci_upper = compute_confidence_interval(s1_returns)
+
+        s2_mean = np.mean(s2_returns)
+        s2_std = np.std(s2_returns, ddof=1)
+        s2_ci_lower, s2_ci_upper = compute_confidence_interval(s2_returns)
+
+        diff_returns = s1_returns - s2_returns
+        diff_mean = np.mean(diff_returns)
+        diff_std = np.std(diff_returns, ddof=1)
+        diff_ci_lower, diff_ci_upper = compute_confidence_interval(diff_returns)
+
+        results['pair_indices'].append(pair_idx)
+        results['state1_obs'].append(obs1)
+        results['state2_obs'].append(obs2)
+        results['s1_returns'].append(s1_returns)
+        results['s2_returns'].append(s2_returns)
+        results['s1_mean'].append(s1_mean)
+        results['s1_std'].append(s1_std)
+        results['s1_ci_lower'].append(s1_ci_lower)
+        results['s1_ci_upper'].append(s1_ci_upper)
+        results['s2_mean'].append(s2_mean)
+        results['s2_std'].append(s2_std)
+        results['s2_ci_lower'].append(s2_ci_lower)
+        results['s2_ci_upper'].append(s2_ci_upper)
+        results['diff_mean'].append(diff_mean)
+        results['diff_std'].append(diff_std)
+        results['diff_ci_lower'].append(diff_ci_lower)
+        results['diff_ci_upper'].append(diff_ci_upper)
+
+    for key in results:
+        if key in ['state1_obs', 'state2_obs', 's1_returns', 's2_returns']:
+            results[key] = np.array(results[key], dtype=object)
+        else:
+            results[key] = np.array(results[key])
+
+    output_path = output_dir / "paired_states.npz"
+    np.savez_compressed(output_path, **results)
+
+    print(f"\nPaired state data saved to {output_path}")
+    print(f"Sample statistics:")
+    print(f"  S1 mean returns: {np.mean(results['s1_mean']):.2f} ± {np.std(results['s1_mean']):.2f}")
+    print(f"  S2 mean returns: {np.mean(results['s2_mean']):.2f} ± {np.std(results['s2_mean']):.2f}")
+    print(f"  Mean difference (V(s1) - V(s2)): {np.mean(results['diff_mean']):.2f} ± {np.std(results['diff_mean']):.2f}")
+    print(f"  Average CI width for differences: {np.mean(results['diff_ci_upper'] - results['diff_ci_lower']):.2f}")
+
+    env.close()
+
+
+def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None, generate_paired: bool = False):
     """Generate n batches of k episodes using trained policy.
 
     Args:
@@ -310,6 +507,10 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     env.close()
 
+    # Generate paired state evaluations if requested
+    if generate_paired:
+        generate_paired_states(config, model, output_dir, gamma=config.value_estimators.training.gamma)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Generate episode data using trained policy")
@@ -322,6 +523,8 @@ def main():
                        help="Skip batches before this index (for resuming interrupted runs)")
     parser.add_argument("--end-batch-idx", type=int, default=None,
                        help="Stop after this batch index (exclusive, default: generate all batches)")
+    parser.add_argument("--generate-paired", action="store_true",
+                       help="Generate paired state evaluations with ground truth CIs")
     args = parser.parse_args()
 
     # Load configuration
@@ -343,7 +546,10 @@ def main():
     config.save(output_dir / "config.yaml")
 
     # Generate data
-    generate_data(config, policy_path, output_dir, start_batch_idx=args.start_batch_idx, end_batch_idx=args.end_batch_idx)
+    generate_data(config, policy_path, output_dir,
+                 start_batch_idx=args.start_batch_idx,
+                 end_batch_idx=args.end_batch_idx,
+                 generate_paired=args.generate_paired)
 
 
 if __name__ == "__main__":

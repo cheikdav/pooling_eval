@@ -214,6 +214,14 @@ class LoggingConfig:
 
 
 @dataclass
+class PairedStateConfig:
+    """Configuration for paired state evaluation (generating ground truth CIs)."""
+    n_pairs: int = 100  # Number of state pairs to sample
+    n_trajectories_per_state: int = 50  # Rollouts per state for CI
+    seed: int = 42
+
+
+@dataclass
 class ExperimentConfig:
     experiment_id: str
     seed: int
@@ -223,6 +231,7 @@ class ExperimentConfig:
     value_estimators: ValueEstimatorsConfig
     network: NetworkConfig
     logging: LoggingConfig
+    paired_state: PairedStateConfig = field(default_factory=PairedStateConfig)
     policy_root: str = "."  # Root directory for policy storage (default: current directory)
     data_root: str = "."  # Root directory for data batches (default: current directory)
     estimators_root: str = "."  # Root directory for estimators (default: current directory)
@@ -292,6 +301,7 @@ class ExperimentConfig:
         data_gen_config = DataGenerationConfig(**config_dict['data_generation'])
         network_config = NetworkConfig(**config_dict['network'])
         logging_config = LoggingConfig(**config_dict['logging'])
+        paired_state_config = PairedStateConfig(**config_dict.get('paired_state', {}))
 
         # Parse value estimators config
         ve_dict = config_dict['value_estimators']
@@ -334,6 +344,7 @@ class ExperimentConfig:
             value_estimators=value_estimators_config,
             network=network_config,
             logging=logging_config,
+            paired_state=paired_state_config,
             policy_root=config_dict.get('policy_root', '.'),
             data_root=config_dict.get('data_root', '.'),
             estimators_root=config_dict.get('estimators_root', '.'),
