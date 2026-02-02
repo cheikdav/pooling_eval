@@ -7,7 +7,7 @@ from common import compute_stats_from_predictions, apply_data_filters
 from plotting import plot_metric_for_single_episodes, plot_metric_evolution
 
 
-def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean):
+def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p=0.2):
     """Render the comparison metrics tab.
 
     Args:
@@ -15,10 +15,11 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         methods: List of methods to display
         baseline_method: Baseline method name
         epsilon: Small value added before taking log
-        dataset_type: 'full' or 'differences'
+        dataset_type: 'full', 'differences', or 'temporal'
         n_buckets: Number of buckets for decile-based metrics
         filter_high_variance: Percentage of top variance states to exclude
         filter_extreme_mean: Percentage of top/bottom mean states to exclude
+        temporal_p: Geometric distribution parameter for temporal differences
     """
     st.header("📈 Comparison Metrics")
 
@@ -54,7 +55,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     stats_dict_single = {}
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods_to_load:
-            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type)
+            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p)
             # Apply data filters
             stats = apply_data_filters(stats, filter_high_variance, filter_extreme_mean)
             stats_dict_single[row['method']] = stats
@@ -70,4 +71,4 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     # Section 2: Evolution across training sizes
     st.subheader("Evolution Across Training Sizes")
 
-    plot_metric_evolution(filtered_metadata, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets)
+    plot_metric_evolution(filtered_metadata, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p)

@@ -139,7 +139,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
         st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets):
+def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p=0.2):
     """Create evolution plot across n_episodes.
 
     Args:
@@ -149,8 +149,9 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
         baseline_method: Baseline method name (for comparison metrics)
         n_episodes_values: List of n_episodes values to plot
         epsilon: Small value added before taking log
-        dataset_type: 'full' or 'differences'
+        dataset_type: 'full', 'differences', or 'temporal'
         n_buckets: Number of buckets for decile-based metrics
+        temporal_p: Geometric distribution parameter for temporal differences
     """
     metric_info = METRICS[metric_key]
     is_comparison = metric_info['is_comparison']
@@ -171,7 +172,8 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             baseline_stats = compute_stats_from_predictions(
                 baseline_row.iloc[0]['predictions_path'],
                 n_ep,
-                dataset_type=dataset_type
+                dataset_type=dataset_type,
+                temporal_p=temporal_p
             )
         else:
             baseline_stats = None
@@ -192,7 +194,8 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             method_stats = compute_stats_from_predictions(
                 method_row.iloc[0]['predictions_path'],
                 n_ep,
-                dataset_type=dataset_type
+                dataset_type=dataset_type,
+                temporal_p=temporal_p
             )
 
             # Compute metric for this method vs baseline

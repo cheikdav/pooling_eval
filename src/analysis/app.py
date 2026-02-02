@@ -20,10 +20,28 @@ def show_selection_filters(metadata_df):
     # Dataset type selection
     dataset_type = st.sidebar.radio(
         "Dataset Type",
-        options=['full', 'differences'],
-        format_func=lambda x: 'Full Dataset' if x == 'full' else 'Paired Differences (S1 - S2)',
-        help="Full: all states | Differences: V(s) - V(s') for 90% of episodes paired with 10%"
+        options=['full', 'differences', 'temporal'],
+        format_func=lambda x: {
+            'full': 'Full Dataset',
+            'differences': 'Paired Differences (S1 - S2)',
+            'temporal': 'Temporal Differences (Within Episode)'
+        }[x],
+        help="Full: all states | Differences: V(s) - V(s') paired across episodes | Temporal: V(s_t) - V(s_{t+δ}) within episodes, δ ~ Geometric(p)"
     )
+
+    # Temporal difference parameter (only show if temporal mode selected)
+    if dataset_type == 'temporal':
+        temporal_p = st.sidebar.slider(
+            "Geometric Parameter (p)",
+            min_value=0.05,
+            max_value=0.5,
+            value=0.2,
+            step=0.05,
+            help="Parameter for geometric distribution: smaller p = larger average gaps"
+        )
+        st.sidebar.caption(f"Average δ ≈ {1/temporal_p:.1f} steps")
+    else:
+        temporal_p = 0.2  # Default value when not in temporal mode
 
     st.sidebar.markdown("---")
 
@@ -103,7 +121,7 @@ def show_selection_filters(metadata_df):
     methods_to_load = list(set(selected_methods + [baseline_method]))
     filtered = filtered[filtered['method'].isin(methods_to_load)]
 
-    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean
+    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p
 
 
 # Main App
@@ -137,7 +155,7 @@ if metadata_df.empty:
     st.stop()
 
 # Sidebar filters
-filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean = show_selection_filters(metadata_df)
+filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p = show_selection_filters(metadata_df)
 
 if not methods:
     st.warning("Please select at least one method")
@@ -153,7 +171,11 @@ with col2:
 with col3:
     st.metric("Baseline", get_method_display_name(baseline_method))
 with col4:
-    dataset_label = "Full" if dataset_type == "full" else "Differences"
+    dataset_label = {
+        'full': 'Full',
+        'differences': 'Differences',
+        'temporal': 'Temporal'
+    }[dataset_type]
     st.metric("Dataset", dataset_label)
 
 if filter_high_variance > 0 or filter_extreme_mean > 0:
@@ -172,13 +194,13 @@ tab1, tab2, tab3 = st.tabs(["Absolute Metrics", "Comparison Metrics", "Episode T
 with tab1:
     tab_absolute.render_tab(
         filtered_metadata, methods, baseline_method, epsilon, dataset_type,
-        n_buckets, filter_high_variance, filter_extreme_mean
+        n_buckets, filter_high_variance, filter_extreme_mean, temporal_p
     )
 
 with tab2:
     tab_comparison.render_tab(
         filtered_metadata, methods, baseline_method, epsilon, dataset_type,
-        n_buckets, filter_high_variance, filter_extreme_mean
+        n_buckets, filter_high_variance, filter_extreme_mean, temporal_p
     )
 
 with tab3:

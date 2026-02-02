@@ -28,7 +28,7 @@ def load_predictions_data(experiments_dir):
 
 
 @st.cache_data
-def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42):
+def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2):
     """Load predictions and compute statistics aggregated across batches.
 
     Memory-efficient: loads raw data, computes stats, then frees raw data.
@@ -37,9 +37,11 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
     Args:
         predictions_path: Path to predictions.parquet file
         n_episodes: Number of episodes (for metadata only)
-        dataset_type: 'full' for all data, 'differences' for paired differences
+        dataset_type: 'full' for all data, 'differences' for paired differences,
+                     'temporal' for within-episode temporal differences
         s1_proportion: Proportion of episodes for S1 partition (used for differences)
         seed: Random seed for episode partitioning
+        temporal_p: Geometric distribution parameter for temporal gaps (used for temporal mode)
 
     Returns:
         DataFrame with columns: state_idx, n_episodes, mean, variance, std, count
@@ -120,6 +122,76 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
 
         del df, df_s1, df_s2, df_merged
         return stats_diff
+
+    elif dataset_type == 'temporal':
+        # Within-episode temporal differences: V(s_t) - V(s_{t+δ}) where δ ~ Geometric(p)
+        # Sample multiple non-overlapping intervals per episode with buffer between them
+        np.random.seed(seed)
+
+        temporal_diffs = []
+
+        for (ep_idx, batch_name), ep_group in df.groupby(['episode_idx', 'batch_name']):
+            # Sort by state_idx to get temporal order within episode
+            ep_group = ep_group.sort_values('state_idx').reset_index(drop=True)
+            episode_length = len(ep_group)
+
+            # Sequentially sample non-overlapping intervals
+            t = 0
+            while t < episode_length:
+                # Sample gap from geometric distribution (returns values >= 1)
+                delta = np.random.geometric(temporal_p)
+
+                # Check if we can create a valid pair
+                if t + delta < episode_length:
+                    state_t = ep_group.iloc[t]['state_idx']
+                    state_t_delta = ep_group.iloc[t + delta]['state_idx']
+                    value_t = ep_group.iloc[t]['predicted_value']
+                    value_t_delta = ep_group.iloc[t + delta]['predicted_value']
+
+                    # Compute difference: V(s_t) - V(s_{t+δ})
+                    difference = value_t - value_t_delta
+
+                    temporal_diffs.append({
+                        'state_idx': state_t,
+                        'paired_state_idx': state_t_delta,
+                        'batch_name': batch_name,
+                        'episode_idx': ep_idx,
+                        'difference': difference,
+                        'delta': delta
+                    })
+
+                    # Move past this interval plus a small buffer
+                    # Buffer is also sampled from geometric to avoid fixed patterns
+                    buffer = np.random.geometric(temporal_p)
+                    t = t + delta + buffer
+                else:
+                    # Can't fit another interval, move to next episode
+                    break
+
+        if not temporal_diffs:
+            # No valid pairs found
+            stats_temporal = pd.DataFrame(columns=['state_idx', 'n_episodes', 'mean', 'variance', 'std', 'count'])
+        else:
+            df_temporal = pd.DataFrame(temporal_diffs)
+
+            # Aggregate statistics on differences by state_idx
+            stats_temporal = df_temporal.groupby('state_idx')['difference'].agg(
+                mean='mean',
+                variance='var',
+                std='std',
+                count='count'
+            ).reset_index()
+
+        stats_temporal['n_episodes'] = n_episodes
+
+        # Add metadata
+        predictions_path_obj = Path(predictions_path)
+        results_dir = str(predictions_path_obj.parent.parent.parent)
+        stats_temporal['predictions_path'] = predictions_path
+        stats_temporal['results_dir'] = results_dir
+
+        del df, temporal_diffs
+        return stats_temporal
 
     else:
         raise ValueError(f"Unknown dataset_type: {dataset_type}")
