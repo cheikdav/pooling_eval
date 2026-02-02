@@ -8,6 +8,7 @@ from common import load_predictions_data, get_method_display_name
 import tab_absolute
 import tab_comparison
 import tab_trajectory
+import tab_paired_states
 
 
 st.set_page_config(page_title="Value Estimator Analysis", layout="wide")
@@ -189,7 +190,7 @@ if filter_high_variance > 0 or filter_extreme_mean > 0:
 st.markdown("---")
 
 # Create tabs
-tab1, tab2, tab3 = st.tabs(["Absolute Metrics", "Comparison Metrics", "Episode Trajectories"])
+tab1, tab2, tab3, tab4 = st.tabs(["Absolute Metrics", "Comparison Metrics", "Episode Trajectories", "Paired States"])
 
 with tab1:
     tab_absolute.render_tab(
@@ -205,6 +206,11 @@ with tab2:
 
 with tab3:
     tab_trajectory.render_tab(
+        filtered_metadata, methods, baseline_method
+    )
+
+with tab4:
+    tab_paired_states.render_tab(
         filtered_metadata, methods, baseline_method
     )
 
