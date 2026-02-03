@@ -9,6 +9,8 @@ from pathlib import Path
 import sys
 import wandb
 from io import StringIO
+import os
+from datetime import datetime
 
 from src.config import ExperimentConfig
 from src.train_estimator import train_estimator
@@ -57,17 +59,34 @@ def main():
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "main.log"
 
-    # Redirect stdout/stderr to log file
-    sys.stdout = open(log_file, 'w', buffering=1)
+    # Check if log file exists and is not empty (means we're re-running)
+    log_exists = log_file.exists() and log_file.stat().st_size > 0
+
+    # Redirect stdout/stderr to log file (append mode to detect re-runs)
+    sys.stdout = open(log_file, 'a', buffering=1)
     sys.stderr = sys.stdout
+
+    # Add separator if this is a re-run
+    if log_exists:
+        print("\n" + "="*80)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Log file exists - this appears to be a re-run!")
+        print("="*80 + "\n")
 
     # Write buffered content to log file
     buffered_content = buffer.getvalue()
     if buffered_content:
         print(buffered_content, end='')
 
-    print(f"Sweep agent {wandb.run.id} starting")
+    # Add agent identification and timestamp
+    agent_idx = os.environ.get('WANDB_AGENT_IDX', None)
+    agent_label = f"Agent {agent_idx}" if agent_idx is not None else f"Agent (unknown index)"
+
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {agent_label} - Sweep run {wandb.run.id} starting")
+    print(f"Agent PID: {os.getpid()}")
+    print(f"Parent PID: {os.getppid()}")
+    print(f"Sweep ID: {sweep_id}")
     print(f"Logs: {log_dir}")
+    print(f"Re-run: {log_exists}")
 
     # Load base config
     config = ExperimentConfig.from_yaml(args.config)
@@ -127,7 +146,7 @@ def main():
         method_config.n_initializations = 1
 
     # Pre-declare all metrics with independent step counters to avoid conflicts in parallel mode
-    print(f"Pre-declaring wandb metrics for {method_config.n_initializations} initializations")
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Pre-declaring wandb metrics for {method_config.n_initializations} initializations")
     for init_idx in range(method_config.n_initializations):
         suffix = f"_{init_idx}"
         # Define independent step counter for this initialization to avoid conflicts in parallel mode
@@ -156,6 +175,10 @@ def main():
     config.save(output_dir / "config.yaml")
 
     # Call core training
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting training...")
+    sys.stdout.flush()
+    sys.stderr.flush()
+
     train_estimator(
         config=config,
         method_config=method_config,
@@ -170,36 +193,51 @@ def main():
         log_dir=log_dir
     )
 
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training completed successfully")
+    sys.stdout.flush()
+    sys.stderr.flush()
+
     # Properly finish wandb run to ensure all data is synced and run is marked complete
-    print(f"\n[DEBUG] About to finish wandb run...")
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Finishing wandb run...")
     sys.stdout.flush()
     sys.stderr.flush()
 
     # Get run directory for offline sync
     if args.wandb_mode == "offline":
         run_dir = str(Path(wandb.run.dir).parent)
-        print(f"[DEBUG] Wandb run directory: {run_dir}")
+        print(f"Wandb run directory: {run_dir}")
 
-    print(f"[DEBUG] Calling wandb.finish()...")
+    wandb_finish_start = datetime.now()
+    print(f"[{wandb_finish_start.strftime('%Y-%m-%d %H:%M:%S')}] Calling wandb.finish()...")
     sys.stdout.flush()
     sys.stderr.flush()
+
     wandb.finish()
-    print(f"[DEBUG] wandb.finish() completed")
+
+    wandb_finish_end = datetime.now()
+    elapsed = (wandb_finish_end - wandb_finish_start).total_seconds()
+    print(f"[{wandb_finish_end.strftime('%Y-%m-%d %H:%M:%S')}] wandb.finish() completed (took {elapsed:.2f}s)")
     sys.stdout.flush()
     sys.stderr.flush()
 
     # Sync offline run to W&B
     if args.wandb_mode == "offline":
-        print(f"[DEBUG] Starting offline sync...")
+        sync_start = datetime.now()
+        print(f"[{sync_start.strftime('%Y-%m-%d %H:%M:%S')}] Starting offline sync...")
+        print(f"Syncing directory: {run_dir}")
         sys.stdout.flush()
         sys.stderr.flush()
-        print(f"[DEBUG] Syncing directory: {run_dir}")
+
         import subprocess
         try:
             subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
-            print(f"[DEBUG] ✓ Successfully synced to W&B")
+            sync_end = datetime.now()
+            elapsed = (sync_end - sync_start).total_seconds()
+            print(f"[{sync_end.strftime('%Y-%m-%d %H:%M:%S')}] ✓ Successfully synced to W&B (took {elapsed:.2f}s)")
         except subprocess.CalledProcessError as e:
-            print(f"[DEBUG] ✗ Warning: Failed to sync offline run")
+            sync_end = datetime.now()
+            elapsed = (sync_end - sync_start).total_seconds()
+            print(f"[{sync_end.strftime('%Y-%m-%d %H:%M:%S')}] ✗ Warning: Failed to sync offline run (took {elapsed:.2f}s)")
             print(f"Error: {e}")
             if e.stdout:
                 print(f"stdout: {e.stdout}")
@@ -207,7 +245,11 @@ def main():
                 print(f"stderr: {e.stderr}")
             print(f"You can manually sync later with: wandb sync {run_dir}")
     else:
-        print(f"[DEBUG] Wandb run finished and synced")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Wandb run finished and synced (online mode)")
+
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Script exiting normally")
+    sys.stdout.flush()
+    sys.stderr.flush()
 
 
 

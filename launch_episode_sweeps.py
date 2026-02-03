@@ -45,6 +45,8 @@ def create_sweep_config(base_config: dict, method: str, episode_count: int, conf
 
 def run_agent(sweep_id: str, config_path: Path, method: str, episode_count: int, agent_idx: int):
     """Run a wandb agent in a subprocess (called via multiprocessing)."""
+    import os
+
     # Load config early to get paths
     config_temp = ExperimentConfig.from_yaml(config_path)
 
@@ -62,6 +64,9 @@ def run_agent(sweep_id: str, config_path: Path, method: str, episode_count: int,
     print(f"Sweep agent starting for {episode_count} episodes (agent {agent_idx})")
     print(f"Sweep ID: {sweep_id}")
     print(f"Logging to: {log_file}\n")
+
+    # Set environment variable so tune_hyperparameters.py can identify which agent it is
+    os.environ['WANDB_AGENT_IDX'] = str(agent_idx)
 
     # Run the agent using wandb Python API
     wandb.agent(sweep_id)

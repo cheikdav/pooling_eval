@@ -9,6 +9,8 @@ import json
 import copy
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
+import os
+from datetime import datetime
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
@@ -412,13 +414,21 @@ def train_initialization_worker(
     original_stdout = sys.stdout
     original_stderr = sys.stderr
 
-    # Redirect to per-init log
+    # Redirect to per-init log (append mode to detect re-runs)
     log_file = log_dir / f"init_{init_idx}.log"
-    log_file_handle = open(log_file, 'w', buffering=1)
+    log_exists = log_file.exists() and log_file.stat().st_size > 0
+    log_file_handle = open(log_file, 'a', buffering=1)
     sys.stdout = log_file_handle
     sys.stderr = log_file_handle
 
-    print(f"[Init {init_idx}] Starting training")
+    # Add separator if this is a re-run
+    if log_exists:
+        print("\n" + "="*80)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Log file exists - this appears to be a re-run!")
+        print("="*80 + "\n")
+
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Init {init_idx}] Starting training")
+    print(f"Process PID: {os.getpid()}")
 
     # Set seeds
     torch.manual_seed(config.seed + init_idx)
@@ -430,7 +440,7 @@ def train_initialization_worker(
         n_episodes, init_idx, use_wandb=use_wandb, sweep_mode=sweep_mode, n_inits=n_inits, log_frequency=config.logging.log_frequency
     )
 
-    print(f"[Init {init_idx}] Complete: MC loss = {final_mc_loss:.6f}")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Init {init_idx}] Complete: MC loss = {final_mc_loss:.6f}")
 
     # Save and return path (can't return model objects across processes)
     model_path = output_dir / f"estimator_init_{init_idx}.pt"
@@ -572,9 +582,12 @@ def train_estimator(
         # Setup log directory for per-init logs (used by both parallel and sequential)
         if log_dir is None:
             # Non-sweep training: logs/estimator/<exp_id>/<method>/<timestamp>/<n_episodes>/batch_<name>/
-            log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / method_name / timestamp / str(n_episodes) / f"batch_{batch_name}"
-            log_dir.mkdir(parents=True, exist_ok=True)
-        print(f"Per-initialization logs: {log_dir}/init_*.log")
+            episode_log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / method_name / timestamp / str(n_episodes) / f"batch_{batch_name}"
+            episode_log_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            # Sweep mode: use provided log_dir
+            episode_log_dir = log_dir
+        print(f"Per-initialization logs: {episode_log_dir}/init_*.log")
 
         # Train all initializations (parallel or sequential)
         if parallel_inits and n_inits > 1:
@@ -591,7 +604,7 @@ def train_estimator(
                     future = executor.submit(
                         train_initialization_worker,
                         init_idx, config, method_config, train_batch, test_batch,
-                        preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir,
+                        preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
                         use_wandb, sweep_mode
                     )
                     futures.append((init_idx, future))
@@ -616,7 +629,7 @@ def train_estimator(
 
                 final_mc_loss, model_path = train_initialization_worker(
                     init_idx, config, method_config, train_batch, test_batch,
-                    preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, log_dir,
+                    preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
                     use_wandb, sweep_mode
                 )
 
