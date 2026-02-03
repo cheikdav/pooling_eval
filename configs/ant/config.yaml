@@ -1,0 +1,70 @@
+# Ant-v4 experiment configuration
+# Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
+
+experiment_id: ant_baseline
+seed: 42
+data_root: /scratch/dc3430/pooling_eval
+results_root: /scratch/dc3430/pooling_eval
+environment:
+  name: Ant-v4
+policy:
+  algorithm: PPO
+  total_timesteps: 2000000
+  learning_rate: 0.0003
+  n_steps: 256
+  batch_size: 128
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.0
+  clip_range: 0.2
+  max_grad_norm: 0.5
+  vf_coef: 0.5
+  n_envs: 32
+  policy_kwargs:
+    net_arch:
+    - pi:
+      - 256
+      - 256
+      vf:
+      - 256
+      - 256
+    activation_fn: tanh
+  use_vec_normalize: true
+  normalize_obs: true
+  normalize_reward: false
+data_generation:
+  n_batches: 50
+  episodes_per_batch: 200
+  deterministic_policy: false
+  n_envs: 64
+  tuning_episodes: 200
+  validation_episodes_per_batch: 50
+  eval_episodes: 100
+value_estimators:
+  training:
+    max_epochs: 50000
+    batch_size: 256
+    convergence_patience: 80
+    convergence_threshold: 0.0001
+    eval_frequency: 20
+    gamma: 0.99
+    shuffle_frequency: 100
+    test_episodes: 50
+  methods:
+  - monte_carlo
+  - dqn
+  - least_squares_mc
+  - least_squares_td
+network:
+  hidden_sizes:
+  - 128
+  - 128
+  activation: relu
+  device: auto
+logging:
+  use_wandb: true
+  wandb_project: pooling-eval
+  wandb_entity: null
+  log_frequency: 20
+  wandb_mode: offline

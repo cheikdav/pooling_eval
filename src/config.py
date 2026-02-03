@@ -287,9 +287,45 @@ class ExperimentConfig:
 
     @classmethod
     def from_yaml(cls, path: Path) -> "ExperimentConfig":
-        """Load configuration from YAML file."""
+        """Load configuration from YAML file.
+
+        Supports two formats:
+        1. Legacy: All config in a single file with method_configs list
+        2. New: Main config with 'methods' list, loads each method from <method_name>.yaml
+        """
+        path = Path(path)
         with open(path, 'r') as f:
             config_dict = yaml.safe_load(f)
+
+        # Check if using new format (methods list instead of method_configs)
+        if 'value_estimators' in config_dict:
+            ve_dict = config_dict['value_estimators']
+            if 'methods' in ve_dict and 'method_configs' not in ve_dict:
+                # New format: load method configs from separate files
+                method_configs = []
+                config_dir = path.parent
+
+                for method_name in ve_dict['methods']:
+                    method_file = config_dir / f"{method_name}.yaml"
+                    if not method_file.exists():
+                        raise FileNotFoundError(
+                            f"Method config file not found: {method_file}\n"
+                            f"Expected file for method '{method_name}' in {config_dir}"
+                        )
+
+                    with open(method_file, 'r') as f:
+                        method_dict = yaml.safe_load(f)
+
+                    # Add name if not present (use filename)
+                    if 'name' not in method_dict:
+                        method_dict['name'] = method_name
+
+                    method_configs.append(method_dict)
+
+                # Replace methods list with loaded method_configs
+                ve_dict['method_configs'] = method_configs
+                del ve_dict['methods']
+
         return cls.from_dict(config_dict)
 
     @classmethod

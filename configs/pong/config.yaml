@@ -1,0 +1,62 @@
+# ALE/Pong-v5 experiment configuration
+# Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
+
+experiment_id: pong_test
+seed: 42
+data_root: /scratch/dc3430/pooling_eval
+results_root: /scratch/dc3430/pooling_eval
+environment:
+  name: ALE/Pong-v5
+policy:
+  algorithm: PPO
+  total_timesteps: 2000000
+  learning_rate: 0.00025
+  n_steps: 128
+  batch_size: 256
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_envs: 8
+  clip_range: 0.1
+  ent_coef: 0.01
+  max_grad_norm: 0.5
+  vf_coef: 0.5
+data_generation:
+  n_batches: 50
+  episodes_per_batch: 200
+  deterministic_policy: false
+  n_envs: 16
+  tuning_episodes: 200
+  validation_episodes_per_batch: 50
+  eval_episodes: 100
+value_estimators:
+  training:
+    max_epochs: 80000
+    batch_size: 512
+    convergence_patience: 50
+    convergence_threshold: 0.0001
+    eval_frequency: 10
+    gamma: 0.99
+    episode_subsets:
+    - 50
+    - 100
+    - 150
+    - 200
+    shuffle_frequency: 100
+    test_episodes: 50
+  methods:
+  - monte_carlo
+  - dqn
+  - least_squares_mc
+  - least_squares_td
+network:
+  hidden_sizes:
+  - 512
+  activation: relu
+  device: auto
+logging:
+  use_wandb: true
+  wandb_project: pooling-eval
+  wandb_entity: null
+  log_frequency: 100
+  wandb_mode: offline

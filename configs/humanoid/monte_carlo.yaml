@@ -1,0 +1,17 @@
+name: monte_carlo
+type: monte_carlo
+learning_rate:
+  default: 0.0002
+  50: 0.005
+  100: 0.0035
+  200: 0.0015
+  400: 0.004
+  600: 0.00015
+batch_size:
+  default: 512
+  50: 128
+  100: 64
+  200: 512
+  400: 512
+  600: 64
+n_initializations: 1

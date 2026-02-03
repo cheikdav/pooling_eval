@@ -182,16 +182,34 @@ The codebase is organized into two main parts:
 
 ### Configuration System (src/config.py)
 
-All experiments are defined by a YAML config file that gets parsed into nested dataclasses:
+All experiments are defined by YAML config files organized in environment-specific directories. Each experiment has:
 
+**Directory Structure:**
+```
+configs/
+  <environment_name>/
+    config.yaml              # Main config (shared parameters)
+    monte_carlo.yaml         # Method-specific parameters
+    dqn.yaml
+    least_squares_mc.yaml
+    least_squares_td.yaml
+```
+
+**Main Config (config.yaml):**
 - **ExperimentConfig**: Top-level container
   - **EnvironmentConfig**: Gymnasium environment name
   - **PolicyConfig**: SB3 algorithm and hyperparameters
   - **DataGenerationConfig**: Number of batches and episodes per batch
-  - **ValueEstimatorsConfig**: Which methods to evaluate + training hyperparameters
-    - **MonteCarloConfig**, **DQNConfig**: Method-specific parameters
+  - **ValueEstimatorsConfig**: Shared training parameters + list of methods to load
   - **NetworkConfig**: Neural network architecture (hidden sizes, activation)
   - **LoggingConfig**: Weights & Biases settings
+
+**Method Config Files (e.g., monte_carlo.yaml):**
+- **Type**: Estimator type (monte_carlo, dqn, least_squares_mc, least_squares_td)
+- **Method-specific parameters**: Learning rate, n_initializations, target_update_rate, etc.
+
+**Legacy Format Support:**
+The system also supports legacy configs with all parameters in a single file using `method_configs` list.
 
 ### Data Pipeline
 
@@ -401,10 +419,25 @@ wandb sync experiments/<exp_id>/wandb_offline/<run-directory>
 
 ### Creating a New Experiment
 
-1. Copy and edit config: `cp configs/example_config.yaml configs/my_experiment.yaml`
-2. Change `experiment_id` to avoid overwriting previous results
-3. Adjust environment, policy algorithm, timesteps, etc.
-4. Run pipeline: `./run_experiment.sh` (update CONFIG variable first)
+**Using new directory structure (recommended):**
+1. Create a new directory: `mkdir configs/my_experiment`
+2. Copy and edit main config: `cp configs/cartpole/config.yaml configs/my_experiment/config.yaml`
+3. Copy method configs: `cp configs/cartpole/*.yaml configs/my_experiment/` (excluding config.yaml)
+4. Edit `configs/my_experiment/config.yaml`:
+   - Change `experiment_id` to avoid overwriting previous results
+   - Adjust environment, policy algorithm, timesteps, etc.
+   - Update `value_estimators.methods` list to add/remove methods
+5. Edit method configs (e.g., `monte_carlo.yaml`) to adjust method-specific parameters
+6. Run pipeline: `uv run -m src.train_policy --config configs/my_experiment/config.yaml`
+
+**Using legacy single-file format:**
+1. Copy an existing config: `cp configs/test_config.yaml configs/my_experiment.yaml`
+2. Edit the file with all parameters in one place
+3. Keep `method_configs` list for method definitions
+
+**Referencing configs:**
+- Directory format: `--config configs/cartpole/config.yaml`
+- Legacy format: `--config configs/test_config.yaml`
 
 ### Debugging Training Issues
 

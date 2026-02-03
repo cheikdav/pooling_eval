@@ -1,0 +1,5 @@
+name: dqn
+type: dqn
+learning_rate: 0.0003
+n_initializations: 2
+target_update_rate: 0.01
