@@ -366,9 +366,11 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
         results['diff_ci_upper'].append(diff_ci_upper)
 
     for key in results:
-        if key in ['state1_obs', 'state2_obs', 's1_returns', 's2_returns']:
+        if key in ['s1_returns', 's2_returns']:
+            # Returns are variable-length trajectories, need object dtype
             results[key] = np.array(results[key], dtype=object)
         else:
+            # Everything else (including state1_obs, state2_obs) can be regular arrays
             results[key] = np.array(results[key])
 
     output_path = output_dir / "paired_states.npz"

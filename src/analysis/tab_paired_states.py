@@ -64,28 +64,28 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
     paired_data = np.load(paired_states_file, allow_pickle=True)
 
-    # Load predictions from each method
+    # Load paired predictions from each method
     predictions_data = {}
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods:
             method = row['method']
             predictions_path = Path(row['predictions_path'])
 
-            # Load predictions
-            pred_df = pd.read_parquet(predictions_path)
+            # Try to load paired predictions
+            paired_predictions_path = predictions_path.parent / "paired_predictions.parquet"
 
-            # Get unique states from the predictions (we need to match with paired states)
-            # For now, we'll need to predict on paired states specifically
-            # This requires modifying evaluate.py, but let's show what we can with current data
-
-            predictions_data[method] = pred_df
+            if paired_predictions_path.exists():
+                # Load paired predictions
+                pred_df = pd.read_parquet(paired_predictions_path)
+                predictions_data[method] = pred_df
+            else:
+                # No paired predictions available for this method
+                pass
 
     if not predictions_data:
-        st.error("No prediction data available")
-        return
-
-    # Check if we have paired predictions (from evaluate.py update we'll do later)
-    # For now, just show the ground truth statistics
+        st.warning("No paired prediction data available yet. Run evaluation to generate paired predictions: `uv run -m src.evaluate --config <config>`")
+        st.info("Note: Regular evaluation batch predictions exist, but paired state predictions require a separate data generation step.")
+        # Still show ground truth statistics even without predictions
 
     if mode == 'full':
         render_full_dataset_mode(paired_data, predictions_data, methods, selected_n_ep)
@@ -154,7 +154,79 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.info("**Note:** Prediction evaluation will be available after implementing paired state predictions in evaluate.py")
+    # If we have predictions, show evaluation metrics
+    if predictions_data:
+        st.markdown("### Prediction Evaluation")
+
+        # Compute metrics for each method
+        metrics_data = []
+        for method, pred_df in predictions_data.items():
+            # Extract s1 and s2 predictions, averaging over batches
+            avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
+
+            # Combine all predictions
+            all_pred = np.concatenate([avg_pred['s1_predicted'].values, avg_pred['s2_predicted'].values])
+
+            # Compute metrics
+            errors = all_pred - all_gt_means
+            mse = np.mean(errors**2)
+            mae = np.mean(np.abs(errors))
+
+            # Coverage: fraction of predictions within CI
+            in_ci_mask = (all_pred >= all_gt_ci_lower) & (all_pred <= all_gt_ci_upper)
+            coverage = np.mean(in_ci_mask)
+
+            metrics_data.append({
+                'Method': get_method_display_name(method),
+                'MSE': mse,
+                'MAE': mae,
+                'Coverage (95% CI)': coverage * 100
+            })
+
+        metrics_df = pd.DataFrame(metrics_data)
+        st.dataframe(metrics_df.style.format({
+            'MSE': '{:.4f}',
+            'MAE': '{:.4f}',
+            'Coverage (95% CI)': '{:.2f}%'
+        }), use_container_width=True)
+
+        # Scatter plot: Predictions vs Ground Truth for each method
+        st.markdown("### Predictions vs Ground Truth")
+
+        for method, pred_df in predictions_data.items():
+            avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
+            all_pred = np.concatenate([avg_pred['s1_predicted'].values, avg_pred['s2_predicted'].values])
+
+            fig = go.Figure()
+
+            # Add scatter plot
+            fig.add_trace(go.Scatter(
+                x=all_gt_means,
+                y=all_pred,
+                mode='markers',
+                marker=dict(size=5, opacity=0.5),
+                name=get_method_display_name(method)
+            ))
+
+            # Add diagonal line
+            min_val = min(all_gt_means.min(), all_pred.min())
+            max_val = max(all_gt_means.max(), all_pred.max())
+            fig.add_trace(go.Scatter(
+                x=[min_val, max_val],
+                y=[min_val, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray'),
+                name='Perfect Prediction',
+                showlegend=True
+            ))
+
+            fig.update_layout(
+                title=f"{get_method_display_name(method)} - Predictions vs Ground Truth",
+                xaxis_title="Ground Truth Mean",
+                yaxis_title="Predicted Value",
+                height=400
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 
 def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
@@ -271,4 +343,76 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.info("**Note:** Prediction evaluation will be available after implementing paired state predictions in evaluate.py")
+    # If we have predictions, show evaluation metrics
+    if predictions_data:
+        st.markdown("### Prediction Evaluation for Differences")
+
+        # Compute metrics for each method
+        metrics_data = []
+        for method, pred_df in predictions_data.items():
+            # Average predictions over batches
+            avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
+
+            # Compute metrics
+            errors = avg_pred - diff_means
+            mse = np.mean(errors**2)
+            mae = np.mean(np.abs(errors))
+
+            # Coverage: fraction of predicted differences within CI
+            in_ci_mask = (avg_pred >= diff_ci_lower) & (avg_pred <= diff_ci_upper)
+            coverage = np.mean(in_ci_mask)
+
+            metrics_data.append({
+                'Method': get_method_display_name(method),
+                'MSE': mse,
+                'MAE': mae,
+                'Coverage (95% CI)': coverage * 100
+            })
+
+        metrics_df = pd.DataFrame(metrics_data)
+        st.dataframe(metrics_df.style.format({
+            'MSE': '{:.4f}',
+            'MAE': '{:.4f}',
+            'Coverage (95% CI)': '{:.2f}%'
+        }), use_container_width=True)
+
+        # Scatter plot: Predicted differences vs Ground Truth for each method
+        st.markdown("### Predicted Differences vs Ground Truth")
+
+        for method, pred_df in predictions_data.items():
+            avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
+
+            fig = go.Figure()
+
+            # Add scatter plot
+            fig.add_trace(go.Scatter(
+                x=diff_means,
+                y=avg_pred,
+                mode='markers',
+                marker=dict(size=5, opacity=0.5),
+                name=get_method_display_name(method)
+            ))
+
+            # Add diagonal line
+            min_val = min(diff_means.min(), avg_pred.min())
+            max_val = max(diff_means.max(), avg_pred.max())
+            fig.add_trace(go.Scatter(
+                x=[min_val, max_val],
+                y=[min_val, max_val],
+                mode='lines',
+                line=dict(dash='dash', color='gray'),
+                name='Perfect Prediction',
+                showlegend=True
+            ))
+
+            # Add zero line
+            fig.add_hline(y=0, line_dash="dot", line_color="red", opacity=0.5)
+            fig.add_vline(x=0, line_dash="dot", line_color="red", opacity=0.5)
+
+            fig.update_layout(
+                title=f"{get_method_display_name(method)} - V(s₁) - V(s₂) Predictions vs Ground Truth",
+                xaxis_title="Ground Truth Difference Mean",
+                yaxis_title="Predicted Difference",
+                height=400
+            )
+            st.plotly_chart(fig, use_container_width=True)
