@@ -10,10 +10,8 @@ from typing import Dict
 from datetime import datetime
 
 from src.config import ExperimentConfig
-from src.estimators.monte_carlo import MonteCarloEstimator
-from src.estimators.dqn import DQNEstimator
-from src.estimators.least_squares_mc import LeastSquaresMCEstimator
-from src.estimators.least_squares_td import LeastSquaresTDEstimator
+from src.estimators.neural_net import MonteCarloEstimator, DQNEstimator
+from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTDEstimator
 
 
 # Mapping from method names to estimator classes

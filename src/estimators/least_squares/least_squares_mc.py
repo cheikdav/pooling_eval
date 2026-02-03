@@ -3,7 +3,7 @@
 import torch
 from typing import Dict, Any
 
-from src.estimators.base import LeastSquaresEstimator
+from .base import LeastSquaresEstimator
 
 
 class LeastSquaresMCEstimator(LeastSquaresEstimator):

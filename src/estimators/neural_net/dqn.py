@@ -4,7 +4,7 @@ import torch
 from typing import Dict, Any
 import copy
 
-from src.estimators.base import NeuralNetEstimator
+from .base import NeuralNetEstimator
 
 
 class DQNEstimator(NeuralNetEstimator):

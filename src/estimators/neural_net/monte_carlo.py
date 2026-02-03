@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from typing import Dict, Any
 
-from src.estimators.base import NeuralNetEstimator
+from .base import NeuralNetEstimator
 
 
 class MonteCarloEstimator(NeuralNetEstimator):

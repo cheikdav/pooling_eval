@@ -1,11 +1,9 @@
 """Value estimators for reinforcement learning."""
 
 from typing import Type, Dict
-from src.estimators.base import ValueEstimator, NeuralNetEstimator, LeastSquaresEstimator
-from src.estimators.monte_carlo import MonteCarloEstimator
-from src.estimators.dqn import DQNEstimator
-from src.estimators.least_squares_mc import LeastSquaresMCEstimator
-from src.estimators.least_squares_td import LeastSquaresTDEstimator
+from src.estimators.base import ValueEstimator
+from src.estimators.neural_net import NeuralNetEstimator, MonteCarloEstimator, DQNEstimator
+from src.estimators.least_squares import LeastSquaresEstimator, LeastSquaresMCEstimator, LeastSquaresTDEstimator
 from src.config import MonteCarloConfig, DQNConfig, LeastSquaresMCConfig, LeastSquaresTDConfig, BaseEstimatorConfig
 
 # Registry mapping config class to estimator class
