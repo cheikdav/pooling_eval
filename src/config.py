@@ -136,6 +136,7 @@ class BaseEstimatorConfig:
     n_initializations: Union[int, Dict] = 1  # Number of random initializations to try
     max_epochs: Optional[Union[int, Dict]] = None  # Override global max_epochs if set
     feature_extractor: Optional[FeatureExtractorConfig] = None  # Feature extraction config
+    network: Optional['NetworkConfig'] = None  # Method-specific network config (overrides global if set)
 
     def resolve_for_episodes(self, num_episodes: int) -> "BaseEstimatorConfig":
         """Create a copy of this config with all parameters resolved for a specific episode count.
@@ -164,6 +165,22 @@ class BaseEstimatorConfig:
                 setattr(resolved, field_name, resolve_param_for_episodes(current_value, num_episodes))
 
         return resolved
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to JSON-serializable dictionary."""
+        from dataclasses import asdict, is_dataclass
+
+        result = {}
+        for key, value in self.__dict__.items():
+            if value is None:
+                continue
+            elif is_dataclass(value):
+                result[key] = asdict(value)
+            elif isinstance(value, Enum):
+                result[key] = value.value
+            else:
+                result[key] = value
+        return result
 
 
 @dataclass
@@ -370,6 +387,9 @@ class ExperimentConfig:
                     if key == 'feature_extractor' and isinstance(value, dict):
                         # Parse nested FeatureExtractorConfig
                         cleaned_dict[key] = FeatureExtractorConfig(**value)
+                    elif key == 'network' and isinstance(value, dict):
+                        # Parse nested NetworkConfig
+                        cleaned_dict[key] = NetworkConfig(**value)
                     elif isinstance(value, dict):
                         # Convert integer keys to strings
                         cleaned_value = {str(k): v for k, v in value.items()}

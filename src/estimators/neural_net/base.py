@@ -40,14 +40,25 @@ class NeuralNetEstimator(ValueEstimator):
             device=network_config.device
         )
 
+        # Use method-specific network config if provided, otherwise use global
+        if method_config.network is not None:
+            hidden_sizes = method_config.network.hidden_sizes
+            activation = method_config.network.activation
+            # Device still comes from global network config
+            device = method_config.network.device if hasattr(method_config.network, 'device') and method_config.network.device else network_config.device
+        else:
+            hidden_sizes = network_config.hidden_sizes
+            activation = network_config.activation
+            device = network_config.device
+
         common_params = {
             'obs_dim': obs_dim,
-            'hidden_sizes': network_config.hidden_sizes,
+            'hidden_sizes': hidden_sizes,
             'discount_factor': gamma,
             'feature_extractor': feature_extractor,
-            'activation': network_config.activation,
+            'activation': activation,
             'learning_rate': method_config.learning_rate,
-            'device': network_config.device,
+            'device': device,
         }
 
         specific_params = cls._get_method_specific_params(method_config)

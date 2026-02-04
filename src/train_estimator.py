@@ -7,6 +7,7 @@ import torch
 import wandb
 import json
 import copy
+from dataclasses import asdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import multiprocessing as mp
 import os
@@ -697,7 +698,7 @@ def train_estimator(
             'max_epochs': config.value_estimators.training.max_epochs,
             'convergence_threshold': config.value_estimators.training.convergence_threshold,
             'convergence_patience': config.value_estimators.training.convergence_patience,
-            'estimator_config': method_config.__dict__,
+            'estimator_config': asdict(method_config),
             'network_config': {
                 'hidden_sizes': config.network.hidden_sizes,
                 'activation': config.network.activation,

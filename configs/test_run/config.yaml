@@ -1,0 +1,66 @@
+# Minimal testing configuration for fast iteration
+# Uses CartPole with minimal data generation and 1 init per estimator
+
+experiment_id: "test_run"
+seed: 42
+
+# Environment configuration
+environment:
+  name: "CartPole-v1"
+
+# Policy training (Stable Baselines 3)
+policy:
+  algorithm: "PPO"
+  total_timesteps: 5000
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_envs: 4
+
+# Data generation (minimal)
+data_generation:
+  n_batches: 2
+  episodes_per_batch: 50
+  deterministic_policy: false
+  n_envs: 8
+  tuning_episodes: 50
+  validation_episodes_per_batch: 25
+  eval_episodes: 50
+
+# Value estimator training
+value_estimators:
+  # Shared training parameters
+  training:
+    max_epochs: 1000
+    batch_size: 64
+    convergence_patience: 20
+    convergence_threshold: 1.0e-4
+    eval_frequency: 10
+    gamma: 0.99
+    episode_subsets: [25, 50]
+    shuffle_frequency: 50
+    test_episodes: 10
+
+  methods:
+  - monte_carlo
+  - dqn
+  - least_squares_mc
+  - least_squares_td
+  - nnls_mc
+  - nnls_td
+
+# Network architecture
+network:
+  hidden_sizes: [64, 64]
+  activation: "relu"
+  device: "auto"
+
+# Logging
+logging:
+  use_wandb: true
+  wandb_project: "pooling-eval"
+  wandb_entity: null
+  log_frequency: 1
