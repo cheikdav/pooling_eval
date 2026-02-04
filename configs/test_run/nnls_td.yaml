@@ -8,7 +8,7 @@ feature_extractor:
   type: policy_representation
   normalize: true
   policy_path: null
-  algorithm: PPO
+  algorithm: SAC
 network:
   hidden_sizes: []
   activation: relu

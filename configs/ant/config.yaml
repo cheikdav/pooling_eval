@@ -8,31 +8,22 @@ results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Ant-v4
 policy:
-  algorithm: PPO
-  total_timesteps: 2000000
+  algorithm: SAC
+  total_timesteps: 1000000
   learning_rate: 0.0003
-  n_steps: 256
-  batch_size: 128
-  n_epochs: 10
+  batch_size: 256
   gamma: 0.99
-  gae_lambda: 0.95
-  ent_coef: 0.0
-  clip_range: 0.2
-  max_grad_norm: 0.5
-  vf_coef: 0.5
+  learning_starts: 10000
+  buffer_size: 1000000
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1
   n_envs: 32
   policy_kwargs:
     net_arch:
-    - pi:
-      - 256
-      - 256
-      vf:
-      - 256
-      - 256
-    activation_fn: tanh
-  use_vec_normalize: true
-  normalize_obs: true
-  normalize_reward: false
+    - 256
+    - 256
+  use_vec_normalize: false
 data_generation:
   n_batches: 50
   episodes_per_batch: 200

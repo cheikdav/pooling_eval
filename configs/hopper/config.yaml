@@ -8,31 +8,22 @@ results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Hopper-v4
 policy:
-  algorithm: PPO
+  algorithm: SAC
   total_timesteps: 1000000
-  learning_rate: 9.80828e-05
-  n_steps: 16
-  batch_size: 32
-  n_epochs: 5
-  gamma: 0.999
-  gae_lambda: 0.99
-  ent_coef: 0.00229519
-  clip_range: 0.2
-  max_grad_norm: 0.7
-  vf_coef: 0.835671
+  learning_rate: 0.0003
+  batch_size: 256
+  gamma: 0.99
+  learning_starts: 10000
+  buffer_size: 1000000
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1
   n_envs: 32
   policy_kwargs:
     net_arch:
-    - pi:
-      - 256
-      - 256
-      vf:
-      - 256
-      - 256
-    activation_fn: relu
-  use_vec_normalize: true
-  normalize_obs: true
-  normalize_reward: true
+    - 256
+    - 256
+  use_vec_normalize: false
 data_generation:
   n_batches: 50
   episodes_per_batch: 200

@@ -8,31 +8,22 @@ results_root: /scratch/dc3430/pooling_eval
 environment:
   name: HalfCheetah-v4
 policy:
-  algorithm: PPO
+  algorithm: SAC
   total_timesteps: 1000000
-  learning_rate: 2.0633e-05
-  n_steps: 64
-  batch_size: 64
-  n_epochs: 20
-  gamma: 0.98
-  gae_lambda: 0.92
-  ent_coef: 0.000401762
-  clip_range: 0.1
-  max_grad_norm: 0.8
-  vf_coef: 0.58096
+  learning_rate: 0.0003
+  batch_size: 256
+  gamma: 0.99
+  learning_starts: 10000
+  buffer_size: 1000000
+  tau: 0.005
+  train_freq: 1
+  gradient_steps: 1
   n_envs: 32
   policy_kwargs:
     net_arch:
-    - pi:
-      - 64
-      - 64
-      vf:
-      - 64
-      - 64
-    activation_fn: tanh
-  use_vec_normalize: true
-  normalize_obs: true
-  normalize_reward: false
+    - 256
+    - 256
+  use_vec_normalize: false
 data_generation:
   n_batches: 50
   episodes_per_batch: 200
