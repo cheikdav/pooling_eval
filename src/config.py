@@ -98,12 +98,27 @@ class ValueEstimatorTrainingConfig:
     test_episodes: int = 0  # Number of episodes to sample from validation batch for test set (0 = no test set)
 
 
+class FeatureExtractorType(str, Enum):
+    """Enum for feature extractor types."""
+    IDENTITY = "identity"
+    POLICY_REPRESENTATION = "policy_representation"
+
+
 class EstimatorType(str, Enum):
     """Enum for estimator types."""
     MONTE_CARLO = "monte_carlo"
     DQN = "dqn"
     LEAST_SQUARES_MC = "least_squares_mc"
     LEAST_SQUARES_TD = "least_squares_td"
+
+
+@dataclass
+class FeatureExtractorConfig:
+    """Configuration for feature extraction."""
+    type: FeatureExtractorType = FeatureExtractorType.IDENTITY
+    normalize: bool = True
+    policy_path: Optional[str] = None  # Required for policy_representation type
+    algorithm: Optional[str] = None  # Required for policy_representation type (PPO, A2C, SAC, TD3)
 
 
 @dataclass
@@ -120,6 +135,7 @@ class BaseEstimatorConfig:
     batch_size: Optional[Union[int, Dict]] = None  # Override global batch_size if set
     n_initializations: Union[int, Dict] = 1  # Number of random initializations to try
     max_epochs: Optional[Union[int, Dict]] = None  # Override global max_epochs if set
+    feature_extractor: Optional[FeatureExtractorConfig] = None  # Feature extraction config
 
     def resolve_for_episodes(self, num_episodes: int) -> "BaseEstimatorConfig":
         """Create a copy of this config with all parameters resolved for a specific episode count.
@@ -165,8 +181,6 @@ class DQNConfig(BaseEstimatorConfig):
 @dataclass
 class LeastSquaresMCConfig(BaseEstimatorConfig):
     """Least Squares Monte Carlo estimator configuration."""
-    policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
-    algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
     ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
     preprocess_fraction: Union[float, Dict] = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
     n_components: Optional[Union[int, Dict]] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
@@ -175,8 +189,6 @@ class LeastSquaresMCConfig(BaseEstimatorConfig):
 @dataclass
 class LeastSquaresTDConfig(BaseEstimatorConfig):
     """Least Squares Temporal Difference estimator configuration."""
-    policy_path: str = None  # Path to trained policy (.zip file), auto-set if None
-    algorithm: str = "PPO"  # Policy algorithm (PPO, A2C, SAC, TD3)
     ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
     preprocess_fraction: Union[float, Dict] = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
     n_components: Optional[Union[int, Dict]] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
@@ -355,7 +367,10 @@ class ExperimentConfig:
                 # (YAML parses numeric keys as integers, but we need strings for per-episode configs)
                 cleaned_dict = {}
                 for key, value in method_dict.items():
-                    if isinstance(value, dict):
+                    if key == 'feature_extractor' and isinstance(value, dict):
+                        # Parse nested FeatureExtractorConfig
+                        cleaned_dict[key] = FeatureExtractorConfig(**value)
+                    elif isinstance(value, dict):
                         # Convert integer keys to strings
                         cleaned_value = {str(k): v for k, v in value.items()}
                         cleaned_dict[key] = cleaned_value

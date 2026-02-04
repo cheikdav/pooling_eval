@@ -7,7 +7,7 @@ import torch
 import numpy as np
 
 from ..base import ValueEstimator
-from ..feature_extractors import FeatureExtractor, PolicyRepresentationExtractor
+from ..feature_extractors import FeatureExtractor, create_feature_extractor, create_feature_extractor_from_saved_info
 
 class LeastSquaresEstimator(ValueEstimator):
     """Base class for least squares value estimators using policy representations."""
@@ -107,11 +107,10 @@ class LeastSquaresEstimator(ValueEstimator):
         Returns:
             Estimator instance
         """
-        feature_extractor = PolicyRepresentationExtractor(
-            policy_path=method_config.policy_path,
-            algorithm=method_config.algorithm,
-            device=network_config.device,
-            normalize=True
+        feature_extractor = create_feature_extractor(
+            method_config.feature_extractor,
+            obs_dim,
+            device=network_config.device
         )
 
         common_params = {
@@ -271,39 +270,30 @@ class LeastSquaresEstimator(ValueEstimator):
         values = (features_with_bias @ self.w).squeeze(-1)
         return values.cpu().numpy()
 
-    def save(self, path: Path):
-        """Save estimator to disk."""
-        checkpoint = {
-            'feature_extractor_state_dict': self.feature_extractor.state_dict(),
+    def _build_checkpoint(self) -> Dict[str, Any]:
+        """Build checkpoint with least squares specific fields."""
+        checkpoint = super()._build_checkpoint()
+        checkpoint.update({
             'A': self.A,
             'b': self.b,
             'w': self.w,
             'd': self.d,
-            'training_step': self.training_step,
-            'obs_dim': self.obs_dim,
             'hidden_sizes': self.hidden_sizes,
             'activation': self.activation,
             'learning_rate': self.learning_rate,
             'ridge_lambda': self.ridge_lambda,
             'repr_dim': self.repr_dim,
-            'discount_factor': self.discount_factor,
             'use_pca_projection': self.use_pca_projection,
             'n_components': self.n_components,
             'pca_mean': self.pca_mean,
             'pca_components': self.pca_components,
             'working_dim': self.working_dim,
-        }
+        })
+        return checkpoint
 
-        # Save policy path and algorithm if feature extractor is PolicyRepresentationExtractor
-        if isinstance(self.feature_extractor, PolicyRepresentationExtractor):
-            checkpoint['policy_path'] = self.feature_extractor.policy_path
-            checkpoint['algorithm'] = self.feature_extractor.algorithm
-
-        torch.save(checkpoint, path)
-
-    def load(self, path: Path):
-        """Load estimator from disk."""
-        checkpoint = torch.load(path, map_location=self.device)
+    def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
+        """Load least squares specific fields."""
+        super()._load_from_checkpoint_dict(checkpoint)
 
         self.use_pca_projection = checkpoint.get('use_pca_projection', False)
         self.n_components = checkpoint.get('n_components', None)
@@ -311,13 +301,10 @@ class LeastSquaresEstimator(ValueEstimator):
         self.pca_components = checkpoint.get('pca_components', None)
         self.working_dim = checkpoint.get('working_dim', self.repr_dim)
 
-        self.feature_extractor.load_state_dict(checkpoint['feature_extractor_state_dict'])
-
         self.A = checkpoint['A']
         self.b = checkpoint['b']
         self.w = checkpoint['w']
         self.d = checkpoint.get('d', self.working_dim + 1)
-        self.training_step = checkpoint['training_step']
         self.repr_dim = checkpoint['repr_dim']
 
     @classmethod
@@ -338,21 +325,20 @@ class LeastSquaresEstimator(ValueEstimator):
 
         checkpoint = torch.load(path, map_location=device_obj)
 
-        policy_path = checkpoint.get('policy_path')
-        if policy_path is None:
-            raise ValueError("Checkpoint does not contain 'policy_path'. Cannot load LeastSquaresEstimator.")
+        feature_extractor = create_feature_extractor_from_saved_info(
+            checkpoint['feature_extractor_info'],
+            device=device
+        )
 
         estimator = cls(
             obs_dim=checkpoint['obs_dim'],
             discount_factor=checkpoint.get('discount_factor', 0.99),
-            policy_path=policy_path,
-            algorithm=checkpoint['algorithm'],
+            feature_extractor=feature_extractor,
             ridge_lambda=checkpoint.get('ridge_lambda', 1e-6),
             device=device,
             hidden_sizes=checkpoint.get('hidden_sizes', []),
             activation=checkpoint.get('activation', 'relu'),
             learning_rate=checkpoint.get('learning_rate', 0.001),
-            normalize_observations=checkpoint.get('normalize_observations', False),
             use_pca_projection=checkpoint.get('use_pca_projection', False),
             n_components=checkpoint.get('n_components', None)
         )
@@ -363,7 +349,7 @@ class LeastSquaresEstimator(ValueEstimator):
 
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""
-        config = {
+        return {
             'obs_dim': self.obs_dim,
             'hidden_sizes': self.hidden_sizes,
             'activation': self.activation,
@@ -371,8 +357,3 @@ class LeastSquaresEstimator(ValueEstimator):
             'training_step': self.training_step,
             'ridge_lambda': self.ridge_lambda,
         }
-
-        if isinstance(self.feature_extractor, PolicyRepresentationExtractor):
-            config['algorithm'] = self.feature_extractor.algorithm
-
-        return config

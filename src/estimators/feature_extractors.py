@@ -83,6 +83,15 @@ class FeatureExtractor(nn.Module, ABC):
     def get_feature_dim(self) -> int:
         pass
 
+    @abstractmethod
+    def get_save_info(self) -> dict:
+        """Return metadata needed to reconstruct this feature extractor.
+
+        Returns:
+            Dictionary with 'type' key and any type-specific metadata
+        """
+        pass
+
 
 class IdentityExtractor(FeatureExtractor):
     """Returns observations as features."""
@@ -96,6 +105,13 @@ class IdentityExtractor(FeatureExtractor):
 
     def get_feature_dim(self) -> int:
         return self.obs_dim
+
+    def get_save_info(self) -> dict:
+        return {
+            'type': 'identity',
+            'normalize': self.normalize,
+            'obs_dim': self.obs_dim,
+        }
 
 
 class PolicyRepresentationExtractor(FeatureExtractor):
@@ -162,3 +178,80 @@ class PolicyRepresentationExtractor(FeatureExtractor):
 
     def get_feature_dim(self) -> int:
         return self.repr_dim
+
+    def get_save_info(self) -> dict:
+        return {
+            'type': 'policy_representation',
+            'normalize': self.normalize,
+            'policy_path': self.policy_path,
+            'algorithm': self.algorithm,
+        }
+
+
+def create_feature_extractor(config, obs_dim: int, device: str = "auto") -> FeatureExtractor:
+    """Factory function to create feature extractor from config.
+
+    Args:
+        config: FeatureExtractorConfig or None (defaults to IdentityExtractor)
+        obs_dim: Observation dimension
+        device: Device to use
+
+    Returns:
+        FeatureExtractor instance
+    """
+    from src.config import FeatureExtractorConfig, FeatureExtractorType
+
+    if config is None:
+        return IdentityExtractor(obs_dim, normalize=True)
+
+    if not isinstance(config, FeatureExtractorConfig):
+        raise ValueError(f"Expected FeatureExtractorConfig, got {type(config)}")
+
+    if config.type == FeatureExtractorType.IDENTITY:
+        return IdentityExtractor(obs_dim, normalize=config.normalize)
+
+    elif config.type == FeatureExtractorType.POLICY_REPRESENTATION:
+        if config.policy_path is None:
+            raise ValueError("policy_path is required for policy_representation feature extractor")
+        if config.algorithm is None:
+            raise ValueError("algorithm is required for policy_representation feature extractor")
+
+        return PolicyRepresentationExtractor(
+            policy_path=config.policy_path,
+            algorithm=config.algorithm,
+            device=device,
+            normalize=config.normalize
+        )
+
+    else:
+        raise ValueError(f"Unknown feature extractor type: {config.type}")
+
+
+def create_feature_extractor_from_saved_info(save_info: dict, device: str = "auto") -> FeatureExtractor:
+    """Reconstruct a feature extractor from saved metadata.
+
+    Args:
+        save_info: Dictionary returned by FeatureExtractor.get_save_info()
+        device: Device to use
+
+    Returns:
+        FeatureExtractor instance
+    """
+    extractor_type = save_info['type']
+
+    if extractor_type == 'identity':
+        return IdentityExtractor(
+            obs_dim=save_info['obs_dim'],
+            normalize=save_info['normalize']
+        )
+
+    elif extractor_type == 'policy_representation':
+        return PolicyRepresentationExtractor(
+            policy_path=save_info['policy_path'],
+            algorithm=save_info['algorithm'],
+            device=device,
+            normalize=save_info['normalize']
+        )
+
+    else:
+        raise ValueError(f"Unknown feature extractor type: {extractor_type}")

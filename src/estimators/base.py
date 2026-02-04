@@ -117,13 +117,30 @@ class ValueEstimator(ABC):
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         pass
 
-    @abstractmethod
-    def save(self, path: Path):
-        pass
+    def _build_checkpoint(self) -> Dict[str, Any]:
+        """Build checkpoint dictionary. Subclasses override to add extra fields."""
+        return {
+            'feature_extractor_state_dict': self.feature_extractor.state_dict(),
+            'feature_extractor_info': self.feature_extractor.get_save_info(),
+            'training_step': self.training_step,
+            'obs_dim': self.obs_dim,
+            'discount_factor': self.discount_factor,
+        }
 
-    @abstractmethod
+    def save(self, path: Path):
+        """Save estimator to disk."""
+        checkpoint = self._build_checkpoint()
+        torch.save(checkpoint, path)
+
+    def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
+        """Load state from checkpoint dictionary. Subclasses override to load extra fields."""
+        self.feature_extractor.load_state_dict(checkpoint['feature_extractor_state_dict'])
+        self.training_step = checkpoint['training_step']
+
     def load(self, path: Path):
-        pass
+        """Load estimator from disk."""
+        checkpoint = torch.load(path, map_location=self.device)
+        self._load_from_checkpoint_dict(checkpoint)
 
     @classmethod
     @abstractmethod

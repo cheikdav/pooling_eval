@@ -60,36 +60,25 @@ class DQNEstimator(NeuralNetEstimator):
         self.update_target_network()
         return metrics
 
-    def save(self, path):
-        checkpoint = {
-            'value_net_state_dict': self.value_net.state_dict(),
+    def _build_checkpoint(self) -> Dict[str, Any]:
+        """Build checkpoint with DQN specific fields."""
+        checkpoint = super()._build_checkpoint()
+        checkpoint.update({
             'target_net_state_dict': self.target_net.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'feature_extractor_state_dict': self.feature_extractor.state_dict(),
-            'training_step': self.training_step,
             'steps_since_target_update': self.steps_since_target_update,
-            'obs_dim': self.obs_dim,
-            'hidden_sizes': self.hidden_sizes,
-            'activation': self.activation,
-            'learning_rate': self.learning_rate,
-            'discount_factor': self.discount_factor,
             'target_update_rate': self.target_update_rate,
-        }
+        })
+        return checkpoint
 
-        torch.save(checkpoint, path)
-
-    def load(self, path):
-        checkpoint = torch.load(path, map_location=self.device)
-        self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
+    def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
+        """Load DQN specific fields."""
+        super()._load_from_checkpoint_dict(checkpoint)
         self.target_net.load_state_dict(checkpoint['target_net_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.feature_extractor.load_state_dict(checkpoint['feature_extractor_state_dict'])
-        self.training_step = checkpoint['training_step']
         self.steps_since_target_update = checkpoint['steps_since_target_update']
 
     @classmethod
     def load_from_checkpoint(cls, path, device: str = "auto"):
-        from ..feature_extractors import IdentityExtractor
+        from ..feature_extractors import create_feature_extractor_from_saved_info
 
         if device == "auto":
             device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -97,7 +86,11 @@ class DQNEstimator(NeuralNetEstimator):
             device_obj = torch.device(device)
 
         checkpoint = torch.load(path, map_location=device_obj)
-        feature_extractor = IdentityExtractor(checkpoint['obs_dim'], normalize=True)
+
+        feature_extractor = create_feature_extractor_from_saved_info(
+            checkpoint['feature_extractor_info'],
+            device=device
+        )
 
         estimator = cls(
             obs_dim=checkpoint['obs_dim'],

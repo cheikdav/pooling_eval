@@ -53,13 +53,15 @@ def create_estimator(method_config: BaseEstimatorConfig, network_config, obs_dim
     # Resolve hyperparameters for this episode count
     resolved_config = method_config.resolve_for_episodes(num_episodes)
 
-    # Auto-set policy_path for LeastSquares methods if not provided
-    if isinstance(resolved_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and resolved_config.policy_path is None:
-        if experiment_config is None:
-            raise ValueError("experiment_config is required when policy_path is not set in LeastSquares config")
-        policy_path = experiment_config.get_policy_dir() / "policy_final.zip"
-        resolved_config.policy_path = str(policy_path)
-        print(f"Auto-set policy_path to: {policy_path}")
+    # Auto-set policy_path for PolicyRepresentation feature extractors if not provided
+    from src.config import FeatureExtractorType
+    if resolved_config.feature_extractor and resolved_config.feature_extractor.type == FeatureExtractorType.POLICY_REPRESENTATION:
+        if resolved_config.feature_extractor.policy_path is None:
+            if experiment_config is None:
+                raise ValueError("experiment_config is required when policy_path is not set in feature_extractor config")
+            policy_path = experiment_config.get_policy_dir() / "policy_final.zip"
+            resolved_config.feature_extractor.policy_path = str(policy_path)
+            print(f"Auto-set policy_path to: {policy_path}")
 
     EstimatorClass = ESTIMATOR_REGISTRY[type(resolved_config)]
     return EstimatorClass.from_config(resolved_config, network_config, obs_dim, gamma)
