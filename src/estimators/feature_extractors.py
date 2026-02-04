@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from stable_baselines3 import PPO, A2C, SAC, TD3
+from sklearn.kernel_approximation import RBFSampler
 
 
 class RunningNormalizer:
@@ -188,6 +189,46 @@ class PolicyRepresentationExtractor(FeatureExtractor):
         }
 
 
+class RBFExtractor(FeatureExtractor):
+    """Extracts RBF kernel features using sklearn's RBFSampler."""
+
+    def __init__(self, obs_dim: int, n_components: int = 100, gamma: float = 1.0, seed: int = 42, normalize: bool = True):
+        self.obs_dim = obs_dim
+        self.n_components = n_components
+        self.gamma = gamma
+        self.seed = seed
+
+        self.rbf_sampler = RBFSampler(
+            n_components=n_components,
+            gamma=gamma,
+            random_state=seed
+        )
+
+        dummy_obs = np.zeros((1, obs_dim))
+        self.rbf_sampler.fit(dummy_obs)
+
+        super().__init__(normalize=normalize)
+
+    def _forward(self, observations: torch.Tensor) -> torch.Tensor:
+        obs_np = observations.cpu().numpy()
+        features_np = self.rbf_sampler.transform(obs_np)
+        features = torch.from_numpy(features_np).float().to(observations.device)
+        return features
+
+    def get_feature_dim(self) -> int:
+        return self.n_components
+
+    def get_save_info(self) -> dict:
+        return {
+            'type': 'rbf',
+            'normalize': self.normalize,
+            'obs_dim': self.obs_dim,
+            'n_components': self.n_components,
+            'gamma': self.gamma,
+            'seed': self.seed,
+        }
+
+
 def create_feature_extractor(config, obs_dim: int, device: str = "auto") -> FeatureExtractor:
     """Factory function to create feature extractor from config.
 
@@ -223,6 +264,15 @@ def create_feature_extractor(config, obs_dim: int, device: str = "auto") -> Feat
             normalize=config.normalize
         )
 
+    elif config.type == FeatureExtractorType.RBF:
+        return RBFExtractor(
+            obs_dim=obs_dim,
+            n_components=config.n_components if config.n_components is not None else 100,
+            gamma=config.gamma if config.gamma is not None else 1.0,
+            seed=config.seed if config.seed is not None else 42,
+            normalize=config.normalize
+        )
+
     else:
         raise ValueError(f"Unknown feature extractor type: {config.type}")
 
@@ -250,6 +300,15 @@ def create_feature_extractor_from_saved_info(save_info: dict, device: str = "aut
             policy_path=save_info['policy_path'],
             algorithm=save_info['algorithm'],
             device=device,
+            normalize=save_info['normalize']
+        )
+
+    elif extractor_type == 'rbf':
+        return RBFExtractor(
+            obs_dim=save_info['obs_dim'],
+            n_components=save_info['n_components'],
+            gamma=save_info['gamma'],
+            seed=save_info['seed'],
             normalize=save_info['normalize']
         )
 

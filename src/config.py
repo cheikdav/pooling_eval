@@ -107,6 +107,7 @@ class FeatureExtractorType(str, Enum):
     """Enum for feature extractor types."""
     IDENTITY = "identity"
     POLICY_REPRESENTATION = "policy_representation"
+    RBF = "rbf"
 
 
 class EstimatorType(str, Enum):
@@ -124,6 +125,9 @@ class FeatureExtractorConfig:
     normalize: bool = True
     policy_path: Optional[str] = None  # Required for policy_representation type
     algorithm: Optional[str] = None  # Required for policy_representation type (PPO, A2C, SAC, TD3)
+    n_components: Optional[int] = None  # Required for rbf type
+    gamma: Optional[float] = None  # Optional for rbf type (default: 1.0)
+    seed: Optional[int] = None  # Optional for rbf type (default: 42)
 
 
 @dataclass
