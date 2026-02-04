@@ -66,6 +66,11 @@ class PolicyConfig:
     clip_range: float = 0.2  # Clipping parameter for PPO
     max_grad_norm: float = 0.5  # Max gradient norm for gradient clipping
     vf_coef: float = 0.5  # Value function coefficient
+    learning_starts: int = 100  # SAC/DQN: Number of steps before learning starts
+    buffer_size: int = 1000000  # SAC/DQN: Replay buffer size
+    tau: float = 0.005  # SAC/DQN: Soft update coefficient for target networks
+    train_freq: int = 1  # SAC/DQN: Update the model every train_freq steps
+    gradient_steps: int = 1  # SAC/DQN: How many gradient steps per environment step
     policy_kwargs: Dict[str, Any] = field(default_factory=dict)
     kwargs: Dict[str, Any] = field(default_factory=dict)
     use_vec_normalize: bool = False
