@@ -18,45 +18,47 @@ class LeastSquaresMCEstimator(LeastSquaresEstimator):
         """Get method-specific parameters from config."""
         use_pca = method_config.preprocess_fraction > 0.0
         return {
-            'policy_path': method_config.policy_path,
-            'algorithm': method_config.algorithm,
             'ridge_lambda': method_config.ridge_lambda,
             'use_pca_projection': use_pca,
             'n_components': method_config.n_components if use_pca else None,
         }
 
-    def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
+    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
         """Update A and b for Monte Carlo estimation.
 
         Accumulates: A += Φ^T Φ and b += Φ^T y
 
         Args:
-            mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
+            feature_batch: Dictionary containing feature batch data
+            phi: (batch_size, working_dim+1) features with bias
         """
-        targets = mini_batch['mc_returns'].to(self.device).unsqueeze(1)  # (batch_size, 1)
+        targets = feature_batch['mc_returns'].unsqueeze(1)
 
-        # Accumulate: A += Φ^T Φ
         self.A = self.A + phi.T @ phi
-
-        # Accumulate: b += Φ^T y
         self.b = self.b + phi.T @ targets
 
-    def _compute_targets_for_metrics(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
+    def _compute_targets_for_metrics(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
         """Compute Monte Carlo targets for metric evaluation.
 
         Args:
-            mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
+            feature_batch: Dictionary containing feature batch data
+            phi: (batch_size, working_dim+1) features with bias
 
         Returns:
             Monte Carlo returns
         """
-        return mini_batch['mc_returns'].to(self.device)
+        return feature_batch['mc_returns']
 
-    def compute_targets(self, mini_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Compute Monte Carlo targets (for compatibility with evaluate)."""
-        return mini_batch['mc_returns'].to(self.device)
+    def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Compute Monte Carlo targets from feature batch.
+
+        Args:
+            feature_batch: Dictionary with feature data (includes mc_returns)
+
+        Returns:
+            Monte Carlo returns
+        """
+        return feature_batch['mc_returns']
 
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""

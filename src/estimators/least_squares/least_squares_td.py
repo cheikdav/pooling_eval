@@ -28,14 +28,12 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         """Get method-specific parameters from config."""
         use_pca = method_config.preprocess_fraction > 0.0
         return {
-            'policy_path': method_config.policy_path,
-            'algorithm': method_config.algorithm,
             'ridge_lambda': method_config.ridge_lambda,
             'use_pca_projection': use_pca,
             'n_components': method_config.n_components if use_pca else None,
         }
 
-    def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
+    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
         """Update A and b for LSTD estimation.
 
         Accumulates:
@@ -43,92 +41,62 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         - b += Φ^T r
 
         Args:
-            mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
+            feature_batch: Dictionary containing feature batch data
+            phi: (batch_size, working_dim+1) features with bias
         """
-        # Extract next state features with bias
-        next_obs = mini_batch['next_observations'].to(self.device)
-        phi_next = self._get_features(next_obs, add_bias=True)
+        next_features = feature_batch['next_features']
+        phi_next = self._get_features(next_features)
 
-        rewards = mini_batch['rewards'].to(self.device).unsqueeze(1)  # (n, 1)
-        dones = mini_batch['dones'].to(self.device).unsqueeze(1)  # (n, 1)
+        rewards = feature_batch['rewards'].unsqueeze(1)
+        dones = feature_batch['dones'].unsqueeze(1)
 
-        # Compute TD difference features: (Φ - γΦ')
-        # For terminal states, Φ' = 0 (no next state value)
-        gamma_mask = self.discount_factor * (1.0 - dones)  # (n, 1)
-        phi_diff = phi - gamma_mask * phi_next  # (n, d)
+        gamma_mask = self.discount_factor * (1.0 - dones)
+        phi_diff = phi - gamma_mask * phi_next
 
-        # Accumulate: A += Φ^T (Φ - γΦ')
-        self.A = self.A + phi.T @ phi_diff  # (d, n) @ (n, d) = (d, d)
+        self.A = self.A + phi.T @ phi_diff
+        self.b = self.b + phi.T @ rewards
 
-        # Accumulate: b += Φ^T r
-        self.b = self.b + phi.T @ rewards  # (d, n) @ (n, 1) = (d, 1)
-
-    def _compute_targets_for_metrics(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
+    def _compute_targets_for_metrics(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
         """Compute TD targets for metric evaluation.
 
         Args:
-            mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, working_dim+1) features with bias (already includes PCA projection)
+            feature_batch: Dictionary containing feature batch data
+            phi: (batch_size, working_dim+1) features with bias
 
         Returns:
             TD targets: r + γ * V(s') * (1 - done)
         """
-        # Extract next state features with bias
-        next_obs = mini_batch['next_observations'].to(self.device)
-        phi_next = self._get_features(next_obs, add_bias=True)
+        next_features = feature_batch['next_features']
+        phi_next = self._get_features(next_features)
 
-        rewards = mini_batch['rewards'].to(self.device)
-        dones = mini_batch['dones'].to(self.device)
+        rewards = feature_batch['rewards']
+        dones = feature_batch['dones']
 
-        # Compute TD target: r + γ * V(s') * (1 - done)
         next_values = (phi_next @ self.w).squeeze(-1)
         targets = rewards + self.discount_factor * next_values * (1.0 - dones)
 
         return targets
 
-    def compute_targets(self, mini_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Compute TD targets for evaluation."""
-        rewards = mini_batch['rewards'].to(self.device)
-        next_obs = mini_batch['next_observations'].to(self.device)
-        dones = mini_batch['dones'].to(self.device)
+    def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Compute TD targets from feature batch.
+
+        Args:
+            feature_batch: Dictionary with feature data (includes next_features, rewards, dones)
+
+        Returns:
+            TD targets: r + γ * V(s') * (1 - done)
+        """
+        next_features = feature_batch['next_features']
+        phi_next = self._get_features(next_features)
+
+        rewards = feature_batch['rewards']
+        dones = feature_batch['dones']
 
         with torch.no_grad():
-            # Extract next state features with bias
-            phi_next = self._get_features(next_obs, add_bias=True)
             next_values = (phi_next @ self.w).squeeze(-1)
-
-            # TD target: r + γ * V(s') * (1 - done)
             targets = rewards + self.discount_factor * next_values * (1.0 - dones)
 
         return targets
-
-
-    def save(self, path):
-        """Save estimator to disk."""
-        torch.save({
-            'value_net_state_dict': self.value_net.state_dict(),
-            'repr_extractor_state_dict': self.repr_extractor.state_dict(),
-            'A': self.A,
-            'b': self.b,
-            'w': self.w,
-            'training_step': self.training_step,
-            'obs_dim': self.obs_dim,
-            'hidden_sizes': self.hidden_sizes,
-            'activation': self.activation,
-            'learning_rate': self.learning_rate,
-            'normalize_observations': self.normalize_observations,
-            'ridge_lambda': self.ridge_lambda,
-            'algorithm': self.algorithm,
-            'repr_dim': self.repr_dim,
-            'discount_factor': self.discount_factor,
-            'policy_path': self.policy_path,
-            'use_pca_projection': self.use_pca_projection,
-            'n_components': self.n_components,
-            'pca_mean': self.pca_mean,
-            'pca_components': self.pca_components,
-            'working_dim': self.working_dim,
-        }, path)
 
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""

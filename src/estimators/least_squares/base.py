@@ -7,6 +7,7 @@ import torch
 import numpy as np
 
 from ..base import ValueEstimator
+from ..feature_extractors import FeatureExtractor, PolicyRepresentationExtractor
 
 class LeastSquaresEstimator(ValueEstimator):
     """Base class for least squares value estimators using policy representations."""
@@ -15,14 +16,12 @@ class LeastSquaresEstimator(ValueEstimator):
         self,
         obs_dim: int,
         discount_factor: float,
-        policy_path: str,
-        algorithm: str,
+        feature_extractor: FeatureExtractor,
         ridge_lambda: float = 1e-6,
         device: str = "auto",
         hidden_sizes: Optional[list] = None,
         activation: str = "relu",
         learning_rate: float = 0.001,
-        normalize_observations: bool = False,
         use_pca_projection: bool = False,
         n_components: Optional[int] = None
     ):
@@ -31,108 +30,69 @@ class LeastSquaresEstimator(ValueEstimator):
         Args:
             obs_dim: Observation dimension
             discount_factor: Discount factor (gamma)
-            policy_path: Path to trained policy (.zip file)
-            algorithm: Policy algorithm (PPO, A2C, SAC, TD3)
+            feature_extractor: Feature extractor (typically PolicyRepresentationExtractor)
             ridge_lambda: Ridge regularization parameter
             device: Device to use
             hidden_sizes: Not used (kept for compatibility)
             activation: Not used (kept for compatibility)
             learning_rate: Not used (closed-form solution)
-            normalize_observations: Not used
             use_pca_projection: Whether to project features onto top-k eigenvectors
             n_components: Number of eigenvectors to keep (if use_pca_projection=True)
         """
-        super().__init__(obs_dim, discount_factor, device)
+        super().__init__(obs_dim, discount_factor, feature_extractor, device)
 
         self.hidden_sizes = hidden_sizes or []
         self.activation = activation
         self.learning_rate = learning_rate
-        self.normalize_observations = normalize_observations
         self.ridge_lambda = ridge_lambda
-        self.algorithm = algorithm
-        self.policy_path = policy_path
         self.use_pca_projection = use_pca_projection
         self.n_components = n_components
 
-        # Load policy and create representation extractor
-        if policy_path is None:
-            raise ValueError(f"policy_path is required for {self.__class__.__name__}")
+        self.repr_dim = self.feature_extractor.get_feature_dim()
 
-        from src.policy_representations import load_policy_representation_extractor
-        policy_path = Path(policy_path)
-        self.repr_extractor = load_policy_representation_extractor(policy_path, algorithm, device)
-        self.repr_dim = self.repr_extractor.output_dim
-
-        # PCA projection matrices (set during fit_pca_projection or load)
         self.pca_mean = None
-        self.pca_components = None  # Orthonormal basis of top-k eigenvectors
+        self.pca_components = None
 
-        # Working dimension: repr_dim if no PCA, or projected dim if PCA enabled
-        # If PCA enabled, this will be set during fit_pca_projection
         if use_pca_projection:
-            self.working_dim = None  # Will be set when PCA is fitted
-            self.value_net = None    # Will be created after PCA is fitted
+            self.working_dim = None
         else:
             self.working_dim = self.repr_dim
-            self._initialize_value_net()  # Create immediately
+            self._initialize_least_squares()
 
         self.optimizer = None
 
-    def _initialize_value_net(self):
-        """Initialize value network and least squares matrices using working_dim.
+    def _initialize_least_squares(self):
+        """Initialize least squares matrices using working_dim.
 
         Should be called after working_dim is set (either in __init__ or after PCA fitting).
         """
         if self.working_dim is None:
-            raise ValueError("working_dim must be set before initializing value network")
+            raise ValueError("working_dim must be set before initializing least squares")
 
-        print(f"Initializing value network with working dimension: {self.working_dim}")
+        print(f"Initializing least squares with working dimension: {self.working_dim}")
 
-        # Create ValueNetwork with no hidden layers (just input -> output linear layer)
-        self.value_net = ValueNetwork(
-            self.working_dim,
-            hidden_sizes=[],
-            activation='relu',
-            normalize_observations=False
-        ).to(self.device)
-
-        # Initialize weights and bias to zero (single linear layer)
-        linear_layer = self.value_net.network[0]
-        torch.nn.init.zeros_(linear_layer.weight)
-        torch.nn.init.zeros_(linear_layer.bias)
-
-        # Initialize least squares matrices: A = Φ^T Φ + λI, b = Φ^T y
-        self.d = self.working_dim + 1  # +1 for bias
+        self.d = self.working_dim + 1
         self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)
         self.b = torch.zeros(self.d, 1, device=self.device)
         self.w = torch.zeros(self.d, 1, device=self.device)
 
-    def _get_features(self, observations: torch.Tensor, add_bias: bool = True) -> torch.Tensor:
-        """Extract features from observations: repr -> PCA projection (if enabled) -> bias (if requested).
+    def _get_features(self, features: torch.Tensor) -> torch.Tensor:
+        """Apply PCA projection (if enabled) and add bias column.
 
-        This method handles all PCA logic in one place. Child classes don't need to know about PCA.
+        This method handles PCA projection and always adds bias as the last feature.
 
         Args:
-            observations: (batch_size, obs_dim) tensor
-            add_bias: Whether to add bias column (default: True for least squares updates)
+            features: (batch_size, repr_dim) tensor from feature extractor
 
         Returns:
-            features: (batch_size, working_dim) or (batch_size, working_dim+1) with bias
+            features: (batch_size, working_dim+1) tensor with bias as last column
         """
-        # Extract representations from policy network
-        representations = self.repr_extractor(observations)
-
-        # Apply PCA projection if enabled
         if self.use_pca_projection and self.pca_components is not None:
-            centered = representations - self.pca_mean
-            representations = centered @ self.pca_components
+            centered = features - self.pca_mean
+            features = centered @ self.pca_components
 
-        # Add bias column if requested
-        if add_bias:
-            bias = torch.ones(representations.shape[0], 1, device=self.device)
-            return torch.cat([representations, bias], dim=1)
-
-        return representations
+        bias = torch.ones(features.shape[0], 1, device=self.device)
+        return torch.cat([features, bias], dim=1)
 
     @classmethod
     def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
@@ -147,29 +107,26 @@ class LeastSquaresEstimator(ValueEstimator):
         Returns:
             Estimator instance
         """
-        # Common parameters
+        feature_extractor = PolicyRepresentationExtractor(
+            policy_path=method_config.policy_path,
+            algorithm=method_config.algorithm,
+            device=network_config.device,
+            normalize=True
+        )
+
         common_params = {
             'obs_dim': obs_dim,
             'discount_factor': gamma,
+            'feature_extractor': feature_extractor,
             'device': network_config.device,
             'hidden_sizes': network_config.hidden_sizes,
             'activation': network_config.activation,
             'learning_rate': method_config.learning_rate,
         }
 
-        # Get method-specific parameters
         specific_params = cls._get_method_specific_params(method_config)
 
-        # Instantiate with all parameters
         return cls(**common_params, **specific_params)
-
-    def train(self):
-        """Least squares estimators don't have train mode."""
-        pass
-
-    def eval(self):
-        """Least squares estimators don't have eval mode."""
-        pass
 
     def fit_pca_projection(self, preprocess_batch: Dict[str, np.ndarray]):
         """Fit PCA projection using covariance matrix from preprocessing data.
@@ -187,102 +144,79 @@ class LeastSquaresEstimator(ValueEstimator):
         if self.n_components is None:
             raise ValueError("n_components must be set when use_pca_projection=True")
 
-        self.repr_extractor.eval()
+        self.feature_extractor.eval()
 
         with torch.no_grad():
             obs = torch.FloatTensor(preprocess_batch['observations']).to(self.device)
-            representations = self.repr_extractor(obs)  # (n_samples, repr_dim)
+            representations = self.feature_extractor(obs)
 
-            # Center the data
-            self.pca_mean = representations.mean(dim=0, keepdim=True)  # (1, repr_dim)
-            centered = representations - self.pca_mean  # (n_samples, repr_dim)
+            self.pca_mean = representations.mean(dim=0, keepdim=True)
+            centered = representations - self.pca_mean
 
-            # Compute covariance matrix: C = (1/n) * X^T X
             n_samples = centered.shape[0]
-            cov_matrix = (centered.T @ centered) / n_samples  # (repr_dim, repr_dim)
+            cov_matrix = (centered.T @ centered) / n_samples
 
-            # Eigendecomposition (symmetric matrix)
             eigenvalues, eigenvectors = torch.linalg.eigh(cov_matrix)
 
-            # Sort by descending eigenvalues
             sorted_indices = torch.argsort(eigenvalues, descending=True)
             eigenvalues = eigenvalues[sorted_indices]
             eigenvectors = eigenvectors[:, sorted_indices]
 
-            # Keep top k components (already orthonormal from eigh)
             k = min(self.n_components, self.repr_dim)
-            self.pca_components = eigenvectors[:, :k]  # (repr_dim, k)
+            self.pca_components = eigenvectors[:, :k]
 
-            # Set working dimension and initialize value network
             self.working_dim = k
-            self._initialize_value_net()
+            self._initialize_least_squares()
 
             print(f"PCA projection fitted: {self.repr_dim} -> {k} dimensions")
             print(f"Explained variance ratio (top {k}): {eigenvalues[:k].sum() / eigenvalues.sum():.4f}")
 
     @abstractmethod
-    def _update_A_and_b(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
-        """Update A and b matrices based on mini-batch data.
+    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
+        """Update A and b matrices based on feature batch data.
 
         Subclasses implement specific update logic (MC vs TD).
 
         Args:
-            mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, repr_dim+1) representations with bias
+            feature_batch: Dictionary containing feature batch data (features, next_features, rewards, dones, mc_returns)
+            phi: (batch_size, working_dim+1) features with bias
         """
         pass
 
     @abstractmethod
-    def _compute_targets_for_metrics(self, mini_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
+    def _compute_targets_for_metrics(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
         """Compute targets for metric evaluation (not used in update).
 
         Args:
-            mini_batch: Dictionary containing mini-batch data
-            phi: (batch_size, repr_dim+1) representations with bias
+            feature_batch: Dictionary containing feature batch data
+            phi: (batch_size, working_dim+1) features with bias
 
         Returns:
             Target values for computing loss/MAE metrics
         """
         pass
 
-    def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
+    def _train_step(self, feature_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Incremental update by accumulating A and b."""
-        self.repr_extractor.eval()
-
         with torch.no_grad():
-            obs = mini_batch['observations'].to(self.device)
+            features = feature_batch['features']
+            phi = self._get_features(features)
 
-            # Extract features with bias (handles PCA projection automatically)
-            phi = self._get_features(obs, add_bias=True)  # (batch_size, working_dim+1)
+            self._update_A_and_b(feature_batch, phi)
 
-            # Update A and b (method-specific)
-            self._update_A_and_b(mini_batch, phi)
-
-            # Solve: A w = b (with fallback for singular matrices)
             try:
                 self.w = torch.linalg.solve(self.A, self.b)
             except torch._C._LinAlgError:
-                # Matrix is singular, use pseudoinverse as fallback
                 self.w = torch.linalg.lstsq(self.A, self.b, rcond=None).solution
 
-            # Update value_net weights with the solved w
-            # w is (working_dim+1, 1): first working_dim elements are weights, last is bias
-            linear_layer = self.value_net.network[0]
-            linear_layer.weight.data = self.w[:-1].T  # (1, working_dim)
-            linear_layer.bias.data = self.w[-1]       # (1,)
-
-            # Compute predictions and targets for metrics using value_net
-            features = self._get_features(obs, add_bias=False)  # (batch_size, working_dim)
-            values = self.value_net(features).squeeze(-1)
-            targets = self._compute_targets_for_metrics(mini_batch, phi)
+            values = (phi @ self.w).squeeze(-1)
+            targets = self._compute_targets_for_metrics(feature_batch, phi)
 
             loss = torch.nn.functional.mse_loss(values, targets)
             mae = torch.abs(values - targets).mean()
 
-            # Also compute MC loss if available
-            mc_returns = mini_batch.get('mc_returns')
+            mc_returns = feature_batch.get('mc_returns')
             if mc_returns is not None:
-                mc_returns = mc_returns.to(self.device)
                 mc_loss = torch.nn.functional.mse_loss(values, mc_returns)
             else:
                 mc_loss = torch.tensor(0.0)
@@ -309,12 +243,10 @@ class LeastSquaresEstimator(ValueEstimator):
             max_eig = eigenvalues.max().item()
             condition_num = max_eig / (abs(min_eig) + 1e-10)
 
-            # Sort by absolute value
             abs_eigenvalues = torch.abs(eigenvalues)
             sorted_indices = torch.argsort(abs_eigenvalues, descending=True)
             sorted_eigs = eigenvalues[sorted_indices]
 
-            # Get top 5 and bottom 5 by absolute value
             top_5 = sorted_eigs[:5].cpu().numpy()
             bottom_5 = sorted_eigs[-5:].cpu().numpy()
 
@@ -326,86 +258,65 @@ class LeastSquaresEstimator(ValueEstimator):
                 'bottom_5_abs': bottom_5,
             }
 
-    def predict(self, observations: np.ndarray) -> np.ndarray:
-        """Predict values for given observations."""
-        self.repr_extractor.eval()
-        self.value_net.eval()
+    def _predict(self, features: torch.Tensor) -> np.ndarray:
+        """Predict values from features.
 
-        with torch.no_grad():
-            obs = torch.FloatTensor(observations).to(self.device)
+        Args:
+            features: Tensor of shape (n, repr_dim)
 
-            # Extract features without bias (handles PCA projection automatically)
-            features = self._get_features(obs, add_bias=False)
-
-            values = self.value_net(features).squeeze(-1)
-
-            return values.cpu().numpy()
+        Returns:
+            Predicted values of shape (n,)
+        """
+        features_with_bias = self._get_features(features)
+        values = (features_with_bias @ self.w).squeeze(-1)
+        return values.cpu().numpy()
 
     def save(self, path: Path):
         """Save estimator to disk."""
-        torch.save({
-            'value_net_state_dict': self.value_net.state_dict(),
-            'repr_extractor_state_dict': self.repr_extractor.state_dict(),
-            'vec_normalize_stats': self.repr_extractor.vec_normalize_stats,
+        checkpoint = {
+            'feature_extractor_state_dict': self.feature_extractor.state_dict(),
             'A': self.A,
             'b': self.b,
             'w': self.w,
+            'd': self.d,
             'training_step': self.training_step,
             'obs_dim': self.obs_dim,
             'hidden_sizes': self.hidden_sizes,
             'activation': self.activation,
             'learning_rate': self.learning_rate,
-            'normalize_observations': self.normalize_observations,
             'ridge_lambda': self.ridge_lambda,
-            'algorithm': self.algorithm,
             'repr_dim': self.repr_dim,
             'discount_factor': self.discount_factor,
-            'policy_path': getattr(self, 'policy_path', None),
             'use_pca_projection': self.use_pca_projection,
             'n_components': self.n_components,
             'pca_mean': self.pca_mean,
             'pca_components': self.pca_components,
             'working_dim': self.working_dim,
-        }, path)
+        }
+
+        # Save policy path and algorithm if feature extractor is PolicyRepresentationExtractor
+        if isinstance(self.feature_extractor, PolicyRepresentationExtractor):
+            checkpoint['policy_path'] = self.feature_extractor.policy_path
+            checkpoint['algorithm'] = self.feature_extractor.algorithm
+
+        torch.save(checkpoint, path)
 
     def load(self, path: Path):
         """Load estimator from disk."""
         checkpoint = torch.load(path, map_location=self.device)
 
-        # Load PCA settings first
         self.use_pca_projection = checkpoint.get('use_pca_projection', False)
         self.n_components = checkpoint.get('n_components', None)
         self.pca_mean = checkpoint.get('pca_mean', None)
         self.pca_components = checkpoint.get('pca_components', None)
         self.working_dim = checkpoint.get('working_dim', self.repr_dim)
 
-        # Get the saved feature dimension
-        saved_feature_dim = checkpoint['value_net_state_dict']['network.0.weight'].shape[1]
-
-        # Check if we need to recreate value network
-        if self.value_net is None:
-            # Value net hasn't been created yet (use_pca_projection=True case)
-            self.value_net = ValueNetwork(saved_feature_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
-            self.d = saved_feature_dim + 1  # +1 for bias in least squares matrices
-        else:
-            # Value net exists, check if dimensions match
-            current_feature_dim = self.value_net.network[0].weight.shape[1]
-            if saved_feature_dim != current_feature_dim:
-                print(f"Recreating value network: saved dim {saved_feature_dim} != current dim {current_feature_dim}")
-                self.value_net = ValueNetwork(saved_feature_dim, hidden_sizes=[], activation='relu', normalize_observations=False).to(self.device)
-                self.d = saved_feature_dim + 1  # +1 for bias in least squares matrices
-
-        self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
-        self.repr_extractor.load_state_dict(checkpoint['repr_extractor_state_dict'])
-
-        # Restore VecNormalize stats if they exist
-        vec_normalize_stats = checkpoint.get('vec_normalize_stats', None)
-        if vec_normalize_stats is not None:
-            self.repr_extractor.vec_normalize_stats = vec_normalize_stats
+        self.feature_extractor.load_state_dict(checkpoint['feature_extractor_state_dict'])
 
         self.A = checkpoint['A']
         self.b = checkpoint['b']
         self.w = checkpoint['w']
+        self.d = checkpoint.get('d', self.working_dim + 1)
         self.training_step = checkpoint['training_step']
         self.repr_dim = checkpoint['repr_dim']
 
@@ -427,13 +338,10 @@ class LeastSquaresEstimator(ValueEstimator):
 
         checkpoint = torch.load(path, map_location=device_obj)
 
-        # Extract policy_path from the checkpoint - need to reconstruct it
-        # This is a limitation: we need the policy_path to be saved in the checkpoint
         policy_path = checkpoint.get('policy_path')
         if policy_path is None:
             raise ValueError("Checkpoint does not contain 'policy_path'. Cannot load LeastSquaresEstimator.")
 
-        # Create estimator instance with saved parameters
         estimator = cls(
             obs_dim=checkpoint['obs_dim'],
             discount_factor=checkpoint.get('discount_factor', 0.99),
@@ -449,19 +357,22 @@ class LeastSquaresEstimator(ValueEstimator):
             n_components=checkpoint.get('n_components', None)
         )
 
-        # Load state
         estimator.load(path)
 
         return estimator
 
     def get_config(self) -> Dict[str, Any]:
         """Get estimator configuration."""
-        return {
+        config = {
             'obs_dim': self.obs_dim,
             'hidden_sizes': self.hidden_sizes,
             'activation': self.activation,
             'learning_rate': self.learning_rate,
             'training_step': self.training_step,
             'ridge_lambda': self.ridge_lambda,
-            'algorithm': self.algorithm,
         }
+
+        if isinstance(self.feature_extractor, PolicyRepresentationExtractor):
+            config['algorithm'] = self.feature_extractor.algorithm
+
+        return config
