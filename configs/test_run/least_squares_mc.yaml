@@ -10,4 +10,4 @@ feature_extractor:
   type: policy_representation
   normalize: true
   policy_path: null
-  algorithm: SAC
+  algorithm: PPO

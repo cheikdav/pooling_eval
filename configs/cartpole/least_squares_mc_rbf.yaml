@@ -1,5 +1,5 @@
-name: least_squares_td
-type: least_squares_td
+name: least_squares_mc_rbf
+type: least_squares_mc
 learning_rate: 0.001
 n_initializations: 1
 max_epochs: 1
@@ -7,7 +7,8 @@ ridge_lambda: 1.0e-6
 preprocess_fraction: 0.2
 n_components: 32
 feature_extractor:
-  type: policy_representation
-  normalize: true
-  policy_path: null
-  algorithm: PPO
+  type: rbf
+  normalize: false
+  n_components: 100
+  gamma: 1.0
+  seed: 42
