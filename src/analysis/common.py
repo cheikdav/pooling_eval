@@ -125,66 +125,85 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
 
     elif dataset_type == 'temporal':
         # Within-episode temporal differences: V(s_t) - V(s_{t+δ}) where δ ~ Geometric(p)
-        # Sample multiple non-overlapping intervals per episode with buffer between them
+        # Strategy: Sample pairs ONCE per episode, then compute differences across all batches
         np.random.seed(seed)
 
-        temporal_diffs = []
+        # Step 1: Get episode lengths efficiently
+        first_batch = df['batch_name'].unique()[0]
+        episode_info = df[df['batch_name'] == first_batch].groupby('episode_idx').agg({
+            'state_idx': ['min', 'count']
+        }).reset_index()
+        episode_info.columns = ['episode_idx', 'min_state_idx', 'episode_length']
 
-        for (ep_idx, batch_name), ep_group in df.groupby(['episode_idx', 'batch_name']):
-            # Sort by state_idx to get temporal order within episode
-            ep_group = ep_group.sort_values('state_idx').reset_index(drop=True)
-            episode_length = len(ep_group)
+        # Step 2: Sample temporal pairs for all episodes (fully vectorized)
+        n_episodes = len(episode_info)
+        max_episode_length = int(episode_info['episode_length'].max())
+        max_pairs = max_episode_length // 2 + 1
 
-            # Vectorized sampling of non-overlapping intervals
-            # Pre-sample deltas and buffers (oversample to ensure enough valid pairs)
-            max_pairs = episode_length // 2 + 1
-            deltas = np.random.geometric(temporal_p, size=max_pairs)
-            buffers = np.random.geometric(temporal_p, size=max_pairs)
+        # Sample deltas and buffers for all episodes at once (2D arrays)
+        deltas = np.random.geometric(temporal_p, size=(n_episodes, max_pairs))
+        buffers = np.random.geometric(temporal_p, size=(n_episodes, max_pairs))
 
-            # Compute starting positions using cumsum
-            # t_i = sum(delta_j + buffer_j for j < i)
-            steps = deltas + buffers
-            positions = np.concatenate([[0], np.cumsum(steps[:-1])])
+        # Compute starting positions for all episodes
+        steps = deltas + buffers
+        positions = np.concatenate([np.zeros((n_episodes, 1), dtype=int), np.cumsum(steps[:, :-1], axis=1)], axis=1)
 
-            # Filter valid segments: both t and t+delta must be within episode
-            valid_mask = (positions + deltas) < episode_length
-            valid_t = positions[valid_mask]
-            valid_delta = deltas[valid_mask]
+        # Create mask for valid pairs (both t and t+delta must be within episode)
+        episode_lengths = episode_info['episode_length'].values[:, np.newaxis]  # Shape: (n_episodes, 1)
+        valid_mask = (positions + deltas) < episode_lengths
 
-            # Vectorized extraction of values
-            if len(valid_t) > 0:
-                state_t = ep_group.iloc[valid_t]['state_idx'].values
-                state_t_delta = ep_group.iloc[valid_t + valid_delta]['state_idx'].values
-                value_t = ep_group.iloc[valid_t]['predicted_value'].values
-                value_t_delta = ep_group.iloc[valid_t + valid_delta]['predicted_value'].values
+        # Extract valid pairs
+        valid_episode_idx, valid_pair_idx = np.where(valid_mask)
 
-                # Compute all differences at once
-                differences = value_t - value_t_delta
-
-                # Build result records
-                for i in range(len(valid_t)):
-                    temporal_diffs.append({
-                        'state_idx': state_t[i],
-                        'paired_state_idx': state_t_delta[i],
-                        'batch_name': batch_name,
-                        'episode_idx': ep_idx,
-                        'difference': differences[i],
-                        'delta': valid_delta[i]
-                    })
-
-        if not temporal_diffs:
-            # No valid pairs found
+        if len(valid_episode_idx) == 0:
             stats_temporal = pd.DataFrame(columns=['state_idx', 'n_episodes', 'mean', 'variance', 'std', 'count'])
         else:
-            df_temporal = pd.DataFrame(temporal_diffs)
+            # Get corresponding values
+            valid_positions = positions[valid_episode_idx, valid_pair_idx]
+            valid_deltas = deltas[valid_episode_idx, valid_pair_idx]
 
-            # Aggregate statistics on differences by state_idx
-            stats_temporal = df_temporal.groupby('state_idx')['difference'].agg(
+            # Map to actual episode indices and state indices
+            actual_episode_idx = episode_info.iloc[valid_episode_idx]['episode_idx'].values
+            min_state_idx = episode_info.iloc[valid_episode_idx]['min_state_idx'].values
+
+            state_t_idx = min_state_idx + valid_positions
+            state_t_delta_idx = min_state_idx + valid_positions + valid_deltas
+
+            # Step 3: Create pairs DataFrame
+            pairs_df = pd.DataFrame({
+                'episode_idx': actual_episode_idx,
+                'state_t_idx': state_t_idx,
+                'state_t_delta_idx': state_t_delta_idx
+            })
+
+            # Step 4: Merge with predictions to get value_t for all batches
+            pairs_with_t = pairs_df.merge(
+                df[['episode_idx', 'state_idx', 'batch_name', 'predicted_value']],
+                left_on=['episode_idx', 'state_t_idx'],
+                right_on=['episode_idx', 'state_idx'],
+                how='inner'
+            )
+
+            # Step 5: Merge again to get value_t_delta for all batches
+            pairs_complete = pairs_with_t.merge(
+                df[['episode_idx', 'state_idx', 'batch_name', 'predicted_value']],
+                left_on=['episode_idx', 'state_t_delta_idx', 'batch_name'],
+                right_on=['episode_idx', 'state_idx', 'batch_name'],
+                how='inner',
+                suffixes=('_t', '_t_delta')
+            )
+
+            # Step 6: Compute differences vectorized
+            pairs_complete['difference'] = pairs_complete['predicted_value_t'] - pairs_complete['predicted_value_t_delta']
+
+            # Step 7: Aggregate by state_t_idx (variance across batches for same state in pairs)
+            stats_temporal = pairs_complete.groupby('state_idx_t')['difference'].agg(
                 mean='mean',
                 variance='var',
                 std='std',
                 count='count'
             ).reset_index()
+            stats_temporal.rename(columns={'state_idx_t': 'state_idx'}, inplace=True)
 
         stats_temporal['n_episodes'] = n_episodes
 
@@ -194,7 +213,7 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
         stats_temporal['predictions_path'] = predictions_path
         stats_temporal['results_dir'] = results_dir
 
-        del df, temporal_diffs
+        del df
         return stats_temporal
 
     else:
