@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import numpy as np
+from pathlib import Path
 
 from common import get_method_display_name
 
@@ -48,15 +49,12 @@ def render_tab(filtered_metadata, methods, baseline_method):
         st.error(f"No data for {selected_n_ep} episodes")
         return
 
-    # Get results directory from first row
+    # Get results directory from predictions path
     first_row = filtered_for_n_ep.iloc[0]
-    results_dir = first_row['results_dir']
+    results_dir = Path(first_row['predictions_path']).parents[2]
 
     # Load paired states ground truth
-    from pathlib import Path
-    import numpy as np
-
-    paired_states_file = Path(results_dir).parent / "data" / "paired_states.npz"
+    paired_states_file = results_dir.parent / "data" / "paired_states.npz"
 
     if not paired_states_file.exists():
         st.warning(f"No paired state data found. Generate it with: `uv run -m src.generate_data --config <config> --generate-paired`")
