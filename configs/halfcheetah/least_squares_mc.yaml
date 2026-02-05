@@ -3,8 +3,6 @@ type: least_squares_mc
 learning_rate: 0.001
 n_initializations: 1
 ridge_lambda: 1.0e-06
-preprocess_fraction: 0.0
-n_components: null
 feature_extractor:
   type: policy_representation
   normalize: true

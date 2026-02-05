@@ -26,14 +26,12 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
     @classmethod
     def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
         """Get method-specific parameters from config."""
-        use_pca = method_config.preprocess_fraction > 0.0
         return {
             'ridge_lambda': method_config.ridge_lambda,
-            'use_pca_projection': use_pca,
-            'n_components': method_config.n_components if use_pca else None,
+            'n_components': method_config.n_components,
         }
 
-    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
+    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor]) -> None:
         """Update A and b for LSTD estimation.
 
         Accumulates:
@@ -41,41 +39,19 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         - b += Φ^T r
 
         Args:
-            feature_batch: Dictionary containing feature batch data
-            phi: (batch_size, working_dim+1) features with bias
+            feature_batch: Dictionary containing feature batch data (features include bias)
         """
-        next_features = feature_batch['next_features']
-        phi_next = self._get_features(next_features)
+        features = feature_batch['features']  # Already includes bias
+        next_features = feature_batch['next_features']  # Already includes bias
 
         rewards = feature_batch['rewards'].unsqueeze(1)
         dones = feature_batch['dones'].unsqueeze(1)
 
         gamma_mask = self.discount_factor * (1.0 - dones)
-        phi_diff = phi - gamma_mask * phi_next
+        features_diff = features - gamma_mask * next_features
 
-        self.A = self.A + phi.T @ phi_diff
-        self.b = self.b + phi.T @ rewards
-
-    def _compute_targets_for_metrics(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
-        """Compute TD targets for metric evaluation.
-
-        Args:
-            feature_batch: Dictionary containing feature batch data
-            phi: (batch_size, working_dim+1) features with bias
-
-        Returns:
-            TD targets: r + γ * V(s') * (1 - done)
-        """
-        next_features = feature_batch['next_features']
-        phi_next = self._get_features(next_features)
-
-        rewards = feature_batch['rewards']
-        dones = feature_batch['dones']
-
-        next_values = (phi_next @ self.w).squeeze(-1)
-        targets = rewards + self.discount_factor * next_values * (1.0 - dones)
-
-        return targets
+        self.A = self.A + features.T @ features_diff
+        self.b = self.b + features.T @ rewards
 
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Compute TD targets from feature batch.
@@ -87,13 +63,12 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
             TD targets: r + γ * V(s') * (1 - done)
         """
         next_features = feature_batch['next_features']
-        phi_next = self._get_features(next_features)
-
         rewards = feature_batch['rewards']
         dones = feature_batch['dones']
 
         with torch.no_grad():
-            next_values = (phi_next @ self.w).squeeze(-1)
+            # Use _predict which will call _update_w() if needed
+            next_values = torch.FloatTensor(self._predict(next_features)).to(self.device)
             targets = rewards + self.discount_factor * next_values * (1.0 - dones)
 
         return targets

@@ -5,9 +5,7 @@ n_initializations: 1
 policy_path: null
 algorithm: PPO
 ridge_lambda: 0.1
-preprocess_fraction:
   default: 0.1
   1000: 0.05
-n_components:
   default: 16
   1000: 32

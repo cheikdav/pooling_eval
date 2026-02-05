@@ -1,6 +1,7 @@
 """Train a single value estimator on a batch of data."""
 
 import argparse
+from collections import defaultdict
 import numpy as np
 from pathlib import Path
 import torch
@@ -15,7 +16,7 @@ from datetime import datetime
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
-from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset, split_episodes_for_preprocessing
+from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset
 from torch.utils.data import DataLoader
 
 
@@ -124,7 +125,6 @@ def train_single_initialization(
     method_config: BaseEstimatorConfig,
     train_batch: dict,
     test_batch: dict,
-    preprocess_batch: dict,
     config: ExperimentConfig,
     method_name: str,
     batch_name: str,
@@ -141,7 +141,6 @@ def train_single_initialization(
         method_config: Method-specific configuration
         train_batch: Training batch data (preprocessed)
         test_batch: Test batch data (preprocessed, None if no test set)
-        preprocess_batch: Preprocessing batch for PCA (None if not needed)
         config: Experiment configuration
         method_name: Method name (from method_config.name)
         batch_name: Batch name (e.g., '0', '1', 'tuning', 'eval')
@@ -159,11 +158,6 @@ def train_single_initialization(
     gamma = config.value_estimators.training.gamma
     obs_dim = train_batch['observations'].shape[-1]
     estimator = create_estimator(method_config, config.network, obs_dim, gamma, num_episodes, config)
-
-    # Fit PCA projection if needed
-    if preprocess_batch is not None and hasattr(estimator, 'fit_pca_projection'):
-        print("Fitting PCA projection")
-        estimator.fit_pca_projection(preprocess_batch)
     if use_wandb and config.logging.use_wandb and not sweep_mode:
         method_abbr = get_method_abbreviation(method_name)
         run_name = f"{method_abbr} ({config.environment.name}, #{batch_name}, #ep {num_episodes}, init {init_idx})"
@@ -187,8 +181,6 @@ def train_single_initialization(
         )
 
     training_config = config.value_estimators.training
-    loss_history = []
-    mc_loss_history = []
     val_mc_loss_history = []
     final_mc_loss_train = float('inf')
     final_mc_loss_val = float('inf')
@@ -230,6 +222,14 @@ def train_single_initialization(
     batch_size_raw = method_config.batch_size if (method_config and method_config.batch_size is not None) else training_config.batch_size
     batch_size = resolve_param_for_episodes(batch_size_raw, num_episodes)
 
+    # Pre-training pass to initialize normalizer
+    print("Running pre-training pass to initialize normalizer...")
+    pre_train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    for mini_batch in pre_train_dataloader:
+        estimator.pre_training_pass(mini_batch)
+
+    print("Normalizer initialized and frozen.")
+
     for epoch in range(max_epochs):
         final_epoch = epoch
         # Recreate dataloader when needed for shuffling
@@ -237,33 +237,19 @@ def train_single_initialization(
             (training_config.shuffle_frequency > 0 and epoch % training_config.shuffle_frequency == 0)):
             dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        # Accumulate metrics across mini-batches
-        epoch_losses = []
-        epoch_maes = []
-        epoch_mc_losses = []
-        epoch_values = []
-        epoch_targets = []
 
+        epoch_metrics = defaultdict(list)
         for mini_batch in dataloader:
             metrics = estimator.train_step(mini_batch)
-            epoch_losses.append(metrics['loss'])
-            epoch_maes.append(metrics['mae'])
-            epoch_mc_losses.append(metrics['mc_loss'])
-            epoch_values.append(metrics['mean_value'])
-            epoch_targets.append(metrics['mean_target'])
-
+            for loss_name, loss_value in metrics.items():
+                epoch_metrics[loss_name].append(loss_value)
+            
         # Average metrics across mini-batches
-        avg_metrics = {
-            'loss': np.mean(epoch_losses),
-            'mae': np.mean(epoch_maes),
-            'mc_loss': np.mean(epoch_mc_losses),
-            'mean_value': np.mean(epoch_values),
-            'mean_target': np.mean(epoch_targets),
-        }
+        avg_metrics = {loss_name: np.mean(values) for loss_name, values in epoch_metrics.items()}
 
-        loss_history.append(avg_metrics['loss'])
-        mc_loss_history.append(avg_metrics['mc_loss'])
-        final_mc_loss_train = avg_metrics['mc_loss']
+        # Update final training metrics if available
+        if 'mc_loss' in avg_metrics:
+            final_mc_loss_train = avg_metrics['mc_loss']
 
         # Compute validation MC loss every epoch for convergence check and model selection
         if use_validation:
@@ -274,40 +260,7 @@ def train_single_initialization(
                 val_values = torch.FloatTensor(val_values).to(estimator.device)
                 final_mc_loss_val = torch.nn.functional.mse_loss(val_values, val_mc_returns).item()
             val_mc_loss_history.append(final_mc_loss_val)
-
-        # Log to wandb periodically
-        if epoch % config.logging.log_frequency == 0 and use_wandb and config.logging.use_wandb:
-            log_dict = {
-                f'step{init_suffix}': epoch,
-                f'train{init_suffix}/loss': avg_metrics['loss'],
-                f'train{init_suffix}/mse': avg_metrics['loss'],
-                f'train{init_suffix}/mae': avg_metrics['mae'],
-                f'train{init_suffix}/mean_value': avg_metrics['mean_value'],
-                f'train{init_suffix}/mean_target': avg_metrics['mean_target'],
-                f'train{init_suffix}/mc_loss_train': final_mc_loss_train,
-                f'train{init_suffix}/best_mc_loss': best_mc_loss,
-            }
-            if use_validation:
-                log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
-                log_dict[f'val{init_suffix}/min_loss'] = min_loss
-            wandb.log(log_dict)
-
-        # Log to file periodically (for init logs)
-        if log_frequency > 0 and epoch % log_frequency == 0:
-            print(f"Epoch {epoch+1}/{max_epochs}: train_loss={final_mc_loss_train:.6f}, best_loss={best_mc_loss:.6f}", end="")
-            if use_validation:
-                print(f", val_loss={final_mc_loss_val:.6f}", end="")
-            print()
-
-            # Print matrix diagnostics for least squares methods
-            if hasattr(estimator, 'get_matrix_diagnostics'):
-                diagnostics = estimator.get_matrix_diagnostics()
-                print(f"  Matrix: min_eig={diagnostics['min_eigenvalue']:.2e}, max_eig={diagnostics['max_eigenvalue']:.2e}, cond={diagnostics['condition_number']:.2e}")
-                top_5_str = ", ".join([f"{x:.2e}" for x in diagnostics['top_5_abs']])
-                bottom_5_str = ", ".join([f"{x:.2e}" for x in diagnostics['bottom_5_abs']])
-                print(f"  Top 5 (by |λ|): [{top_5_str}]")
-                print(f"  Bottom 5 (by |λ|): [{bottom_5_str}]")
-
+            
         # Check convergence based on validation MC loss (or training MC loss if no validation)
         final_mc_loss = final_mc_loss_val if use_validation else final_mc_loss_train
 
@@ -318,27 +271,29 @@ def train_single_initialization(
         if last_improvement_epoch == epoch:
             best_mc_loss = final_mc_loss
             best_estimator = copy.deepcopy(estimator)
+        
+        is_last_epoch = (epoch == max_epochs - 1) or converged
+        if (log_frequency > 0 and epoch % log_frequency == 0) or is_last_epoch:
+            if use_wandb and config.logging.use_wandb:
+                log_dict = {
+                    f'train{init_suffix}/{metric_name}': metric_value for metric_name, metric_value in avg_metrics.items()
+                }
+                log_dict[f'step{init_suffix}'] = epoch
+                log_dict[f'train{init_suffix}/best_mc_loss'] = best_mc_loss
+
+                if use_validation:
+                    log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
+                    log_dict[f'val{init_suffix}/min_loss'] = min_loss
+                wandb.log(log_dict)
+
+
+            print(f"Epoch {epoch+1}/{max_epochs}: train_loss={final_mc_loss_train:.6f}, best_loss={best_mc_loss:.6f}", end="")
+            if use_validation:
+                print(f", val_loss={final_mc_loss_val:.6f}", end="")
+            print()
+       
         if converged:
             break
-
-
-    # Log final epoch metrics to wandb (ensures last epoch is always logged)
-    if use_wandb and config.logging.use_wandb:
-        final_log_dict = {
-            f'step{init_suffix}': final_epoch,
-            f'train{init_suffix}/loss': avg_metrics['loss'],
-            f'train{init_suffix}/mse': avg_metrics['loss'],
-            f'train{init_suffix}/mae': avg_metrics['mae'],
-            f'train{init_suffix}/mean_value': avg_metrics['mean_value'],
-            f'train{init_suffix}/mean_target': avg_metrics['mean_target'],
-            f'train{init_suffix}/mc_loss_train': final_mc_loss_train,
-            f'train{init_suffix}/best_mc_loss': best_mc_loss,
-            f'train{init_suffix}/stop_reason': 'convergence' if converged else 'max_epochs',
-        }
-        if use_validation:
-            final_log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
-            final_log_dict[f'val{init_suffix}/min_mc_loss'] = min_loss
-        wandb.log(final_log_dict)
 
     # Print training summary
     print(f"\n  Init {init_idx} Summary:")
@@ -350,7 +305,8 @@ def train_single_initialization(
             print(f"    Stopped: Converged (training MC loss improvement < {training_config.convergence_threshold} for {training_config.convergence_patience} epochs)")
     else:
         print(f"    Stopped: Reached max epochs")
-    print(f"    Final train loss: {loss_history[-1]:.6f}")
+    if 'loss' in avg_metrics:
+        print(f"    Final train loss: {avg_metrics['loss']:.6f}")
     print(f"    Final train MC loss: {final_mc_loss_train:.6f}")
     if use_validation:
         print(f"    Final val MC loss: {final_mc_loss_val:.6f}")
@@ -400,7 +356,6 @@ def train_initialization_worker(
     method_config: BaseEstimatorConfig,
     train_batch: dict,
     test_batch: dict,
-    preprocess_batch: dict,
     method_name: str,
     batch_name: str,
     n_episodes: int,
@@ -437,9 +392,9 @@ def train_initialization_worker(
     torch.manual_seed(config.seed + init_idx)
     np.random.seed(config.seed + init_idx)
 
-    # Train (creates estimator and fits PCA internally)
+    # Train
     final_mc_loss, trained_estimator = train_single_initialization(
-        method_config, train_batch, test_batch, preprocess_batch, config, method_name, batch_name,
+        method_config, train_batch, test_batch, config, method_name, batch_name,
         n_episodes, init_idx, use_wandb=use_wandb, sweep_mode=sweep_mode, n_inits=n_inits, log_frequency=config.logging.log_frequency
     )
 
@@ -539,19 +494,6 @@ def train_estimator(
         print(f"Training {method_name} on batch_{batch_name} with {n_episodes} episodes")
         print(f"{'='*80}")
 
-        # Split for preprocessing if needed (for least squares with PCA)
-        preprocess_batch_raw = None
-        preprocess_batch = None
-        if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)) and method_config.preprocess_fraction > 0.0:
-            print(f"Splitting {method_config.preprocess_fraction*100:.1f}% of episodes for PCA preprocessing")
-            preprocess_batch_raw, train_batch_raw = split_episodes_for_preprocessing(
-                train_batch_raw, method_config.preprocess_fraction, seed=config.seed
-            )
-            print(f"  Preprocessing: {len(preprocess_batch_raw['observations'])} episodes")
-            print(f"  Training: {len(train_batch_raw['observations'])} episodes")
-            print(f"Preprocessing preprocessing batch (flattening episodes, computing MC returns with gamma={gamma})")
-            preprocess_batch = preprocess_episodes(preprocess_batch_raw, gamma)
-
         print(f"Preprocessing training batch (flattening episodes, computing MC returns with gamma={gamma})")
         train_batch = preprocess_episodes(train_batch_raw, gamma)
 
@@ -607,7 +549,7 @@ def train_estimator(
                     future = executor.submit(
                         train_initialization_worker,
                         init_idx, config, method_config, train_batch, test_batch,
-                        preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
+                        method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
                         use_wandb, sweep_mode
                     )
                     futures.append((init_idx, future))
@@ -632,7 +574,7 @@ def train_estimator(
 
                 final_mc_loss, model_path = train_initialization_worker(
                     init_idx, config, method_config, train_batch, test_batch,
-                    preprocess_batch, method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
+                    method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
                     use_wandb, sweep_mode
                 )
 

@@ -74,10 +74,41 @@ class ValueEstimator(ABC):
         raise NotImplementedError("Subclasses must implement from_config")
 
     def train(self):
-        self.feature_extractor.train()
+        """Set estimator to training mode.
+
+        Note: Does NOT set feature_extractor to training mode.
+        Feature extractor mode is managed separately for normalizer control.
+        """
+        pass
 
     def eval(self):
-        self.feature_extractor.eval()
+        """Set estimator to eval mode.
+
+        Note: Does NOT set feature_extractor to eval mode.
+        Feature extractor mode is managed separately for normalizer control.
+        """
+        pass
+
+    def pre_training_pass(self, mini_batch: Dict[str, torch.Tensor]):
+        """Pre-training pass over a batch of data for initialization.
+
+        This should be called once before training on the full training dataset.
+        It performs initialization tasks like updating normalizer statistics.
+
+        Sets feature_extractor to training mode to enable normalizer updates.
+        After all pre_training_pass calls, feature_extractor should be set to eval mode.
+
+        Args:
+            mini_batch: Dictionary containing observations
+        """
+        self.eval()  # Set estimator to eval mode
+        self.feature_extractor.train()  # Set feature extractor to training mode for normalizer updates
+
+        with torch.no_grad():
+            obs = mini_batch['observations'].to(self.device)
+            # Extract features to update normalizer (only from obs, not next_obs)
+            self.feature_extractor(obs)
+        self.feature_extractor.eval() 
 
     def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Extract features from observations then call _train_step()."""
@@ -115,6 +146,14 @@ class ValueEstimator(ABC):
 
     @abstractmethod
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """Compute target values for training.
+
+        Args:
+            feature_batch: Dictionary containing feature batch data
+
+        Returns:
+            Target values
+        """
         pass
 
     def _build_checkpoint(self) -> Dict[str, Any]:

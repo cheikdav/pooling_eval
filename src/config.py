@@ -208,16 +208,14 @@ class DQNConfig(BaseEstimatorConfig):
 class LeastSquaresMCConfig(BaseEstimatorConfig):
     """Least Squares Monte Carlo estimator configuration."""
     ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
-    preprocess_fraction: Union[float, Dict] = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
-    n_components: Optional[Union[int, Dict]] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
+    n_components: Optional[int] = None  # Number of SVD components (None = no reduction)
 
 
 @dataclass
 class LeastSquaresTDConfig(BaseEstimatorConfig):
     """Least Squares Temporal Difference estimator configuration."""
     ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
-    preprocess_fraction: Union[float, Dict] = 0.0  # Fraction of episodes for PCA preprocessing (0.0 = disabled)
-    n_components: Optional[Union[int, Dict]] = None  # Number of PCA components to keep (if preprocess_fraction > 0)
+    n_components: Optional[int] = None  # Number of SVD components (None = no reduction)
 
 
 # Registry mapping EstimatorType to config class

@@ -10,5 +10,3 @@ ridge_lambda:
   100: 0.05
   500: 0.1
   1000: 0.2
-preprocess_fraction: 0.1
-n_components: 16

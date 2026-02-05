@@ -60,6 +60,7 @@ class FeatureExtractor(nn.Module, ABC):
     def __init__(self, normalize: bool = True):
         super().__init__()
         self.normalize = normalize
+        self.add_bias = False  # Can be set to True by estimators that need it (e.g., LeastSquares)
 
         if self.normalize:
             self.normalizer = RunningNormalizer(self.get_feature_dim())
@@ -73,6 +74,11 @@ class FeatureExtractor(nn.Module, ABC):
             if self.training:
                 self.normalizer.update(features)
             features = self.normalizer.normalize(features)
+
+        # Add bias column if requested
+        if self.add_bias:
+            bias = torch.ones(features.shape[0], 1, device=features.device)
+            features = torch.cat([features, bias], dim=1)
 
         return features
 

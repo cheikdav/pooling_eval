@@ -4,8 +4,6 @@ learning_rate: 0.001
 n_initializations: 1
 max_epochs: 1
 ridge_lambda: 1.0e-6
-preprocess_fraction: 0.2
-n_components: 32
 feature_extractor:
   type: policy_representation
   normalize: true

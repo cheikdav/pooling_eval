@@ -16,38 +16,24 @@ class LeastSquaresMCEstimator(LeastSquaresEstimator):
     @classmethod
     def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
         """Get method-specific parameters from config."""
-        use_pca = method_config.preprocess_fraction > 0.0
         return {
             'ridge_lambda': method_config.ridge_lambda,
-            'use_pca_projection': use_pca,
-            'n_components': method_config.n_components if use_pca else None,
+            'n_components': method_config.n_components,
         }
 
-    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> None:
+    def _update_A_and_b(self, feature_batch: Dict[str, torch.Tensor]) -> None:
         """Update A and b for Monte Carlo estimation.
 
         Accumulates: A += Φ^T Φ and b += Φ^T y
 
         Args:
-            feature_batch: Dictionary containing feature batch data
-            phi: (batch_size, working_dim+1) features with bias
+            feature_batch: Dictionary containing feature batch data (features include bias)
         """
+        features = feature_batch['features']  # Already includes bias
         targets = feature_batch['mc_returns'].unsqueeze(1)
 
-        self.A = self.A + phi.T @ phi
-        self.b = self.b + phi.T @ targets
-
-    def _compute_targets_for_metrics(self, feature_batch: Dict[str, torch.Tensor], phi: torch.Tensor) -> torch.Tensor:
-        """Compute Monte Carlo targets for metric evaluation.
-
-        Args:
-            feature_batch: Dictionary containing feature batch data
-            phi: (batch_size, working_dim+1) features with bias
-
-        Returns:
-            Monte Carlo returns
-        """
-        return feature_batch['mc_returns']
+        self.A = self.A + features.T @ features
+        self.b = self.b + features.T @ targets
 
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         """Compute Monte Carlo targets from feature batch.
@@ -58,6 +44,7 @@ class LeastSquaresMCEstimator(LeastSquaresEstimator):
         Returns:
             Monte Carlo returns
         """
+        # MC targets don't depend on features, just return mc_returns
         return feature_batch['mc_returns']
 
     def get_config(self) -> Dict[str, Any]:

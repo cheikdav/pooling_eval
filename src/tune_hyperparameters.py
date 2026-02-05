@@ -127,16 +127,6 @@ def main():
     if ridge_lambda is not None and hasattr(method_config, 'ridge_lambda'):
         method_config.ridge_lambda = ridge_lambda
 
-    # Override n_components for LeastSquares methods from wandb sweep or CLI
-    n_components = wandb.config.get('n_components', args.n_components)
-    if n_components is not None and hasattr(method_config, 'n_components'):
-        method_config.n_components = n_components
-
-    # Override preprocess_fraction for LeastSquares methods from wandb sweep or CLI
-    preprocess_fraction = wandb.config.get('preprocess_fraction', args.preprocess_fraction)
-    if preprocess_fraction is not None and hasattr(method_config, 'preprocess_fraction'):
-        method_config.preprocess_fraction = preprocess_fraction
-
     # Override n_initializations from wandb sweep or CLI
     n_initializations = wandb.config.get('n_initializations', args.n_initializations)
     if n_initializations is not None:

@@ -139,7 +139,7 @@ uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 **How it works:**
 - Sweep configs in `configs/sweep_*.yaml` define hyperparameter search space
 - **Monte Carlo / DQN**: Tunes learning rate, batch size, num episodes
-- **Least Squares (MC/TD)**: Tunes ridge_lambda, n_components, preprocess_fraction, num episodes
+- **Least Squares (MC/TD)**: Tunes ridge_lambda, num episodes
 - Uses random search to find optimal values
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
 - **Optimizes validation MC loss** (`final/best_val_mc_loss`) to prevent overfitting
@@ -156,7 +156,7 @@ uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agen
 
 **Customizing sweeps:**
 - Edit `configs/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, n_components, preprocess_fraction, wandb_mode
+- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, wandb_mode
 - Set `wandb-mode: offline` to avoid rate limits with many parallel agents (recommended for large sweeps)
 
 ## Architecture

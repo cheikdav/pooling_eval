@@ -8,5 +8,3 @@ ridge_lambda:
   default: 0.0001
   400: 1.0e-06
   600: 1.0e-07
-preprocess_fraction: 0.0
-n_components: None

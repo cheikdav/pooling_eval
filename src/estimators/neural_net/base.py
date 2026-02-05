@@ -65,11 +65,17 @@ class NeuralNetEstimator(ValueEstimator):
         return cls(**common_params, **specific_params)
 
     def train(self):
-        super().train()
+        """Set value network to training mode.
+
+        Note: Does NOT affect feature_extractor mode.
+        """
         self.value_net.train()
 
     def eval(self):
-        super().eval()
+        """Set value network to eval mode.
+
+        Note: Does NOT affect feature_extractor mode.
+        """
         self.value_net.eval()
 
     def _train_step(self, feature_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
