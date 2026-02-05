@@ -135,38 +135,42 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
             ep_group = ep_group.sort_values('state_idx').reset_index(drop=True)
             episode_length = len(ep_group)
 
-            # Sequentially sample non-overlapping intervals
-            t = 0
-            while t < episode_length:
-                # Sample gap from geometric distribution (returns values >= 1)
-                delta = np.random.geometric(temporal_p)
+            # Vectorized sampling of non-overlapping intervals
+            # Pre-sample deltas and buffers (oversample to ensure enough valid pairs)
+            max_pairs = episode_length // 2 + 1
+            deltas = np.random.geometric(temporal_p, size=max_pairs)
+            buffers = np.random.geometric(temporal_p, size=max_pairs)
 
-                # Check if we can create a valid pair
-                if t + delta < episode_length:
-                    state_t = ep_group.iloc[t]['state_idx']
-                    state_t_delta = ep_group.iloc[t + delta]['state_idx']
-                    value_t = ep_group.iloc[t]['predicted_value']
-                    value_t_delta = ep_group.iloc[t + delta]['predicted_value']
+            # Compute starting positions using cumsum
+            # t_i = sum(delta_j + buffer_j for j < i)
+            steps = deltas + buffers
+            positions = np.concatenate([[0], np.cumsum(steps[:-1])])
 
-                    # Compute difference: V(s_t) - V(s_{t+δ})
-                    difference = value_t - value_t_delta
+            # Filter valid segments: both t and t+delta must be within episode
+            valid_mask = (positions + deltas) < episode_length
+            valid_t = positions[valid_mask]
+            valid_delta = deltas[valid_mask]
 
+            # Vectorized extraction of values
+            if len(valid_t) > 0:
+                state_t = ep_group.iloc[valid_t]['state_idx'].values
+                state_t_delta = ep_group.iloc[valid_t + valid_delta]['state_idx'].values
+                value_t = ep_group.iloc[valid_t]['predicted_value'].values
+                value_t_delta = ep_group.iloc[valid_t + valid_delta]['predicted_value'].values
+
+                # Compute all differences at once
+                differences = value_t - value_t_delta
+
+                # Build result records
+                for i in range(len(valid_t)):
                     temporal_diffs.append({
-                        'state_idx': state_t,
-                        'paired_state_idx': state_t_delta,
+                        'state_idx': state_t[i],
+                        'paired_state_idx': state_t_delta[i],
                         'batch_name': batch_name,
                         'episode_idx': ep_idx,
-                        'difference': difference,
-                        'delta': delta
+                        'difference': differences[i],
+                        'delta': valid_delta[i]
                     })
-
-                    # Move past this interval plus a small buffer
-                    # Buffer is also sampled from geometric to avoid fixed patterns
-                    buffer = np.random.geometric(temporal_p)
-                    t = t + delta + buffer
-                else:
-                    # Can't fit another interval, move to next episode
-                    break
 
         if not temporal_diffs:
             # No valid pairs found
