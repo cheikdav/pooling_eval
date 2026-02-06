@@ -526,11 +526,22 @@ def main():
     parser.add_argument("--end-batch-idx", type=int, default=None,
                        help="Stop after this batch index (exclusive, default: generate all batches)")
     parser.add_argument("--generate-paired", action="store_true",
-                       help="Generate paired state evaluations with ground truth CIs")
+                       help="Generate paired state evaluations with ground truth CIs (overrides config)")
+    parser.add_argument("--no-generate-paired", action="store_true",
+                       help="Skip paired state generation (overrides config)")
     args = parser.parse_args()
 
     # Load configuration
     config = ExperimentConfig.from_yaml(args.config)
+
+    # Determine whether to generate paired states
+    # Command-line flags override config setting
+    if args.generate_paired:
+        generate_paired = True
+    elif args.no_generate_paired:
+        generate_paired = False
+    else:
+        generate_paired = config.paired_state.enabled
 
     # Set default paths
     if args.policy_path is None:
@@ -551,7 +562,7 @@ def main():
     generate_data(config, policy_path, output_dir,
                  start_batch_idx=args.start_batch_idx,
                  end_batch_idx=args.end_batch_idx,
-                 generate_paired=args.generate_paired)
+                 generate_paired=generate_paired)
 
 
 if __name__ == "__main__":

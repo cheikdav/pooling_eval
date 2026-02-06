@@ -252,6 +252,7 @@ class LoggingConfig:
 @dataclass
 class PairedStateConfig:
     """Configuration for paired state evaluation (generating ground truth CIs)."""
+    enabled: bool = False  # Whether to generate paired states
     n_pairs: int = 100  # Number of state pairs to sample
     n_trajectories_per_state: int = 50  # Rollouts per state for CI
     seed: int = 42
