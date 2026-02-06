@@ -66,3 +66,10 @@ logging:
   wandb_project: "pooling-eval"
   wandb_entity: null
   log_frequency: 1
+
+# Paired state evaluation
+paired_state:
+  enabled: true
+  n_pairs: 100
+  n_trajectories_per_state: 50
+  seed: 42
