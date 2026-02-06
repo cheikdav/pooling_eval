@@ -61,3 +61,8 @@ logging:
   wandb_entity: null
   log_frequency: 20
   wandb_mode: offline
+paired_state:
+  enabled: true
+  n_pairs: 100
+  n_trajectories_per_state: 50
+  seed: 42

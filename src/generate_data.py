@@ -195,28 +195,63 @@ def is_classic_control_env(env_name: str) -> bool:
     return any(name in env_name for name in classic_control)
 
 
-def restore_state_from_observation(env, obs):
-    """Restore environment state from observation (Classic Control only)."""
+def is_mujoco_env(env_name: str) -> bool:
+    """Check if environment is MuJoCo-based."""
+    mujoco_envs = ['Hopper', 'Walker2d', 'HalfCheetah', 'Ant', 'Humanoid', 'Swimmer', 'Reacher']
+    return any(name in env_name for name in mujoco_envs)
+
+
+def get_full_state(env):
+    """Get full environment state that can be used for restoration.
+
+    Returns:
+        For Classic Control: observation (which is the full state)
+        For MuJoCo: tuple of (qpos, qvel)
+    """
     if hasattr(env.unwrapped, 'state'):
-        env.unwrapped.state = obs.copy()
+        # Classic Control - observation is the state
+        return env.unwrapped.state.copy()
+    elif hasattr(env.unwrapped, 'data'):
+        # MuJoCo - need full simulator state
+        return (env.unwrapped.data.qpos.copy(), env.unwrapped.data.qvel.copy())
     else:
-        raise ValueError(f"Environment {type(env)} does not support state restoration from observation")
+        raise ValueError(f"Environment {type(env)} does not support state extraction")
 
 
-def generate_trajectory_from_state(env, model, initial_obs, gamma: float = 0.99, deterministic: bool = False) -> float:
+def restore_full_state(env, state):
+    """Restore environment to a saved state.
+
+    Args:
+        env: Gymnasium environment
+        state: For Classic Control - observation array
+               For MuJoCo - tuple of (qpos, qvel)
+    """
+    if hasattr(env.unwrapped, 'state'):
+        # Classic Control
+        env.unwrapped.state = state.copy() if isinstance(state, np.ndarray) else state
+    elif hasattr(env.unwrapped, 'data'):
+        # MuJoCo
+        qpos, qvel = state
+        env.unwrapped.set_state(qpos, qvel)
+    else:
+        raise ValueError(f"Environment {type(env)} does not support state restoration")
+
+
+def generate_trajectory_from_state(env, model, initial_obs, full_state, gamma: float = 0.99, deterministic: bool = False) -> float:
     """Generate a single trajectory from an initial state and return discounted return.
 
     Args:
         env: Gymnasium environment (single env, not vectorized)
         model: Trained SB3 model
-        initial_obs: Initial observation to start from
+        initial_obs: Initial observation (for first action prediction)
+        full_state: Full state for environment restoration (obs for Classic Control, (qpos, qvel) for MuJoCo)
         gamma: Discount factor
         deterministic: Whether to use deterministic policy
 
     Returns:
         Discounted return for the trajectory
     """
-    restore_state_from_observation(env, initial_obs)
+    restore_full_state(env, full_state)
 
     obs = initial_obs.copy()
     done = False
@@ -226,14 +261,14 @@ def generate_trajectory_from_state(env, model, initial_obs, gamma: float = 0.99,
 
     while not (done or truncated):
         action, _ = model.predict(obs, deterministic=deterministic)
-        obs, reward, done, truncated, info = env.step(action)
+        obs, reward, done, truncated, _ = env.step(action)
         episode_return += discount * reward
         discount *= gamma
 
     return episode_return
 
 
-def sample_state_pairs(env, config: ExperimentConfig) -> List[Tuple[np.ndarray, np.ndarray]]:
+def sample_state_pairs(env, config: ExperimentConfig):
     """Sample state pairs by resetting environment.
 
     Args:
@@ -241,16 +276,22 @@ def sample_state_pairs(env, config: ExperimentConfig) -> List[Tuple[np.ndarray, 
         config: Experiment configuration
 
     Returns:
-        List of tuples: (obs1, obs2)
+        List of tuples: (obs1, obs2, state1, state2)
+        where obs is the observation and state is the full restorable state
     """
     pairs = []
 
     for _ in range(config.paired_state.n_pairs):
         # Reset twice to get two different initial states
-        obs1 = env.reset()[0] if isinstance(env.reset(), tuple) else env.reset()
-        obs2 = env.reset()[0] if isinstance(env.reset(), tuple) else env.reset()
+        reset_result = env.reset()
+        obs1 = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        state1 = get_full_state(env)
 
-        pairs.append((obs1, obs2))
+        reset_result = env.reset()
+        obs2 = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        state2 = get_full_state(env)
+
+        pairs.append((obs1, obs2, state1, state2))
 
     return pairs
 
@@ -284,11 +325,12 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
         output_dir: Directory where to save results
         gamma: Discount factor for value computation
     """
-    if not is_classic_control_env(config.environment.name):
-        print(f"\nSkipping paired state generation: {config.environment.name} is not a Classic Control environment")
+    if not (is_classic_control_env(config.environment.name) or is_mujoco_env(config.environment.name)):
+        print(f"\nSkipping paired state generation: {config.environment.name} is not a supported environment")
         return
 
     print(f"\nGenerating paired state evaluations")
+    print(f"Environment: {config.environment.name}")
     print(f"Number of pairs: {config.paired_state.n_pairs}")
     print(f"Trajectories per state: {config.paired_state.n_trajectories_per_state}")
 
@@ -320,15 +362,15 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
         'diff_ci_upper': [],
     }
 
-    for pair_idx, (obs1, obs2) in enumerate(tqdm(state_pairs)):
+    for pair_idx, (obs1, obs2, state1, state2) in enumerate(tqdm(state_pairs)):
         s1_returns = []
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, obs1, gamma=gamma, deterministic=False)
+            ret = generate_trajectory_from_state(env, model, obs1, state1, gamma=gamma, deterministic=False)
             s1_returns.append(ret)
 
         s2_returns = []
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, obs2, gamma=gamma, deterministic=False)
+            ret = generate_trajectory_from_state(env, model, obs2, state2, gamma=gamma, deterministic=False)
             s2_returns.append(ret)
 
         s1_returns = np.array(s1_returns)
