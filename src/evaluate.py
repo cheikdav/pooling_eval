@@ -10,17 +10,7 @@ from typing import Dict
 from datetime import datetime
 
 from src.config import ExperimentConfig
-from src.estimators.neural_net import MonteCarloEstimator, DQNEstimator
-from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTDEstimator
-
-
-# Mapping from method names to estimator classes
-ESTIMATOR_CLASSES = {
-    'monte_carlo': MonteCarloEstimator,
-    'dqn': DQNEstimator,
-    'least_squares_mc': LeastSquaresMCEstimator,
-    'least_squares_td': LeastSquaresTDEstimator,
-}
+from src.env_utils import ESTIMATOR_CLASSES
 
 
 def load_evaluation_batch(data_dir: Path) -> Dict:

@@ -7,6 +7,25 @@ from stable_baselines3.common.monitor import Monitor
 from typing import Tuple, Callable
 
 from src.config import ExperimentConfig
+from src.estimators.neural_net import MonteCarloEstimator, DQNEstimator
+from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTDEstimator
+
+
+# Centralized mapping from method names to estimator classes
+# Handles all method name variations including RBF and NNLS variants
+ESTIMATOR_CLASSES = {
+    # Base methods
+    'monte_carlo': MonteCarloEstimator,
+    'dqn': DQNEstimator,
+    'least_squares_mc': LeastSquaresMCEstimator,
+    'least_squares_td': LeastSquaresTDEstimator,
+    # RBF feature extractor variants (same underlying classes)
+    'least_squares_mc_rbf': LeastSquaresMCEstimator,
+    'least_squares_td_rbf': LeastSquaresTDEstimator,
+    # NNLS (Non-negative least squares) variants with policy representation features
+    'nnls_mc': MonteCarloEstimator,
+    'nnls_td': DQNEstimator,
+}
 
 
 def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None) -> Callable:
