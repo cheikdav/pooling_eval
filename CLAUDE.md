@@ -30,6 +30,20 @@ uv sync                    # Recommended (uses pyproject.toml)
 pip install -e .          # Alternative
 ```
 
+### Estimate Storage Requirements
+```bash
+# Calculate episodes per batch needed for target storage
+uv run -m src.estimate_storage --config configs/example_config.yaml --target-gb 10
+
+# Custom number of batches
+uv run -m src.estimate_storage --config configs/example_config.yaml --target-gb 5 --n-batches 100
+
+# Use more samples for better estimate
+uv run -m src.estimate_storage --config configs/example_config.yaml --target-gb 10 --sample-episodes 50
+```
+
+This tool generates a small batch of episodes, measures storage size, and calculates the optimal `episodes_per_batch` to achieve your target total storage across all batches. Useful for planning experiments with storage constraints.
+
 ### Run Complete Experiment Pipeline
 ```bash
 # Simple shell script that runs all steps sequentially
