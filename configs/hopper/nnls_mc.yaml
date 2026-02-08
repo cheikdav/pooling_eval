@@ -1,0 +1,12 @@
+name: nnls_mc
+type: monte_carlo
+learning_rate: 0.001
+n_initializations: 1
+feature_extractor:
+  type: policy_representation
+  normalize: true
+  policy_path: null
+  algorithm: SAC
+network:
+  hidden_sizes: []
+  activation: relu
