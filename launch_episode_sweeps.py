@@ -15,7 +15,7 @@ import multiprocessing
 from src.config import ExperimentConfig
 
 
-def create_sweep_config(base_config: dict, method: str, episode_count: int, config_path: str) -> dict:
+def create_sweep_config(base_config: dict, method: str, episode_count: int, config_path: str, exp_config: ExperimentConfig) -> dict:
     """Create a sweep config for a specific episode count.
 
     Args:
@@ -23,12 +23,17 @@ def create_sweep_config(base_config: dict, method: str, episode_count: int, conf
         method: Method name (monte_carlo, dqn, etc.)
         episode_count: Number of episodes for this sweep
         config_path: Path to experiment config file
+        exp_config: Loaded experiment config (for environment name)
 
     Returns:
         Modified sweep configuration
     """
     import copy
     config = copy.deepcopy(base_config)
+
+    # Set environment-specific project name
+    if 'project' not in config:
+        config['project'] = exp_config.logging.get_project_name(exp_config.environment.name)
 
     # Set the experiment config path
     config['parameters']['config'] = {'value': config_path}
@@ -184,9 +189,11 @@ def main():
         print(f"Error: Experiment config not found: {args.config}")
         sys.exit(1)
 
+    # Load experiment config (needed for episode counts and project name)
+    exp_config = ExperimentConfig.from_yaml(args.config)
+
     # If no episodes specified, read from experiment config
     if args.episodes is None:
-        exp_config = ExperimentConfig.from_yaml(args.config)
         args.episodes = exp_config.value_estimators.training.episode_subsets
         print(f"Using episode counts from {args.config}: {args.episodes}")
 
@@ -196,7 +203,7 @@ def main():
     sweep_ids = []
 
     for episode_count in args.episodes:
-        sweep_config = create_sweep_config(base_config, args.method, episode_count, str(args.config))
+        sweep_config = create_sweep_config(base_config, args.method, episode_count, str(args.config), exp_config)
 
         if args.dry_run:
             print(f"\n{'='*60}")

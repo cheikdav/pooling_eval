@@ -248,6 +248,24 @@ class LoggingConfig:
     log_frequency: int = 10
     wandb_mode: str = "online"  # "online" (sync immediately) or "offline" (sync at end)
 
+    def get_project_name(self, env_name: str) -> str:
+        """Get environment-specific W&B project name.
+
+        Args:
+            env_name: Full environment name (e.g., "CartPole-v1", "Hopper-v4")
+
+        Returns:
+            Project name in format: {base_project}-{simplified_env_name}
+            Example: "pooling-eval-cartpole"
+        """
+        simplified = env_name.lower()
+        if '-v' in simplified:
+            simplified = simplified.rsplit('-v', 1)[0]
+        if simplified.startswith('ale/'):
+            simplified = simplified[4:]
+        simplified = simplified.replace('/', '-').replace('_', '-')
+        return f"{self.wandb_project}-{simplified}"
+
 
 @dataclass
 class PairedStateConfig:

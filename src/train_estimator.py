@@ -162,7 +162,7 @@ def train_single_initialization(
         method_abbr = get_method_abbreviation(method_name)
         run_name = f"{method_abbr} ({config.environment.name}, #{batch_name}, #ep {num_episodes}, init {init_idx})"
         wandb.init(
-            project=config.logging.wandb_project,
+            project=config.logging.get_project_name(config.environment.name),
             entity=config.logging.wandb_entity,
             name=run_name,
             group=config.experiment_id,

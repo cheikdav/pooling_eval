@@ -89,7 +89,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
 
     if use_wandb and config.logging.use_wandb:
         wandb.init(
-            project=config.logging.wandb_project,
+            project=config.logging.get_project_name(config.environment.name),
             entity=config.logging.wandb_entity,
             name=f"policy_{config.policy.algorithm} ({config.environment.name})",
             group=config.experiment_id,
@@ -188,7 +188,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     print(f"Total timesteps: {config.policy.total_timesteps}")
     print(f"Output directory: {output_dir}")
     if use_wandb and config.logging.use_wandb:
-        print(f"W&B tracking enabled: {config.logging.wandb_project}\n")
+        print(f"W&B tracking enabled: {config.logging.get_project_name(config.environment.name)}\n")
     else:
         print("W&B tracking disabled\n")
 

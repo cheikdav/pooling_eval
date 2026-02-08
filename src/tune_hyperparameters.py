@@ -50,7 +50,9 @@ def main():
 
     # For offline mode, set wandb dir (will be refined after getting run_id)
     base_wandb_dir = str(config_temp.get_wandb_dir() / "sweep" / config_temp.experiment_id) if args.wandb_mode == "offline" else None
-    run = wandb.init(tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode, dir=base_wandb_dir)
+    # Set environment-specific project as fallback (sweep config takes precedence)
+    project_name = config_temp.logging.get_project_name(config_temp.environment.name)
+    run = wandb.init(project=project_name, tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode, dir=base_wandb_dir)
     print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
 
     # Setup log directory: logs/sweep/<exp_id>/<method>/<sweep_id>/<run_id>/
