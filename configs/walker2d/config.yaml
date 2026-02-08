@@ -49,6 +49,8 @@ value_estimators:
   - least_squares_td
   - least_squares_mc_rbf
   - least_squares_td_rbf
+  - nnls_mc
+  - nnls_td
 network:
   hidden_sizes:
   - 128
