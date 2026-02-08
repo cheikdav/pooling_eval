@@ -2,6 +2,4 @@ name: least_squares_td
 type: least_squares_td
 learning_rate: 0.0001
 n_initializations: 1
-policy_path: null
-algorithm: PPO
 ridge_lambda: 1.0e-05
