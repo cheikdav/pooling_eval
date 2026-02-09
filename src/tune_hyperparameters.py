@@ -114,10 +114,14 @@ def main():
     if target_update_rate is not None and hasattr(method_config, 'target_update_rate'):
         method_config.target_update_rate = target_update_rate
 
-    # Override num_episodes from wandb sweep or CLI
-    num_episodes = wandb.config.get('num_episodes', args.num_episodes)
-    if num_episodes is not None:
-        config.value_estimators.training.episode_subsets = [num_episodes]
+    # Get episode_subsets - either from config or override from sweep/CLI
+    episode_subsets = wandb.config.get('episode_subsets', None)
+    if episode_subsets is None and args.num_episodes is not None:
+        episode_subsets = [args.num_episodes]
+    if episode_subsets is None:
+        episode_subsets = config.value_estimators.training.episode_subsets
+
+    print(f"[SWEEP] Training on episode counts: {episode_subsets}")
 
     # Override batch_size from wandb sweep or CLI
     batch_size = wandb.config.get('batch_size', args.batch_size)
@@ -138,26 +142,28 @@ def main():
         method_config.n_initializations = 1
 
     # Pre-declare all metrics with independent step counters to avoid conflicts in parallel mode
-    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Pre-declaring wandb metrics for {method_config.n_initializations} initializations")
-    for init_idx in range(method_config.n_initializations):
-        suffix = f"_{init_idx}"
-        # Define independent step counter for this initialization to avoid conflicts in parallel mode
-        wandb.define_metric(f"step{suffix}")
-        # Define train metrics with independent step counter
-        wandb.define_metric(f"train{suffix}/loss", step_metric=f"step{suffix}")
-        wandb.define_metric(f"train{suffix}/mse", step_metric=f"step{suffix}")
-        wandb.define_metric(f"train{suffix}/mae", step_metric=f"step{suffix}")
-        wandb.define_metric(f"train{suffix}/mc_loss_train", step_metric=f"step{suffix}")
-        wandb.define_metric(f"train{suffix}/best_mc_loss", step_metric=f"step{suffix}")
-        wandb.define_metric(f"train{suffix}/mean_value", step_metric=f"step{suffix}")
-        wandb.define_metric(f"train{suffix}/mean_target", step_metric=f"step{suffix}")
-        # Define validation metrics with independent step counter
-        wandb.define_metric(f"val{suffix}/mc_loss", step_metric=f"step{suffix}")
-        wandb.define_metric(f"val{suffix}/min_mc_loss", step_metric=f"step{suffix}")
-        # Define final metrics
-        wandb.define_metric(f"final{suffix}/best_mc_loss")
-        wandb.define_metric(f"final{suffix}/mc_loss_train")
-        wandb.define_metric(f"final{suffix}/mc_loss_val")
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Pre-declaring wandb metrics")
+    print(f"  Episode counts: {episode_subsets}")
+    print(f"  Initializations per episode count: {method_config.n_initializations}")
+
+    for episode_count in episode_subsets:
+        for init_idx in range(method_config.n_initializations):
+            suffix = f"_{episode_count}ep"
+            if method_config.n_initializations > 1:
+                suffix += f"_{init_idx}"
+            wandb.define_metric(f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/loss", step_metric=f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/mse", step_metric=f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/mae", step_metric=f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/mc_loss_train", step_metric=f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/best_mc_loss", step_metric=f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/mean_value", step_metric=f"step{suffix}")
+            wandb.define_metric(f"train{suffix}/mean_target", step_metric=f"step{suffix}")
+            wandb.define_metric(f"val{suffix}/mc_loss", step_metric=f"step{suffix}")
+            wandb.define_metric(f"val{suffix}/min_mc_loss", step_metric=f"step{suffix}")
+            wandb.define_metric(f"final{suffix}/best_mc_loss")
+            wandb.define_metric(f"final{suffix}/mc_loss_train")
+            wandb.define_metric(f"final{suffix}/mc_loss_val")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
@@ -166,26 +172,65 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 
-    # Call core training
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting training...")
+    # Train on all episode counts and collect statistics
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting training on {len(episode_subsets)} episode counts...")
     sys.stdout.flush()
     sys.stderr.flush()
 
-    train_estimator(
-        config=config,
-        method_config=method_config,
-        batch_path=batch_path,
-        output_dir=output_dir,
-        batch_name="tuning",
-        overwrite=True,
-        use_wandb=True,
-        sweep_mode=True,
-        parallel_inits=args.parallel_inits,
-        n_jobs=args.n_jobs,
-        log_dir=log_dir
-    )
+    episode_results = []
+    for episode_count in episode_subsets:
+        print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training with {episode_count} episodes...")
+        sys.stdout.flush()
+        sys.stderr.flush()
 
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training completed successfully")
+        config.value_estimators.training.episode_subsets = [episode_count]
+
+        result = train_estimator(
+            config=config,
+            method_config=method_config,
+            batch_path=batch_path,
+            output_dir=output_dir / f"{episode_count}ep",
+            batch_name="tuning",
+            overwrite=True,
+            use_wandb=True,
+            sweep_mode=True,
+            parallel_inits=args.parallel_inits,
+            n_jobs=args.n_jobs,
+            log_dir=log_dir
+        )
+
+        if result:
+            episode_results.append(result)
+
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training completed for all episode counts")
+
+    # Aggregate statistics across episode counts
+    if episode_results:
+        import numpy as np
+
+        all_best_losses = [r['best_mc_loss'] for r in episode_results]
+
+        aggregate_log = {
+            'final/mean_val_mc_loss': np.mean(all_best_losses),
+            'final/std_val_mc_loss': np.std(all_best_losses),
+            'final/min_val_mc_loss': np.min(all_best_losses),
+            'final/max_val_mc_loss': np.max(all_best_losses),
+        }
+
+        for r in episode_results:
+            ep = r['num_episodes']
+            aggregate_log[f'final/{ep}ep/best_mc_loss'] = r['best_mc_loss']
+            aggregate_log[f'final/{ep}ep/mean_mc_loss'] = r['mean_mc_loss']
+            aggregate_log[f'final/{ep}ep/std_mc_loss'] = r['std_mc_loss']
+
+        wandb.log(aggregate_log)
+
+        print(f"\nAggregate statistics across {len(episode_results)} episode counts:")
+        print(f"  Mean validation MC loss: {aggregate_log['final/mean_val_mc_loss']:.6f}")
+        print(f"  Std validation MC loss:  {aggregate_log['final/std_val_mc_loss']:.6f}")
+        print(f"  Min validation MC loss:  {aggregate_log['final/min_val_mc_loss']:.6f}")
+        print(f"  Max validation MC loss:  {aggregate_log['final/max_val_mc_loss']:.6f}")
+
     sys.stdout.flush()
     sys.stderr.flush()
 

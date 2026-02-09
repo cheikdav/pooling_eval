@@ -195,7 +195,12 @@ def train_single_initialization(
     last_improvement_epoch = 0
 
     # Determine logging prefix for multiple initializations
-    init_suffix = f"_{init_idx}" if n_inits > 1 else ""
+    if sweep_mode:
+        init_suffix = f"_{num_episodes}ep"
+        if n_inits > 1:
+            init_suffix += f"_{init_idx}"
+    else:
+        init_suffix = f"_{init_idx}" if n_inits > 1 else ""
 
     # Create dataset once
     dataset = TransitionDataset(train_batch)
@@ -652,33 +657,17 @@ def train_estimator(
         with open(metadata_path, 'w') as f:
             json.dump(estimator_metadata, f, indent=2)
 
-        # Log aggregate statistics to wandb in sweep mode
-        if sweep_mode and use_wandb and config.logging.use_wandb:
-            import wandb
-            aggregate_log = {
-                'final/min_mc_loss': min_mc_loss,
-                'final/mean_mc_loss': mean_mc_loss,
-                'final/std_mc_loss': std_mc_loss,
-                'final/best_mc_loss': best_mc_loss,
-                'final/best_val_mc_loss': best_mc_loss,  # For sweep optimization
-            }
-
-            # Create scatter plot: mean vs std
-            # This will show the relationship between mean loss and variability across initializations
-            data = [[mean_mc_loss, std_mc_loss]]
-            table = wandb.Table(data=data, columns=["mean_mc_loss", "std_mc_loss"])
-            aggregate_log['final/mean_vs_std_scatter'] = wandb.plot.scatter(
-                table, "mean_mc_loss", "std_mc_loss",
-                title="Mean vs Std MC Loss (across initializations)"
-            )
-
-            wandb.log(aggregate_log)
-            print(f"\nLogged aggregate statistics to wandb:")
-            print(f"  Min MC loss:  {min_mc_loss:.6f}")
-            print(f"  Mean MC loss: {mean_mc_loss:.6f}")
-            print(f"  Std MC loss:  {std_mc_loss:.6f}")
-
         print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes.\n")
+
+        # Return aggregate statistics for sweep mode (to be aggregated across episode counts)
+        if sweep_mode:
+            return {
+                'num_episodes': n_episodes,
+                'min_mc_loss': min_mc_loss,
+                'mean_mc_loss': mean_mc_loss,
+                'std_mc_loss': std_mc_loss,
+                'best_mc_loss': best_mc_loss,
+            }
 
 
 def main():

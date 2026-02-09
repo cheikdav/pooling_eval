@@ -115,63 +115,53 @@ uv run -m src.train_estimator ... --no-wandb
 
 ### Hyperparameter Tuning with W&B Sweeps
 ```bash
-# Quick method: Use helper script
-./launch_sweep.sh monte_carlo      # Run 1 agent
-./launch_sweep.sh dqn 4            # Run 4 parallel agents
+# Launch sweep with automatic config injection
+uv run launch_episode_sweeps.py --config configs/cartpole/config.yaml --method monte_carlo
 
-# Manual method:
-# 1. Create sweep
-wandb sweep configs/sweep_monte_carlo.yaml
+# Launch sweep with N parallel agents
+uv run launch_episode_sweeps.py --config configs/cartpole/config.yaml --method monte_carlo --launch-agents 4
 
-# 2. Run agent(s) with the sweep ID returned above
+# Dry run to see generated sweep config
+uv run launch_episode_sweeps.py --config configs/cartpole/config.yaml --method monte_carlo --dry-run
+
+# Manual method (after sweep created):
 wandb agent <sweep-id>
-
-# Launch separate sweeps per episode count (uses episodes from sweep config by default)
-uv run launch_episode_sweeps.py --method monte_carlo
-uv run launch_episode_sweeps.py --method least_squares_mc
-
-# Or specify custom episode counts
-uv run launch_episode_sweeps.py --method monte_carlo --episodes 50 100 200 400
-
-# Auto-launch multiple agents per sweep to parallelize
-uv run launch_episode_sweeps.py --method monte_carlo --launch-agents 4  # 4 agents per sweep
 ```
 
+**New Sweep Workflow:**
+- **Single sweep per method**: Each hyperparameter set trains on ALL episode counts in one run
+- **Episode counts**: Loaded from `config.value_estimators.training.episode_subsets`
+- **Seed variation**: Each episode count uses a different seed for diversity
+- **Aggregated metrics**: Reports combined statistics across all episode counts
+  - `final/mean_val_mc_loss`: Mean of best losses across all episode counts (optimized by sweep)
+  - `final/std_val_mc_loss`: Standard deviation across episode counts
+  - `final/{N}ep/best_mc_loss`: Best loss for specific episode count
+
 **Parallel Initialization:**
-- By default, multiple initializations within a sweep run are trained sequentially
-- To speed up sweeps, enable parallel initialization training in sweep configs:
+- Multiple initializations within a run can be trained in parallel
+- Enable in sweep configs:
   ```yaml
   parameters:
     parallel-inits:
       value: true
     n-jobs:
-      value: 4  # Number of parallel processes
+      value: 4
   ```
-- This trains all initializations for a hyperparameter combo in parallel, then aggregates results
-- Each hyperparameter combo still appears as a single W&B run with aggregate metrics
 
 **How it works:**
-- Sweep configs in `configs/sweep_*.yaml` define hyperparameter search space
-- **Monte Carlo / DQN**: Tunes learning rate, batch size, num episodes
-- **Least Squares (MC/TD)**: Tunes ridge_lambda, num episodes
-- Uses random search to find optimal values
+- Sweep configs in `configs/sweeps/sweep_*.yaml` define hyperparameter search space
+- **Monte Carlo / DQN**: Tunes learning rate, batch size
+- **Least Squares (MC/TD)**: Tunes ridge_lambda
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
-- **Optimizes validation MC loss** (`final/best_val_mc_loss`) to prevent overfitting
-- **W&B mode**: Set `wandb-mode: offline` in sweep config to avoid rate limits (syncs at end) or `online` for real-time monitoring
-- Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/`
-- All runs tracked in W&B for comparison
-
-**Separate sweeps per episode count:**
-- `launch_episode_sweeps.py` creates one sweep per episode count
-- Uses episode values from sweep config by default (or specify with `--episodes`)
-- Each sweep varies hyperparameters (learning rate, ridge_lambda, etc.) for a fixed episode count
-- Use `--launch-agents N` to automatically launch N parallel agents per sweep for faster tuning
-- Useful for analyzing performance scaling with data size
+- **Optimizes mean validation MC loss across all episode counts** (`final/mean_val_mc_loss`)
+- **W&B mode**: Set `wandb-mode: offline` in sweep config to avoid rate limits
+- Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/<N>ep/`
 
 **Customizing sweeps:**
-- Edit `configs/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- Supported parameters: learning_rate, target_update_rate, batch_size, num_episodes, ridge_lambda, wandb_mode
-- Set `wandb-mode: offline` to avoid rate limits with many parallel agents (recommended for large sweeps)
+- Edit `configs/sweeps/sweep_*.yaml` to change search range or method (bayes/grid/random)
+- Supported parameters: learning_rate, target_update_rate, batch_size, ridge_lambda, n_initializations, parallel_inits, n_jobs
+- Episode counts are loaded from the experiment config's `episode_subsets` field
+- Set `wandb-mode: offline` to avoid rate limits with many parallel agents
 
 ## Architecture
 
