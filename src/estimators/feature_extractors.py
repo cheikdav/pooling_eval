@@ -21,7 +21,7 @@ class RunningNormalizer:
 
     def update(self, data: torch.Tensor) -> None:
         batch_mean = data.mean(dim=0)
-        batch_var = data.var(dim=0)
+        batch_var = data.var(dim=0, unbiased=False)
         batch_count = data.shape[0]
 
         delta = batch_mean - self.mean
