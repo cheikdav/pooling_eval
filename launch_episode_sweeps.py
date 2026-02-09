@@ -122,8 +122,8 @@ def main():
                        help="Base sweep config file (default: configs/sweeps/sweep_<method>.yaml)")
     parser.add_argument("--dry-run", action='store_true',
                        help="Print sweep config without launching")
-    parser.add_argument("--launch-agents", type=int, default=0,
-                       help="Number of agents to launch (default: 0, just create sweep)")
+    parser.add_argument("--launch-agents", type=int, default=1,
+                       help="Number of agents to launch (default: 1)")
     args = parser.parse_args()
 
     if args.sweep_config is None:
@@ -165,7 +165,7 @@ def main():
     if args.launch_agents > 0:
         print(f"\nLaunching {args.launch_agents} agent(s)...")
 
-        agent_processes = []
+        processes = []
         for agent_idx in range(args.launch_agents):
             process = multiprocessing.Process(
                 target=run_agent,
@@ -173,19 +173,24 @@ def main():
                 daemon=False
             )
             process.start()
+            processes.append(process)
 
             sweep_id_hash = sweep_id.split('/')[-1] if '/' in sweep_id else sweep_id
             log_file = exp_config.get_logs_dir() / "sweep" / exp_config.experiment_id / args.method / sweep_id_hash / f"agent_{agent_idx}.log"
-            agent_processes.append((agent_idx, log_file))
             print(f"  Agent {agent_idx} started (PID: {process.pid}, log: {log_file})")
 
         print(f"\n{'='*60}")
         print(f"All agents launched! Monitor progress:")
         print(f"{'='*60}\n")
-        for agent_idx, log_file in agent_processes:
+        sweep_id_hash = sweep_id.split('/')[-1] if '/' in sweep_id else sweep_id
+        for agent_idx in range(args.launch_agents):
+            log_file = exp_config.get_logs_dir() / "sweep" / exp_config.experiment_id / args.method / sweep_id_hash / f"agent_{agent_idx}.log"
             print(f"tail -f {log_file}")
         print(f"\nOr view sweeps at: https://wandb.ai")
         print(f"\nTo stop agents, use: pkill -f 'wandb agent'")
+
+        for process in processes:
+            process.join()
     else:
         print(f"\nTo run agents manually:")
         print(f"wandb agent {sweep_id}")
