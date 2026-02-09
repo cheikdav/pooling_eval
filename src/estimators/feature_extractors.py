@@ -12,11 +12,13 @@ from sklearn.kernel_approximation import RBFSampler
 class RunningNormalizer:
     """Tracks running mean and std for online normalization."""
 
-    def __init__(self, dim: int, epsilon: float = 1e-8):
+    def __init__(self, dim: int, epsilon: float = 1e-8, min_var: float = 1e-4):
         self.dim = dim
         self.epsilon = epsilon
+        self.min_var = min_var  # Minimum variance to prevent extreme amplification
         self.mean = torch.zeros(dim)
         self.var = torch.ones(dim)
+        self.clipped_var = torch.ones(dim)  # Clipped variance for stable normalization
         self.count = 0
 
     def update(self, data: torch.Tensor) -> None:
@@ -34,19 +36,24 @@ class RunningNormalizer:
         self.var = M2 / total_count
         self.count = total_count
 
+        # Update clipped variance for stable normalization
+        self.clipped_var = torch.maximum(self.var, torch.tensor(self.min_var, device=self.var.device))
+
     def normalize(self, data: torch.Tensor) -> torch.Tensor:
-        return (data - self.mean) / torch.sqrt(self.var + self.epsilon)
+        return (data - self.mean) / torch.sqrt(self.clipped_var + self.epsilon)
 
     def state_dict(self):
         return {
             'mean': self.mean,
             'var': self.var,
+            'clipped_var': self.clipped_var,
             'count': self.count,
         }
 
     def load_state_dict(self, state_dict):
         self.mean = state_dict['mean']
         self.var = state_dict['var']
+        self.clipped_var = state_dict.get('clipped_var', self.var)  # Backward compatibility
         self.count = state_dict['count']
 
 
