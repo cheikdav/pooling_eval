@@ -194,18 +194,24 @@ def train_single_initialization(
     min_loss = float('inf')
     last_improvement_epoch = 0
 
-    # Determine logging prefix for multiple initializations
+    # Determine logging suffix structure
+    # Suffix patterns: "" or "/50ep" or "/init_0" or "/50ep_init0"
     if sweep_mode:
-        init_suffix = f"_{num_episodes}ep"
+        # Sweep mode: metrics grouped by type (train/mc_loss/50ep)
+        suffix = f"/{num_episodes}ep"
         if n_inits > 1:
-            init_suffix += f"_{init_idx}"
+            suffix += f"_init{init_idx}"
 
-        # Define custom step metrics for this namespace
+        # Define custom step metrics
+        # In sweep mode, hide train/* but keep val/mc_loss/* visible
         if use_wandb and config.logging.use_wandb:
-            wandb.define_metric(f"train{init_suffix}/*", step_metric=f"step{init_suffix}")
-            wandb.define_metric(f"val{init_suffix}/*", step_metric=f"step{init_suffix}")
+            wandb.define_metric(f"train/*", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"val/mc_loss/*", step_metric=f"step{suffix}", hidden=False)
+            wandb.define_metric(f"val/min_loss/*", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"step{suffix}", hidden=True)
     else:
-        init_suffix = f"_{init_idx}" if n_inits > 1 else ""
+        # Normal mode: metrics grouped by init (train/mc_loss or train_0/mc_loss)
+        suffix = f"/init_{init_idx}" if n_inits > 1 else ""
 
     # Create dataset once
     dataset = TransitionDataset(train_batch)
@@ -286,14 +292,15 @@ def train_single_initialization(
         if (log_frequency > 0 and epoch % log_frequency == 0) or is_last_epoch:
             if use_wandb and config.logging.use_wandb:
                 log_dict = {
-                    f'train{init_suffix}/{metric_name}': metric_value for metric_name, metric_value in avg_metrics.items()
+                    f'train/{metric_name}{suffix}': metric_value
+                    for metric_name, metric_value in avg_metrics.items()
                 }
-                log_dict[f'step{init_suffix}'] = epoch
-                log_dict[f'train{init_suffix}/best_mc_loss'] = best_mc_loss
+                log_dict[f'step{suffix}'] = epoch
+                log_dict[f'train/best_mc_loss{suffix}'] = best_mc_loss
 
                 if use_validation:
-                    log_dict[f'val{init_suffix}/mc_loss'] = final_mc_loss_val
-                    log_dict[f'val{init_suffix}/min_loss'] = min_loss
+                    log_dict[f'val/mc_loss{suffix}'] = final_mc_loss_val
+                    log_dict[f'val/min_loss{suffix}'] = min_loss
                 wandb.log(log_dict)
 
 
@@ -324,12 +331,12 @@ def train_single_initialization(
 
     if use_wandb and config.logging.use_wandb:
         # Log per-initialization final metrics
-        final_log = {f'final{init_suffix}/best_mc_loss': best_mc_loss}
+        final_log = {f'final/best_mc_loss{suffix}': best_mc_loss}
         if use_validation:
-            final_log[f'final{init_suffix}/mc_loss_train'] = final_mc_loss_train
-            final_log[f'final{init_suffix}/mc_loss_val'] = final_mc_loss_val
+            final_log[f'final/mc_loss_train{suffix}'] = final_mc_loss_train
+            final_log[f'final/mc_loss_val{suffix}'] = final_mc_loss_val
         else:
-            final_log[f'final{init_suffix}/mc_loss_train'] = final_mc_loss_train
+            final_log[f'final/mc_loss_train{suffix}'] = final_mc_loss_train
         wandb.log(final_log)
 
         # Only finish wandb run if not in sweep mode (sweep manages the run lifecycle)
