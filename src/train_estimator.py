@@ -205,17 +205,17 @@ def train_single_initialization(
         # Define custom step metrics
         # In sweep mode, hide train/* but keep val/mc_loss/* visible
         if use_wandb and config.logging.use_wandb:
-            # Hide training metrics (wandb only supports wildcards at end of pattern)
-            wandb.define_metric(f"train/mc_loss/*", step_metric=f"step{suffix}", hidden=True)
-            wandb.define_metric(f"train/loss/*", step_metric=f"step{suffix}", hidden=True)
-            wandb.define_metric(f"train/mse/*", step_metric=f"step{suffix}", hidden=True)
-            wandb.define_metric(f"train/mae/*", step_metric=f"step{suffix}", hidden=True)
-            wandb.define_metric(f"train/mean_value/*", step_metric=f"step{suffix}", hidden=True)
-            wandb.define_metric(f"train/mean_target/*", step_metric=f"step{suffix}", hidden=True)
-            wandb.define_metric(f"train/best_mc_loss/*", step_metric=f"step{suffix}", hidden=True)
+            # Define exact metric names (hidden only works with exact matches, not wildcards)
+            wandb.define_metric(f"train/mc_loss{suffix}", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"train/loss{suffix}", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"train/mse{suffix}", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"train/mae{suffix}", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"train/mean_value{suffix}", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"train/mean_target{suffix}", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"train/best_mc_loss{suffix}", step_metric=f"step{suffix}", hidden=True)
             # Keep validation mc_loss visible
-            wandb.define_metric(f"val/mc_loss/*", step_metric=f"step{suffix}", hidden=False)
-            wandb.define_metric(f"val/min_loss/*", step_metric=f"step{suffix}", hidden=True)
+            wandb.define_metric(f"val/mc_loss{suffix}", step_metric=f"step{suffix}", hidden=False)
+            wandb.define_metric(f"val/min_loss{suffix}", step_metric=f"step{suffix}", hidden=True)
             wandb.define_metric(f"step{suffix}", hidden=True)
     else:
         # Normal mode: metrics grouped by init (train/mc_loss or train_0/mc_loss)
