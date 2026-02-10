@@ -141,18 +141,9 @@ def main():
         # Default to 1 if not specified
         method_config.n_initializations = 1
 
-    # Pre-declare all metrics with independent step counters to avoid conflicts in parallel mode
-    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Pre-declaring wandb metrics")
+    print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training configuration:")
     print(f"  Episode counts: {episode_subsets}")
     print(f"  Initializations per episode count: {method_config.n_initializations}")
-
-    for episode_count in episode_subsets:
-        for init_idx in range(method_config.n_initializations):
-            suffix = f"_{episode_count}ep"
-            if method_config.n_initializations > 1:
-                suffix += f"_{init_idx}"
-            wandb.define_metric(f"train{suffix}/*", step_metric=f"step{suffix}")
-            wandb.define_metric(f"val{suffix}/*", step_metric=f"step{suffix}")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"

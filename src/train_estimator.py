@@ -199,6 +199,11 @@ def train_single_initialization(
         init_suffix = f"_{num_episodes}ep"
         if n_inits > 1:
             init_suffix += f"_{init_idx}"
+
+        # Define custom step metrics for this namespace
+        if use_wandb and config.logging.use_wandb:
+            wandb.define_metric(f"train{init_suffix}/*", step_metric=f"step{init_suffix}")
+            wandb.define_metric(f"val{init_suffix}/*", step_metric=f"step{init_suffix}")
     else:
         init_suffix = f"_{init_idx}" if n_inits > 1 else ""
 
