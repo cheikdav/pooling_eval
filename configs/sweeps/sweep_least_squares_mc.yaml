@@ -12,7 +12,7 @@ command:
   - ${args}
 method: random  # bayes, grid, or random
 metric:
-  name: final/best_val_mc_loss
+  name: final/mean_val_mc_loss
   goal: minimize
 
 # Termination conditions
@@ -21,14 +21,14 @@ run_cap: 40  # Maximum number of runs before sweep terminates
 parameters:
   method:
     value: least_squares_mc
-  wandb-mode:
-    value: offline
+  log-frequency:
+    value: 1
   ridge-lambda:
     min: 1.0e-4
     max: 1.0
     distribution: log_uniform_values
   n-components:
-    values: [null, 32, 100, 200, 500]
+    values: [null, 32, 64, 128, 256, 512]
   n-initializations:
     value: 1
   parallel-inits:

@@ -374,6 +374,7 @@ def train_initialization_worker(
     log_dir: Path,
     use_wandb: bool = False,
     sweep_mode: bool = False,
+    log_frequency: int = None,
 ) -> tuple[float, Path]:
     """Train one initialization with per-init logging, used by both parallel and sequential modes."""
     import sys
@@ -403,9 +404,11 @@ def train_initialization_worker(
     np.random.seed(config.seed + init_idx)
 
     # Train
+    # Use override log_frequency if provided, otherwise use config default
+    log_freq = log_frequency if log_frequency is not None else config.logging.log_frequency
     final_mc_loss, trained_estimator = train_single_initialization(
         method_config, train_batch, test_batch, config, method_name, batch_name,
-        n_episodes, init_idx, use_wandb=use_wandb, sweep_mode=sweep_mode, n_inits=n_inits, log_frequency=config.logging.log_frequency
+        n_episodes, init_idx, use_wandb=use_wandb, sweep_mode=sweep_mode, n_inits=n_inits, log_frequency=log_freq
     )
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] [Init {init_idx}] Complete: MC loss = {final_mc_loss:.6f}")
@@ -441,7 +444,8 @@ def train_estimator(
     parallel_inits: bool = False,
     n_jobs: int = None,
     log_dir: Path = None,
-    timestamp: str = None
+    timestamp: str = None,
+    log_frequency: int = None
 ):
     """Train multiple estimator initializations and keep the best one.
 
@@ -458,6 +462,7 @@ def train_estimator(
         n_jobs: Number of parallel jobs (default: number of CPUs)
         log_dir: Directory for per-init logs (if None, creates one using timestamp)
         timestamp: Timestamp for this training session (shared across batches/episodes)
+        log_frequency: Override logging frequency (if None, uses config.logging.log_frequency)
     """
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
@@ -560,7 +565,7 @@ def train_estimator(
                         train_initialization_worker,
                         init_idx, config, method_config, train_batch, test_batch,
                         method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
-                        use_wandb, sweep_mode
+                        use_wandb, sweep_mode, log_frequency
                     )
                     futures.append((init_idx, future))
 
@@ -585,7 +590,7 @@ def train_estimator(
                 final_mc_loss, model_path = train_initialization_worker(
                     init_idx, config, method_config, train_batch, test_batch,
                     method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
-                    use_wandb, sweep_mode
+                    use_wandb, sweep_mode, log_frequency
                 )
 
                 results.append((init_idx, final_mc_loss, model_path))

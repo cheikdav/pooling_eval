@@ -9,7 +9,7 @@ command:
   - ${args}
 method: random
 metric:
-  name: final/best_val_mc_loss
+  name: final/mean_val_mc_loss
   goal: minimize
 
 run_cap: 40
@@ -17,8 +17,8 @@ run_cap: 40
 parameters:
   method:
     value: least_squares_td_rbf
-  wandb-mode:
-    value: offline
+  log-frequency:
+    value: 1
   ridge-lambda:
     min: 1.0e-4
     max: 1.0
