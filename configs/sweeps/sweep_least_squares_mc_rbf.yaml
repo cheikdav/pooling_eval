@@ -17,8 +17,8 @@ run_cap: 40
 parameters:
   method:
     value: least_squares_mc_rbf
-  wandb-mode:
-    value: offline
+  log-frequency:
+    value: 1
   ridge-lambda:
     min: 1.0e-8
     max: 1.0

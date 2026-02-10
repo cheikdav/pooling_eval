@@ -28,8 +28,6 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--method", type=str, required=True,
                        help="Method name (corresponds to 'name' field in method config)")
-    parser.add_argument("--wandb-mode", type=str, choices=["online", "offline"], default="online",
-                       help="W&B logging mode: online (real-time sync) or offline (sync at end)")
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--target-update-rate", type=float, default=None)
     parser.add_argument("--num-episodes", type=int, default=None)
@@ -45,6 +43,8 @@ def main():
                        help="Train initializations in parallel")
     parser.add_argument("--n-jobs", type=int, default=None,
                        help="Number of parallel jobs (default: number of CPUs)")
+    parser.add_argument("--log-frequency", type=int, default=None,
+                       help="Override logging frequency for W&B (log every N epochs)")
     args = parser.parse_args()
 
     # Capture all output in buffer until we have the run ID
@@ -56,13 +56,12 @@ def main():
     config_temp = ExperimentConfig.from_yaml(args.config)
 
     # Initialize wandb (will pick up sweep config automatically)
-    print(f"[SWEEP] Initializing wandb in {args.wandb_mode.upper()} mode")
+    # Sweeps always use online mode to avoid rate limit issues with proper log_frequency
+    print(f"[SWEEP] Initializing wandb in ONLINE mode")
 
-    # For offline mode, set wandb dir (will be refined after getting run_id)
-    base_wandb_dir = str(config_temp.get_wandb_dir() / "sweep" / config_temp.experiment_id) if args.wandb_mode == "offline" else None
     # Set environment-specific project as fallback (sweep config takes precedence)
     project_name = config_temp.logging.get_project_name(config_temp.environment.name)
-    run = wandb.init(project=project_name, tags=["hyperparameter-tuning", "sweep"], mode=args.wandb_mode, dir=base_wandb_dir)
+    run = wandb.init(project=project_name, tags=["hyperparameter-tuning", "sweep"], mode="online")
     print(f"[SWEEP] Wandb initialized: run_id={run.id}, mode={run.settings.mode}, url={run.url}")
 
     # Setup log directory: logs/sweep/<exp_id>/<method>/<sweep_id>/<run_id>/
@@ -185,6 +184,9 @@ def main():
 
         config.value_estimators.training.episode_subsets = [episode_count]
 
+        # Override log frequency from sweep config or use default
+        log_freq = wandb.config.get('log_frequency', args.log_frequency)
+
         result = train_estimator(
             config=config,
             method_config=method_config,
@@ -196,7 +198,8 @@ def main():
             sweep_mode=True,
             parallel_inits=args.parallel_inits,
             n_jobs=args.n_jobs,
-            log_dir=log_dir
+            log_dir=log_dir,
+            log_frequency=log_freq
         )
 
         if result:
@@ -239,11 +242,6 @@ def main():
     sys.stdout.flush()
     sys.stderr.flush()
 
-    # Get run directory for offline sync
-    if args.wandb_mode == "offline":
-        run_dir = str(Path(wandb.run.dir).parent)
-        print(f"Wandb run directory: {run_dir}")
-
     wandb_finish_start = datetime.now()
     print(f"[{wandb_finish_start.strftime('%Y-%m-%d %H:%M:%S')}] Calling wandb.finish()...")
     sys.stdout.flush()
@@ -254,35 +252,9 @@ def main():
     wandb_finish_end = datetime.now()
     elapsed = (wandb_finish_end - wandb_finish_start).total_seconds()
     print(f"[{wandb_finish_end.strftime('%Y-%m-%d %H:%M:%S')}] wandb.finish() completed (took {elapsed:.2f}s)")
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Wandb run finished and synced (online mode)")
     sys.stdout.flush()
     sys.stderr.flush()
-
-    # Sync offline run to W&B
-    if args.wandb_mode == "offline":
-        sync_start = datetime.now()
-        print(f"[{sync_start.strftime('%Y-%m-%d %H:%M:%S')}] Starting offline sync...")
-        print(f"Syncing directory: {run_dir}")
-        sys.stdout.flush()
-        sys.stderr.flush()
-
-        import subprocess
-        try:
-            subprocess.run(["wandb", "sync", run_dir], check=True, capture_output=True, text=True)
-            sync_end = datetime.now()
-            elapsed = (sync_end - sync_start).total_seconds()
-            print(f"[{sync_end.strftime('%Y-%m-%d %H:%M:%S')}] ✓ Successfully synced to W&B (took {elapsed:.2f}s)")
-        except subprocess.CalledProcessError as e:
-            sync_end = datetime.now()
-            elapsed = (sync_end - sync_start).total_seconds()
-            print(f"[{sync_end.strftime('%Y-%m-%d %H:%M:%S')}] ✗ Warning: Failed to sync offline run (took {elapsed:.2f}s)")
-            print(f"Error: {e}")
-            if e.stdout:
-                print(f"stdout: {e.stdout}")
-            if e.stderr:
-                print(f"stderr: {e.stderr}")
-            print(f"You can manually sync later with: wandb sync {run_dir}")
-    else:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Wandb run finished and synced (online mode)")
 
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Script exiting normally")
     sys.stdout.flush()

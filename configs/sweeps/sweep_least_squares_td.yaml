@@ -21,8 +21,8 @@ run_cap: 40  # Maximum number of runs before sweep terminates
 parameters:
   method:
     value: least_squares_td
-  wandb-mode:
-    value: offline
+  log-frequency:
+    value: 1
   ridge-lambda:
     min: 0.5
     max: 1.0

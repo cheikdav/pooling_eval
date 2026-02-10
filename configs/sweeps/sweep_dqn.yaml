@@ -21,8 +21,8 @@ run_cap: 40  # Maximum number of runs before sweep terminates
 parameters:
   method:
     value: dqn
-  wandb-mode:
-    value: offline
+  log-frequency:
+    value: 100
   learning-rate:
     min: 0.00001
     max: 0.1
@@ -34,8 +34,8 @@ parameters:
   batch-size:
     values: [64, 128, 256, 512]
   n-initializations:
-    value: 5
+    value: 1
   parallel-inits:
     value: true
   n-jobs:
-    value: 5
+    value: 1
