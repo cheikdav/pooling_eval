@@ -27,6 +27,8 @@ parameters:
     min: 1.0e-8
     max: 1.0
     distribution: log_uniform_values
+  n-components:
+    values: [null, 32, 100, 200, 500]
   n-initializations:
     value: 1
   parallel-inits:

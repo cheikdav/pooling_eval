@@ -1,0 +1,33 @@
+# W&B Sweep configuration for Least Squares Temporal Difference with RBF features
+program: uv
+command:
+  - ${env}
+  - uv
+  - run
+  - -m
+  - src.tune_hyperparameters
+  - ${args}
+method: random
+metric:
+  name: final/best_val_mc_loss
+  goal: minimize
+
+run_cap: 40
+
+parameters:
+  method:
+    value: least_squares_td_rbf
+  wandb-mode:
+    value: offline
+  ridge-lambda:
+    min: 0.5
+    max: 1.0
+    distribution: log_uniform_values
+  rbf-n-components:
+    values: [32, 64, 128, 256, 512]
+  n-initializations:
+    value: 1
+  parallel-inits:
+    value: true
+  n-jobs:
+    value: 1

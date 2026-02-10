@@ -15,13 +15,14 @@ import multiprocessing
 from src.config import ExperimentConfig
 
 
-def create_sweep_config(base_config: dict, config_path: str, exp_config: ExperimentConfig) -> dict:
+def create_sweep_config(base_config: dict, config_path: str, exp_config: ExperimentConfig, method: str = None) -> dict:
     """Create sweep config with injected experiment config path and project name.
 
     Args:
         base_config: Base sweep configuration to use as template
         config_path: Path to experiment config file
         exp_config: Loaded experiment config (for environment name)
+        method: Optional method name to override the one in base_config
 
     Returns:
         Modified sweep configuration
@@ -33,6 +34,9 @@ def create_sweep_config(base_config: dict, config_path: str, exp_config: Experim
         config['project'] = exp_config.logging.get_project_name(exp_config.environment.name)
 
     config['parameters']['config'] = {'value': config_path}
+
+    if method:
+        config['parameters']['method'] = {'value': method}
 
     if 'run_cap' not in config:
         config['run_cap'] = 30
@@ -142,7 +146,7 @@ def main():
 
     exp_config = ExperimentConfig.from_yaml(args.config)
 
-    sweep_config = create_sweep_config(base_config, str(args.config), exp_config)
+    sweep_config = create_sweep_config(base_config, str(args.config), exp_config, args.method)
 
     if args.dry_run:
         print(f"\n{'='*60}")

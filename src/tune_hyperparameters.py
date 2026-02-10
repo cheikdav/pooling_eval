@@ -28,7 +28,10 @@ def main():
     parser.add_argument("--num-episodes", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--ridge-lambda", type=float, default=None)
-    parser.add_argument("--n-components", type=int, default=None)
+    parser.add_argument("--n-components", type=int, default=None,
+                       help="Number of SVD/PCA components for dimensionality reduction (LeastSquares methods)")
+    parser.add_argument("--rbf-n-components", type=int, default=None,
+                       help="Number of RBF basis functions (for RBF feature extractor)")
     parser.add_argument("--preprocess-fraction", type=float, default=None)
     parser.add_argument("--n-initializations", type=int, default=None)
     parser.add_argument("--parallel-inits", type=lambda x: str(x).lower() == 'true', default=False,
@@ -132,6 +135,16 @@ def main():
     ridge_lambda = wandb.config.get('ridge_lambda', args.ridge_lambda)
     if ridge_lambda is not None and hasattr(method_config, 'ridge_lambda'):
         method_config.ridge_lambda = ridge_lambda
+
+    # Override n_components for LeastSquares methods from wandb sweep or CLI
+    n_components = wandb.config.get('n_components', args.n_components)
+    if n_components is not None and hasattr(method_config, 'n_components'):
+        method_config.n_components = n_components
+
+    # Override rbf_n_components for RBF feature extractor from wandb sweep or CLI
+    rbf_n_components = wandb.config.get('rbf_n_components', args.rbf_n_components)
+    if rbf_n_components is not None and method_config.feature_extractor is not None:
+        method_config.feature_extractor.n_components = rbf_n_components
 
     # Override n_initializations from wandb sweep or CLI
     n_initializations = wandb.config.get('n_initializations', args.n_initializations)
