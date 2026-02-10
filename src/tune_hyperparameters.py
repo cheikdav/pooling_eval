@@ -151,19 +151,8 @@ def main():
             suffix = f"_{episode_count}ep"
             if method_config.n_initializations > 1:
                 suffix += f"_{init_idx}"
-            wandb.define_metric(f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/loss", step_metric=f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/mse", step_metric=f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/mae", step_metric=f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/mc_loss_train", step_metric=f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/best_mc_loss", step_metric=f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/mean_value", step_metric=f"step{suffix}")
-            wandb.define_metric(f"train{suffix}/mean_target", step_metric=f"step{suffix}")
-            wandb.define_metric(f"val{suffix}/mc_loss", step_metric=f"step{suffix}")
-            wandb.define_metric(f"val{suffix}/min_mc_loss", step_metric=f"step{suffix}")
-            wandb.define_metric(f"final{suffix}/best_mc_loss")
-            wandb.define_metric(f"final{suffix}/mc_loss_train")
-            wandb.define_metric(f"final{suffix}/mc_loss_val")
+            wandb.define_metric(f"train{suffix}/*", step_metric=f"step{suffix}")
+            wandb.define_metric(f"val{suffix}/*", step_metric=f"step{suffix}")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
