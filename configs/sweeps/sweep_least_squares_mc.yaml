@@ -24,7 +24,7 @@ parameters:
   wandb-mode:
     value: offline
   ridge-lambda:
-    min: 1.0e-8
+    min: 1.0e-4
     max: 1.0
     distribution: log_uniform_values
   n-components:

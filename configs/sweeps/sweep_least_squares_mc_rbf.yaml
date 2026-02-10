@@ -20,11 +20,11 @@ parameters:
   wandb-mode:
     value: offline
   ridge-lambda:
-    min: 1.0e-8
+    min: 1.0e-4
     max: 1.0
     distribution: log_uniform_values
   rbf-n-components:
-    values: [32, 64, 128, 256, 512]
+    values: [128, 256, 512, 1024]
   n-initializations:
     value: 1
   parallel-inits:
