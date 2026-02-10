@@ -16,6 +16,13 @@ from src.config import ExperimentConfig
 from src.train_estimator import train_estimator
 
 
+def none_or_int(value):
+    """Convert string to int, or None if value is 'None' or 'null'."""
+    if value is None or str(value).lower() in ('none', 'null'):
+        return None
+    return int(value)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Hyperparameter tuning with W&B sweeps")
     parser.add_argument("--config", type=Path, required=True)
@@ -28,9 +35,9 @@ def main():
     parser.add_argument("--num-episodes", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--ridge-lambda", type=float, default=None)
-    parser.add_argument("--n-components", type=int, default=None,
+    parser.add_argument("--n-components", type=none_or_int, default=None,
                        help="Number of SVD/PCA components for dimensionality reduction (LeastSquares methods)")
-    parser.add_argument("--rbf-n-components", type=int, default=None,
+    parser.add_argument("--rbf-n-components", type=none_or_int, default=None,
                        help="Number of RBF basis functions (for RBF feature extractor)")
     parser.add_argument("--preprocess-fraction", type=float, default=None)
     parser.add_argument("--n-initializations", type=int, default=None)
