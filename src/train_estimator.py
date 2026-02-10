@@ -205,7 +205,8 @@ def train_single_initialization(
         # Define custom step metrics
         # In sweep mode, hide train/* but keep val/mc_loss/* visible
         if use_wandb and config.logging.use_wandb:
-            wandb.define_metric(f"train/*", step_metric=f"step{suffix}", hidden=True)
+            # Hide all training metrics (** matches any depth)
+            wandb.define_metric(f"train/**", step_metric=f"step{suffix}", hidden=True)
             wandb.define_metric(f"val/mc_loss/*", step_metric=f"step{suffix}", hidden=False)
             wandb.define_metric(f"val/min_loss/*", step_metric=f"step{suffix}", hidden=True)
             wandb.define_metric(f"step{suffix}", hidden=True)
