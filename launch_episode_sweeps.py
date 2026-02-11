@@ -37,6 +37,9 @@ def create_sweep_config(base_config: dict, config_path: str, exp_config: Experim
 
     if method:
         config['parameters']['method'] = {'value': method}
+        # Set sweep name to match method name
+        if 'name' not in config:
+            config['name'] = method
 
     if 'run_cap' not in config:
         config['run_cap'] = 30
