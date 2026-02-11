@@ -560,8 +560,9 @@ def train_estimator(
             episode_log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / method_name / timestamp / str(n_episodes) / f"batch_{batch_name}"
             episode_log_dir.mkdir(parents=True, exist_ok=True)
         else:
-            # Sweep mode: use provided log_dir
-            episode_log_dir = log_dir
+            # Sweep mode: append episode count to avoid conflicts between different episode counts
+            episode_log_dir = log_dir / f"{n_episodes}ep"
+            episode_log_dir.mkdir(parents=True, exist_ok=True)
         print(f"Per-initialization logs: {episode_log_dir}/init_*.log")
 
         # Train all initializations (parallel or sequential)
