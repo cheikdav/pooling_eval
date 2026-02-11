@@ -66,9 +66,10 @@ class FeatureExtractor(nn.Module, ABC):
     Normalization statistics only update during training mode.
     """
 
-    def __init__(self, normalize: bool = True):
+    def __init__(self, normalize: bool = True, repr_dim: int = None):
         super().__init__()
         self.normalize = normalize
+        self.repr_dim = repr_dim
         self.add_bias = False  # Can be set to True by estimators that need it (e.g., LeastSquares)
 
         if self.normalize:
@@ -97,7 +98,7 @@ class FeatureExtractor(nn.Module, ABC):
 
     @abstractmethod
     def get_feature_dim(self) -> int:
-        pass
+        return self.repr_dim + 1 if self.add_bias else self.repr_dim
 
     @abstractmethod
     def get_save_info(self) -> dict:
@@ -113,14 +114,10 @@ class IdentityExtractor(FeatureExtractor):
     """Returns observations as features."""
 
     def __init__(self, obs_dim: int, normalize: bool = True):
-        self.obs_dim = obs_dim
-        super().__init__(normalize=normalize)
+        super().__init__(normalize=normalize, repr_dim=obs_dim)
 
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         return observations
-
-    def get_feature_dim(self) -> int:
-        return self.obs_dim
 
     def get_save_info(self) -> dict:
         return {
@@ -168,9 +165,8 @@ class PolicyRepresentationExtractor(FeatureExtractor):
                 dummy_features = policy.critic.features_extractor(dummy_obs)
             else:
                 raise ValueError(f"Unsupported algorithm for representation extraction: {self.algorithm}")
-            self.repr_dim = dummy_features.shape[-1]
 
-        super().__init__(normalize=normalize)
+        super().__init__(normalize=normalize, repr_dim=self.repr_dim)
 
         if self.algorithm in ['ppo', 'a2c']:
             self.repr_net = policy.policy.mlp_extractor.policy_net
@@ -192,8 +188,6 @@ class PolicyRepresentationExtractor(FeatureExtractor):
 
         return features
 
-    def get_feature_dim(self) -> int:
-        return self.repr_dim
 
     def get_save_info(self) -> dict:
         return {
@@ -222,16 +216,13 @@ class RBFExtractor(FeatureExtractor):
         dummy_obs = np.zeros((1, obs_dim))
         self.rbf_sampler.fit(dummy_obs)
 
-        super().__init__(normalize=normalize)
+        super().__init__(normalize=normalize, repr_dim=n_components)
 
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         obs_np = observations.cpu().numpy()
         features_np = self.rbf_sampler.transform(obs_np)
         features = torch.from_numpy(features_np).float().to(observations.device)
         return features
-
-    def get_feature_dim(self) -> int:
-        return self.n_components
 
     def get_save_info(self) -> dict:
         return {
