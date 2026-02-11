@@ -36,10 +36,12 @@ class DQNEstimator(NeuralNetEstimator):
         }
 
     def update_target_network(self):
-        weight_dicts = {}
-        for name in self.target_net.state_dict().keys():
-            weight_dicts[name] = (1 - self.target_update_rate) * self.target_net.state_dict()[name] + self.target_update_rate * self.value_net.state_dict()[name]
-        self.target_net.load_state_dict(weight_dicts)
+        # In-place Polyak averaging (more efficient than state_dict approach)
+        for target_param, param in zip(self.target_net.parameters(), self.value_net.parameters()):
+            target_param.data.copy_(
+                (1 - self.target_update_rate) * target_param.data +
+                self.target_update_rate * param.data
+            )
         self.steps_since_target_update = 0
 
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
