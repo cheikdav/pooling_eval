@@ -96,42 +96,6 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     return preprocessed
 
 
-def sample_episodes(batch: Dict[str, np.ndarray], n_episodes: int, seed: int = 42) -> Dict[str, np.ndarray]:
-    """Sample a subset of episodes from a batch.
-
-    Args:
-        batch: Dictionary containing episode data (lists of variable-length arrays):
-            - observations: List of (T_i, obs_dim) arrays
-            - actions: List of (T_i, act_dim) or (T_i,) arrays
-            - rewards: List of (T_i,) arrays
-            - dones: List of (T_i,) arrays
-            - next_observations: List of (T_i, obs_dim) arrays
-        n_episodes: Number of episodes to sample
-        seed: Random seed for reproducible sampling
-
-    Returns:
-        Dictionary with sampled episodes (same structure as input)
-    """
-    total_episodes = len(batch['observations'])
-    if n_episodes > total_episodes:
-        raise ValueError(f"Cannot sample {n_episodes} episodes from batch with {total_episodes} episodes")
-
-    # Sample random episode indices
-    rng = np.random.RandomState(seed)
-    indices = rng.choice(total_episodes, size=n_episodes, replace=False)
-
-    # Extract sampled episodes
-    sampled_batch = {
-        'observations': [batch['observations'][i] for i in indices],
-        'actions': [batch['actions'][i] for i in indices],
-        'rewards': [batch['rewards'][i] for i in indices],
-        'dones': [batch['dones'][i] for i in indices],
-        'next_observations': [batch['next_observations'][i] for i in indices],
-    }
-
-    return sampled_batch
-
-
 def split_episodes_for_preprocessing(batch: Dict[str, np.ndarray], preprocess_fraction: float, seed: int = 42):
     """Split episodes into preprocessing and training sets.
 

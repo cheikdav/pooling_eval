@@ -25,23 +25,28 @@ policy:
     - 256
   use_vec_normalize: false
 data_generation:
-  n_batches: 50
-  episodes_per_batch: 200
+  n_batches: 100
+  episodes_per_batch: 1000
   deterministic_policy: false
   n_envs: 64
-  tuning_episodes: 200
-  validation_episodes_per_batch: 50
-  eval_episodes: 100
+  tuning_episodes: 1000
+  validation_episodes_per_batch: 200
+  eval_episodes: 1000
 value_estimators:
   training:
     max_epochs: 30000
     batch_size: 256
     convergence_patience: 60
-    convergence_threshold: 0.0001
+    convergence_threshold: 0.01
     eval_frequency: 20
     gamma: 0.98
     shuffle_frequency: 100
-    test_episodes: 50
+    episode_subsets:
+        - 100
+        - 200
+        - 500
+        - 750
+        - 1000
   methods:
   - monte_carlo
   - dqn
@@ -53,8 +58,8 @@ value_estimators:
   - nnls_td
 network:
   hidden_sizes:
-  - 128
-  - 128
+  - 256
+  - 256
   activation: relu
   device: auto
 logging:

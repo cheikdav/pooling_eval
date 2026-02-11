@@ -43,7 +43,6 @@ value_estimators:
     - 150
     - 200
     shuffle_frequency: 100
-    test_episodes: 50
   methods:
   - monte_carlo
   - dqn

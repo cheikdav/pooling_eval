@@ -16,7 +16,7 @@ from datetime import datetime
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
-from src.data_preprocessing import preprocess_episodes, sample_episodes, TransitionDataset
+from src.data_preprocessing import preprocess_episodes, TransitionDataset
 from torch.utils.data import DataLoader
 
 
@@ -481,7 +481,6 @@ def train_estimator(
     """
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
-    test_episodes = config.value_estimators.training.test_episodes
     method_name = method_config.name
 
     data_metadata = {}
@@ -492,19 +491,15 @@ def train_estimator(
 
     # Load and preprocess validation batch if it exists
     test_batch = None
-    if test_episodes > 0:
-        # Try to load per-batch validation set first
-        validation_batch_path = batch_path.parent / f"{batch_path.stem}_validation.npz"
-        if validation_batch_path.exists():
-            print(f"Loading validation batch from {validation_batch_path}")
-            validation_batch_raw = load_batch_data(validation_batch_path)
-            print(f"Sampling {test_episodes} episodes for test set")
-            test_batch_raw = sample_episodes(validation_batch_raw, test_episodes, seed=config.seed)
-            print(f"Preprocessing test batch (flattening episodes, computing MC returns with gamma={gamma})")
-            test_batch = preprocess_episodes(test_batch_raw, gamma)
-            print(f"Test batch: {len(test_batch['observations'])} transitions")
-        else:
-            print(f"Warning: test_episodes={test_episodes} but {validation_batch_path} not found. No test set will be used.")
+    validation_batch_path = batch_path.parent / f"{batch_path.stem}_validation.npz"
+    if validation_batch_path.exists():
+        print(f"Loading validation batch from {validation_batch_path}")
+        validation_batch_raw = load_batch_data(validation_batch_path)
+        print(f"Preprocessing validation batch (flattening episodes, computing MC returns with gamma={gamma})")
+        test_batch = preprocess_episodes(validation_batch_raw, gamma)
+        print(f"Validation batch: {len(test_batch['observations'])} transitions")
+    else:
+        print(f"No validation batch found at {validation_batch_path}. Training without validation.")
 
     for n_episodes in episode_subsets:
         print(f"\nLoading training batch from {batch_path}")

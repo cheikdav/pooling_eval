@@ -40,17 +40,16 @@ data_generation:
   n_envs: 128
   tuning_episodes: 400
   validation_episodes_per_batch: 100
-  eval_episodes: 200
+  eval_episodes: 600
 value_estimators:
   training:
     max_epochs: 100000
     batch_size: 512
     convergence_patience: 100
-    convergence_threshold: 0.0001
+    convergence_threshold: 0.01
     eval_frequency: 20
     gamma: 0.99
     shuffle_frequency: 100
-    test_episodes: 100
     episode_subsets:
     - 50
     - 100

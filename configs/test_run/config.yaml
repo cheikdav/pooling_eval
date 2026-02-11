@@ -42,7 +42,6 @@ value_estimators:
     gamma: 0.99
     episode_subsets: [25, 50]
     shuffle_frequency: 50
-    test_episodes: 10
 
   methods:
   - monte_carlo
