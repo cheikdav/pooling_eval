@@ -151,7 +151,7 @@ def split_episodes_for_preprocessing(batch: Dict[str, np.ndarray], preprocess_fr
 
 
 class TransitionDataset(Dataset):
-    """PyTorch Dataset for transition data."""
+    """PyTorch Dataset for transition data with optional feature caching."""
 
     def __init__(self, batch: Dict[str, np.ndarray]):
         """Initialize dataset from preprocessed batch.
@@ -171,14 +171,36 @@ class TransitionDataset(Dataset):
         self.dones = torch.FloatTensor(batch['dones'])
         self.mc_returns = torch.FloatTensor(batch['mc_returns'])
 
+        # Optional cached features (set via set_features())
+        self.features = None
+        self.next_features = None
+
+    def set_features(self, features: torch.Tensor, next_features: torch.Tensor):
+        """Cache extracted features to avoid recomputation during training.
+
+        Args:
+            features: Extracted features from observations (n_transitions, feature_dim)
+            next_features: Extracted features from next_observations (n_transitions, feature_dim)
+        """
+        self.features = features
+        self.next_features = next_features
+
     def __len__(self):
         return len(self.observations)
 
     def __getitem__(self, idx):
-        return {
+        item = {
             'observations': self.observations[idx],
             'next_observations': self.next_observations[idx],
             'rewards': self.rewards[idx],
             'dones': self.dones[idx],
             'mc_returns': self.mc_returns[idx],
         }
+
+        # Add cached features if available
+        if self.features is not None:
+            item['features'] = self.features[idx]
+        if self.next_features is not None:
+            item['next_features'] = self.next_features[idx]
+
+        return item

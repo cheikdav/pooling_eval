@@ -124,7 +124,7 @@ def check_convergence(current_epoch: int, current_loss: float, min_loss: float,
 def train_single_initialization(
     method_config: BaseEstimatorConfig,
     train_batch: dict,
-    test_batch: dict,
+    validation_dataset,
     config: ExperimentConfig,
     method_name: str,
     batch_name: str,
@@ -140,7 +140,7 @@ def train_single_initialization(
     Args:
         method_config: Method-specific configuration
         train_batch: Training batch data (preprocessed)
-        test_batch: Test batch data (preprocessed, None if no test set)
+        validation_dataset: Validation TransitionDataset (None if no validation set)
         config: Experiment configuration
         method_name: Method name (from method_config.name)
         batch_name: Batch name (e.g., '0', '1', 'tuning', 'eval')
@@ -186,7 +186,7 @@ def train_single_initialization(
     final_mc_loss_val = float('inf')
     best_mc_loss = float('inf')
     best_estimator = None
-    use_validation = test_batch is not None
+    use_validation = validation_dataset is not None
     converged = False
     final_epoch = 0
 
@@ -254,6 +254,17 @@ def train_single_initialization(
 
     print("Normalizer initialized and frozen.")
 
+    # Cache features to avoid recomputation during training
+    print("Caching features for training dataset...")
+    estimator.cache_features_in_dataset(dataset, batch_size=batch_size)
+    print("Training features cached successfully.")
+
+    # Cache validation features if validation dataset exists
+    if use_validation:
+        print("Caching features for validation dataset...")
+        estimator.cache_features_in_dataset(validation_dataset, batch_size=batch_size)
+        print("Validation features cached successfully.")
+
     for epoch in range(max_epochs):
         final_epoch = epoch
         # Recreate dataloader when needed for shuffling
@@ -279,8 +290,12 @@ def train_single_initialization(
         if use_validation:
             estimator.eval()
             with torch.no_grad():
-                val_mc_returns = torch.FloatTensor(test_batch['mc_returns']).to(estimator.device)
-                val_values = estimator.predict(test_batch['observations'])
+                # Use cached features from validation dataset
+                val_mc_returns = validation_dataset.mc_returns.to(estimator.device)
+                val_values = estimator.predict(
+                    validation_dataset.observations.cpu().numpy(),
+                    features=validation_dataset.features
+                )
                 val_values = torch.FloatTensor(val_values).to(estimator.device)
                 final_mc_loss_val = torch.nn.functional.mse_loss(val_values, val_mc_returns).item()
             val_mc_loss_history.append(final_mc_loss_val)
@@ -380,7 +395,7 @@ def train_initialization_worker(
     config: ExperimentConfig,
     method_config: BaseEstimatorConfig,
     train_batch: dict,
-    test_batch: dict,
+    validation_dataset,
     method_name: str,
     batch_name: str,
     n_episodes: int,
@@ -422,7 +437,7 @@ def train_initialization_worker(
     # Use override log_frequency if provided, otherwise use config default
     log_freq = log_frequency if log_frequency is not None else config.logging.log_frequency
     final_mc_loss, trained_estimator = train_single_initialization(
-        method_config, train_batch, test_batch, config, method_name, batch_name,
+        method_config, train_batch, validation_dataset, config, method_name, batch_name,
         n_episodes, init_idx, use_wandb=use_wandb, sweep_mode=sweep_mode, n_inits=n_inits, log_frequency=log_freq
     )
 
@@ -490,14 +505,16 @@ def train_estimator(
             data_metadata = json.load(f)
 
     # Load and preprocess validation batch if it exists
-    test_batch = None
+    validation_dataset = None
     validation_batch_path = batch_path.parent / f"{batch_path.stem}_validation.npz"
     if validation_batch_path.exists():
         print(f"Loading validation batch from {validation_batch_path}")
         validation_batch_raw = load_batch_data(validation_batch_path)
         print(f"Preprocessing validation batch (flattening episodes, computing MC returns with gamma={gamma})")
-        test_batch = preprocess_episodes(validation_batch_raw, gamma)
-        print(f"Validation batch: {len(test_batch['observations'])} transitions")
+        validation_batch = preprocess_episodes(validation_batch_raw, gamma)
+        print(f"Validation batch: {len(validation_batch['observations'])} transitions")
+        # Convert to dataset for feature caching
+        validation_dataset = TransitionDataset(validation_batch)
     else:
         print(f"No validation batch found at {validation_batch_path}. Training without validation.")
 
@@ -574,7 +591,7 @@ def train_estimator(
                 for init_idx in range(n_inits):
                     future = executor.submit(
                         train_initialization_worker,
-                        init_idx, config, method_config, train_batch, test_batch,
+                        init_idx, config, method_config, train_batch, validation_dataset,
                         method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
                         use_wandb, sweep_mode, log_frequency
                     )
@@ -599,7 +616,7 @@ def train_estimator(
                 print(f"Starting init {init_idx}...")
 
                 final_mc_loss, model_path = train_initialization_worker(
-                    init_idx, config, method_config, train_batch, test_batch,
+                    init_idx, config, method_config, train_batch, validation_dataset,
                     method_name, batch_name, n_episodes, n_inits, episodes_dir, episode_log_dir,
                     use_wandb, sweep_mode, log_frequency
                 )

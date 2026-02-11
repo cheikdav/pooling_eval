@@ -108,14 +108,62 @@ class ValueEstimator(ABC):
             obs = mini_batch['observations'].to(self.device)
             # Extract features to update normalizer (only from obs, not next_obs)
             self.feature_extractor(obs)
-        self.feature_extractor.eval() 
+        self.feature_extractor.eval()
+
+    def cache_features_in_dataset(self, dataset, batch_size: int = 1024):
+        """Extract and cache features for entire dataset to avoid recomputation.
+
+        Should be called after pre_training_pass to cache features with finalized normalizer.
+
+        Args:
+            dataset: TransitionDataset instance to cache features in
+            batch_size: Batch size for feature extraction (default 1024)
+        """
+        from torch.utils.data import DataLoader
+
+        self.eval()
+        self.feature_extractor.eval()
+
+        n_samples = len(dataset)
+        feature_dim = self.feature_extractor.get_feature_dim()
+
+        # Pre-allocate tensors for all features
+        all_features = torch.zeros(n_samples, feature_dim)
+        all_next_features = torch.zeros(n_samples, feature_dim)
+
+        # Create dataloader without shuffling
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+        with torch.no_grad():
+            start_idx = 0
+            for mini_batch in dataloader:
+                batch_len = len(mini_batch['observations'])
+                end_idx = start_idx + batch_len
+
+                obs = mini_batch['observations'].to(self.device)
+                next_obs = mini_batch['next_observations'].to(self.device)
+
+                features = self.feature_extractor(obs).cpu()
+                next_features = self.feature_extractor(next_obs).cpu()
+
+                all_features[start_idx:end_idx] = features
+                all_next_features[start_idx:end_idx] = next_features
+
+                start_idx = end_idx
+
+        dataset.set_features(all_features, all_next_features) 
 
     def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Extract features from observations then call _train_step()."""
-        obs = mini_batch['observations'].to(self.device)
-        next_obs = mini_batch['next_observations'].to(self.device)
-        features = self.feature_extractor(obs)
-        next_features = self.feature_extractor(next_obs)
+        # Use cached features if available, otherwise extract on-the-fly
+        if 'features' in mini_batch and 'next_features' in mini_batch:
+            features = mini_batch['features'].to(self.device)
+            next_features = mini_batch['next_features'].to(self.device)
+        else:
+            obs = mini_batch['observations'].to(self.device)
+            next_obs = mini_batch['next_observations'].to(self.device)
+            features = self.feature_extractor(obs)
+            next_features = self.feature_extractor(next_obs)
 
         feature_batch = {
             'features': features,
@@ -131,13 +179,24 @@ class ValueEstimator(ABC):
     def _train_step(self, feature_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         pass
 
-    def predict(self, observations: np.ndarray) -> np.ndarray:
-        """Extract features from observations then call _predict()."""
+    def predict(self, observations: np.ndarray, features: torch.Tensor = None) -> np.ndarray:
+        """Extract features from observations then call _predict().
+
+        Args:
+            observations: Observation array
+            features: Optional pre-computed features. If provided, skips feature extraction.
+
+        Returns:
+            Predicted values
+        """
         self.eval()
 
         with torch.no_grad():
-            obs = torch.FloatTensor(observations).to(self.device)
-            features = self.feature_extractor(obs)
+            if features is None:
+                obs = torch.FloatTensor(observations).to(self.device)
+                features = self.feature_extractor(obs)
+            else:
+                features = features.to(self.device)
             return self._predict(features)
 
     @abstractmethod
