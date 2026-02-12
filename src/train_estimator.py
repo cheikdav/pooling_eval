@@ -390,7 +390,6 @@ def train_estimator(
     use_wandb: bool = True,
     sweep_mode: bool = False,
     log_dir: Path = None,
-    timestamp: str = None,
     log_frequency: int = None
 ):
     """Train a value estimator.
@@ -404,8 +403,7 @@ def train_estimator(
         overwrite: If True, overwrite existing models; if False, skip training if model exists
         use_wandb: Whether to use wandb logging
         sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
-        log_dir: Directory for logs (if None, creates one using timestamp)
-        timestamp: Timestamp for this training session (shared across batches/episodes)
+        log_dir: Directory for logs (if None, no file logging - output goes to stdout)
         log_frequency: Override logging frequency (if None, uses config.logging.log_frequency)
     """
     gamma = config.value_estimators.training.gamma
@@ -473,7 +471,7 @@ def train_estimator(
         log_file_path = None
 
         if log_dir is not None:
-            # Sweep mode: append episode count to avoid conflicts between different episode counts
+            # Append episode count to avoid conflicts between different episode counts
             episode_log_dir = log_dir / f"{n_episodes}ep"
             episode_log_dir.mkdir(parents=True, exist_ok=True)
             log_file_path = episode_log_dir / "training.log"
@@ -618,8 +616,11 @@ def main():
     if args.timestamp:
         timestamp = args.timestamp
     else:
-        from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Create log directory: logs/estimator/<exp_id>/<method>/<timestamp>/
+    log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / args.method / timestamp
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     # Train estimator
     train_estimator(
@@ -630,7 +631,7 @@ def main():
         batch_name=batch_name,
         overwrite=args.overwrite,
         use_wandb=not args.no_wandb,
-        timestamp=timestamp
+        log_dir=log_dir
     )
 
 
