@@ -127,6 +127,9 @@ def main():
     if episode_subsets is None:
         episode_subsets = config.value_estimators.training.episode_subsets
 
+    # Sort in descending order to start with longest episode count
+    episode_subsets = sorted(episode_subsets, reverse=True)
+
     print(f"[SWEEP] Training on episode counts: {episode_subsets}")
 
     # Override batch_size from wandb sweep or CLI

@@ -573,6 +573,9 @@ def train_estimator(
 
     log_freq = log_frequency if log_frequency is not None else config.logging.log_frequency
 
+    # Sort episode_subsets in descending order to start with longest
+    episode_subsets = sorted(episode_subsets, reverse=True)
+
     # Check for existing models if overwrite=False
     episode_subsets_to_train = []
     for n_episodes in episode_subsets:
