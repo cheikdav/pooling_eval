@@ -24,7 +24,7 @@ parameters:
   log-frequency:
     value: 100
   learning-rate:
-    min: 0.00001
+    min: 0.00005
     max: 0.1
     distribution: log_uniform_values
   target-update-rate:
