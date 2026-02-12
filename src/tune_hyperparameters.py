@@ -40,6 +40,8 @@ def main():
     parser.add_argument("--preprocess-fraction", type=float, default=None)
     parser.add_argument("--log-frequency", type=int, default=None,
                        help="Override logging frequency for W&B (log every N epochs)")
+    parser.add_argument("--n-jobs", type=int, default=None,
+                       help="Number of parallel jobs for training different episode counts (None or 1 = sequential)")
     args = parser.parse_args()
 
     # Capture all output in buffer until we have the run ID
@@ -162,32 +164,23 @@ def main():
     sys.stdout.flush()
     sys.stderr.flush()
 
-    episode_results = []
-    for episode_count in episode_subsets:
-        print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training with {episode_count} episodes...")
-        sys.stdout.flush()
-        sys.stderr.flush()
+    log_freq = wandb.config.get('log_frequency', args.log_frequency)
+    n_jobs = wandb.config.get('n_jobs', args.n_jobs)
 
-        config.value_estimators.training.episode_subsets = [episode_count]
-
-        # Override log frequency from sweep config or use default
-        log_freq = wandb.config.get('log_frequency', args.log_frequency)
-
-        result = train_estimator(
+    episode_results = train_estimator(
             config=config,
             method_config=method_config,
             batch_path=batch_path,
-            output_dir=output_dir / f"{episode_count}ep",
+            output_dir=output_dir,
             batch_name="tuning",
             overwrite=True,
             use_wandb=True,
             sweep_mode=True,
             log_dir=log_dir,
-            log_frequency=log_freq
+            log_frequency=log_freq,
+            n_jobs=n_jobs
         )
 
-        if result:
-            episode_results.append(result)
 
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training completed for all episode counts")
 

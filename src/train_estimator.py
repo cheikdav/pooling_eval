@@ -11,6 +11,8 @@ import copy
 from dataclasses import asdict
 import sys
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
@@ -380,6 +382,156 @@ def train_single_estimator(
     return best_mc_loss, best_estimator if best_estimator is not None else estimator
 
 
+def train_episode_count_worker(
+    n_episodes: int,
+    config: ExperimentConfig,
+    method_config: BaseEstimatorConfig,
+    batch_path: Path,
+    output_dir: Path,
+    batch_name: str,
+    use_wandb: bool,
+    sweep_mode: bool,
+    log_dir: Path,
+    log_frequency: int,
+    validation_batch_path: Path,
+    gamma: float
+) -> dict:
+    """Worker function to train on a single episode count (used for parallel execution).
+
+    Returns:
+        Dictionary with 'num_episodes' and 'best_mc_loss'
+    """
+    method_name = method_config.name
+
+    # Load and preprocess validation batch if it exists
+    validation_dataset = None
+    if validation_batch_path.exists():
+        validation_batch_raw = load_batch_data(validation_batch_path)
+        validation_batch = preprocess_episodes(validation_batch_raw, gamma)
+        validation_dataset = TransitionDataset(validation_batch)
+
+    # Load training batch
+    train_batch_raw = load_batch_data(batch_path, max_episodes=n_episodes)
+
+    # Directory structure: estimators/<method>/<n_episodes>/batch_<name>
+    episodes_dir = output_dir / str(n_episodes) / f"batch_{batch_name}"
+    episodes_dir.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_path = episodes_dir / "estimator.pt"
+
+    # Preprocess training batch
+    train_batch = preprocess_episodes(train_batch_raw, gamma)
+
+    # Use method-specific max_epochs if set, otherwise use global
+    from src.config import resolve_param_for_episodes
+    if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
+        max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else 1
+    else:
+        max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
+    max_epochs_to_use = resolve_param_for_episodes(max_epochs_raw, n_episodes)
+
+    # Setup log file redirection if log_dir is provided
+    log_file_handle = None
+    original_stdout = None
+    original_stderr = None
+    log_file_path = None
+
+    if log_dir is not None:
+        episode_log_dir = log_dir / f"{n_episodes}ep"
+        episode_log_dir.mkdir(parents=True, exist_ok=True)
+        log_file_path = episode_log_dir / "training.log"
+        log_exists = log_file_path.exists() and log_file_path.stat().st_size > 0
+
+        # Save original stdout/stderr
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+
+        # Redirect to log file
+        log_file_handle = open(log_file_path, 'a', buffering=1)
+        sys.stdout = log_file_handle
+        sys.stderr = log_file_handle
+
+        if log_exists:
+            print("\n" + "="*80)
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Log file exists - this appears to be a re-run!")
+            print("="*80 + "\n")
+
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting training")
+
+    print(f"\nTraining {method_name}")
+    print(f"Episodes used: {n_episodes}")
+    print(f"Max epochs: {max_epochs_to_use}")
+    print()
+
+    # Train estimator
+    final_mc_loss, trained_estimator = train_single_estimator(
+        method_config, train_batch, validation_dataset, config, method_name, batch_name,
+        n_episodes, use_wandb=use_wandb, sweep_mode=sweep_mode, log_frequency=log_frequency
+    )
+
+    print(f"\nSaving estimator (MC loss={final_mc_loss:.6f}) to {checkpoint_path}")
+    trained_estimator.save(checkpoint_path)
+
+    # Restore stdout/stderr if we redirected
+    if log_file_handle is not None:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        log_file_handle.close()
+
+    # Save stats and metadata
+    stats = {
+        'method': method_name,
+        'batch_name': batch_name,
+        'n_episodes': n_episodes,
+        'final_mc_loss': final_mc_loss,
+    }
+
+    stats_path = episodes_dir / "training_stats.json"
+    with open(stats_path, 'w') as f:
+        json.dump(stats, f, indent=2)
+
+    # Get data metadata
+    data_metadata = {}
+    data_metadata_path = batch_path.parent / "data_metadata.json"
+    if data_metadata_path.exists():
+        with open(data_metadata_path, 'r') as f:
+            data_metadata = json.load(f)
+
+    # Save estimator metadata
+    estimator_metadata = {
+        'method': method_name,
+        'batch_name': batch_name,
+        'n_episodes': n_episodes,
+        'batch_path': str(batch_path),
+        'gamma': gamma,
+        'final_mc_loss': final_mc_loss,
+        'seed': config.seed,
+        'max_epochs': config.value_estimators.training.max_epochs,
+        'convergence_threshold': config.value_estimators.training.convergence_threshold,
+        'convergence_patience': config.value_estimators.training.convergence_patience,
+        'estimator_config': asdict(method_config),
+        'network_config': {
+            'hidden_sizes': config.network.hidden_sizes,
+            'activation': config.network.activation,
+        },
+        'data_metadata': data_metadata,
+    }
+
+    metadata_path = episodes_dir / "estimator_metadata.json"
+    with open(metadata_path, 'w') as f:
+        json.dump(estimator_metadata, f, indent=2)
+
+    if log_file_handle is None:
+        print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes.\n")
+    else:
+        print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes. Logs: {log_file_path}")
+
+    return {
+        'num_episodes': n_episodes,
+        'best_mc_loss': final_mc_loss,
+    }
+
+
 def train_estimator(
     config: ExperimentConfig,
     method_config: BaseEstimatorConfig,
@@ -390,7 +542,8 @@ def train_estimator(
     use_wandb: bool = True,
     sweep_mode: bool = False,
     log_dir: Path = None,
-    log_frequency: int = None
+    log_frequency: int = None,
+    n_jobs: int = None
 ):
     """Train a value estimator.
 
@@ -405,158 +558,89 @@ def train_estimator(
         sweep_mode: If True, skip wandb.init() (for W&B sweeps where init already called)
         log_dir: Directory for logs (if None, no file logging - output goes to stdout)
         log_frequency: Override logging frequency (if None, uses config.logging.log_frequency)
+        n_jobs: Number of parallel jobs for training different episode counts (None or 1 = sequential)
     """
     gamma = config.value_estimators.training.gamma
     episode_subsets = config.value_estimators.training.episode_subsets
     method_name = method_config.name
 
-    data_metadata = {}
-    data_metadata_path = batch_path.parent / "data_metadata.json"
-    if data_metadata_path.exists():
-        with open(data_metadata_path, 'r') as f:
-            data_metadata = json.load(f)
-
-    # Load and preprocess validation batch if it exists
-    validation_dataset = None
+    # Prepare common arguments for worker
     validation_batch_path = batch_path.parent / f"{batch_path.stem}_validation.npz"
     if validation_batch_path.exists():
-        print(f"Loading validation batch from {validation_batch_path}")
-        validation_batch_raw = load_batch_data(validation_batch_path)
-        print(f"Preprocessing validation batch (flattening episodes, computing MC returns with gamma={gamma})")
-        validation_batch = preprocess_episodes(validation_batch_raw, gamma)
-        print(f"Validation batch: {len(validation_batch['observations'])} transitions")
-        # Convert to dataset for feature caching
-        validation_dataset = TransitionDataset(validation_batch)
+        print(f"Found validation batch at {validation_batch_path}")
     else:
         print(f"No validation batch found at {validation_batch_path}. Training without validation.")
 
+    log_freq = log_frequency if log_frequency is not None else config.logging.log_frequency
+
+    # Check for existing models if overwrite=False
+    episode_subsets_to_train = []
     for n_episodes in episode_subsets:
-        print(f"\nLoading training batch from {batch_path}")
-        train_batch_raw = load_batch_data(batch_path, max_episodes=n_episodes)
-
-        # Directory structure: estimators/<method>/<n_episodes>/batch_<name>
         episodes_dir = output_dir / str(n_episodes) / f"batch_{batch_name}"
-        episodes_dir.mkdir(parents=True, exist_ok=True)
-
         checkpoint_path = episodes_dir / "estimator.pt"
 
         if checkpoint_path.exists() and not overwrite:
-            print(f"Model exists at {checkpoint_path} and overwrite=False. Skipping.")
-            continue
-
-        print(f"\n{'='*80}")
-        print(f"Training {method_name} on batch_{batch_name} with {n_episodes} episodes")
-        print(f"{'='*80}")
-
-        print(f"Preprocessing training batch (flattening episodes, computing MC returns with gamma={gamma})")
-        train_batch = preprocess_episodes(train_batch_raw, gamma)
-
-        # Use method-specific max_epochs if set, otherwise use global
-        # For least squares methods, default to 1 epoch (closed-form solution)
-        from src.config import resolve_param_for_episodes
-        if isinstance(method_config, (LeastSquaresMCConfig, LeastSquaresTDConfig)):
-            max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else 1
+            print(f"Model exists at {checkpoint_path} and overwrite=False. Skipping {n_episodes} episodes.")
         else:
-            max_epochs_raw = method_config.max_epochs if method_config.max_epochs is not None else config.value_estimators.training.max_epochs
-        max_epochs_to_use = resolve_param_for_episodes(max_epochs_raw, n_episodes)
+            episode_subsets_to_train.append(n_episodes)
 
-        print(f"\nTraining {method_name}")
-        print(f"Episodes used: {n_episodes}")
-        print(f"Max epochs: {max_epochs_to_use}")
+    if not episode_subsets_to_train:
+        print("All models already exist. Nothing to train.")
+        return [] if sweep_mode else None
 
-        # Setup log file redirection if log_dir is provided
-        log_file_handle = None
-        original_stdout = None
-        original_stderr = None
-        log_file_path = None
+    # Train on all episode counts (parallel or sequential)
+    episode_results = []
 
-        if log_dir is not None:
-            # Append episode count to avoid conflicts between different episode counts
-            episode_log_dir = log_dir / f"{n_episodes}ep"
-            episode_log_dir.mkdir(parents=True, exist_ok=True)
-            log_file_path = episode_log_dir / "training.log"
-            log_exists = log_file_path.exists() and log_file_path.stat().st_size > 0
+    if n_jobs and n_jobs > 1:
+        # Parallel mode: train different episode counts concurrently
+        print(f"\nTraining {len(episode_subsets_to_train)} episode counts in parallel (n_jobs={n_jobs})...")
+        available_cpus = mp.cpu_count()
+        max_workers = min(n_jobs, len(episode_subsets_to_train), available_cpus)
+        print(f"Available CPUs: {available_cpus}, Using {max_workers} workers\n")
 
-            print(f"Logs: {log_file_path}")
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for n_episodes in episode_subsets_to_train:
+                print(f"\n{'='*80}")
+                print(f"Submitting job: {method_name} on batch_{batch_name} with {n_episodes} episodes")
+                print(f"{'='*80}\n")
 
-            # Save original stdout/stderr
-            original_stdout = sys.stdout
-            original_stderr = sys.stderr
+                future = executor.submit(
+                    train_episode_count_worker,
+                    n_episodes, config, method_config, batch_path, output_dir,
+                    batch_name, use_wandb, sweep_mode, log_dir, log_freq,
+                    validation_batch_path, gamma
+                )
+                futures.append((n_episodes, future))
 
-            # Redirect to log file (append mode)
-            log_file_handle = open(log_file_path, 'a', buffering=1)
-            sys.stdout = log_file_handle
-            sys.stderr = log_file_handle
+            for n_episodes, future in futures:
+                try:
+                    result = future.result()
+                    episode_results.append(result)
+                    print(f"Episode count {n_episodes} completed: MC loss = {result['best_mc_loss']:.6f}")
+                except Exception as e:
+                    print(f"Episode count {n_episodes} failed with error: {e}")
+                    raise
 
-            # Add separator if this is a re-run
-            if log_exists:
-                print("\n" + "="*80)
-                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Log file exists - this appears to be a re-run!")
-                print("="*80 + "\n")
+    else:
+        # Sequential mode: train episode counts one by one
+        print(f"\nTraining {len(episode_subsets_to_train)} episode counts sequentially...\n")
 
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting training")
+        for n_episodes in episode_subsets_to_train:
+            print(f"\n{'='*80}")
+            print(f"Training {method_name} on batch_{batch_name} with {n_episodes} episodes")
+            print(f"{'='*80}\n")
 
-        print()
+            result = train_episode_count_worker(
+                n_episodes, config, method_config, batch_path, output_dir,
+                batch_name, use_wandb, sweep_mode, log_dir, log_freq,
+                validation_batch_path, gamma
+            )
+            episode_results.append(result)
 
-        # Train estimator
-        final_mc_loss, trained_estimator = train_single_estimator(
-            method_config, train_batch, validation_dataset, config, method_name, batch_name,
-            n_episodes, use_wandb=use_wandb, sweep_mode=sweep_mode, log_frequency=log_frequency or config.logging.log_frequency
-        )
+    if sweep_mode:
+        return episode_results
 
-        print(f"\nSaving estimator (MC loss={final_mc_loss:.6f}) to {checkpoint_path}")
-        trained_estimator.save(checkpoint_path)
-
-        # Restore stdout/stderr if we redirected
-        if log_file_handle is not None:
-            sys.stdout = original_stdout
-            sys.stderr = original_stderr
-            log_file_handle.close()
-            print(f"Training complete. Logs saved to: {log_file_path}")
-
-        stats = {
-            'method': method_name,
-            'batch_name': batch_name,
-            'n_episodes': n_episodes,
-            'final_mc_loss': final_mc_loss,
-        }
-
-        stats_path = episodes_dir / "training_stats.json"
-        with open(stats_path, 'w') as f:
-            json.dump(stats, f, indent=2)
-
-        # Save estimator metadata
-        estimator_metadata = {
-            'method': method_name,
-            'batch_name': batch_name,
-            'n_episodes': n_episodes,
-            'batch_path': str(batch_path),
-            'gamma': gamma,
-            'final_mc_loss': final_mc_loss,
-            'seed': config.seed,
-            'max_epochs': config.value_estimators.training.max_epochs,
-            'convergence_threshold': config.value_estimators.training.convergence_threshold,
-            'convergence_patience': config.value_estimators.training.convergence_patience,
-            'estimator_config': asdict(method_config),
-            'network_config': {
-                'hidden_sizes': config.network.hidden_sizes,
-                'activation': config.network.activation,
-            },
-            'data_metadata': data_metadata,
-        }
-
-        metadata_path = episodes_dir / "estimator_metadata.json"
-        with open(metadata_path, 'w') as f:
-            json.dump(estimator_metadata, f, indent=2)
-
-        print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes.\n")
-
-        # Return statistics for sweep mode (to be aggregated across episode counts)
-        if sweep_mode:
-            return {
-                'num_episodes': n_episodes,
-                'best_mc_loss': final_mc_loss,
-            }
 
 
 def main():
@@ -576,6 +660,8 @@ def main():
                        help="Disable wandb logging")
     parser.add_argument("--timestamp", type=str, default=None,
                        help="Timestamp for grouping logs (auto-generated if not provided)")
+    parser.add_argument("--n-jobs", type=int, default=None,
+                       help="Number of parallel jobs for training different episode counts (None or 1 = sequential)")
     args = parser.parse_args()
 
     # Determine batch index: use argument if provided, otherwise check SGE_TASK_ID
@@ -631,7 +717,8 @@ def main():
         batch_name=batch_name,
         overwrite=args.overwrite,
         use_wandb=not args.no_wandb,
-        log_dir=log_dir
+        log_dir=log_dir,
+        n_jobs=args.n_jobs
     )
 
 
