@@ -1,12 +1,5 @@
 name: dqn
 type: dqn
-learning_rate:
-  default: 0.02
-  50: 0.0013
-batch_size:
-  default: 256
-  50: 64
-  100: 128
-target_update_rate:
-  default: 0.05
-  50: 0.28
+learning_rate: 0.003
+batch_size: 64
+target_update_rate: 0.05

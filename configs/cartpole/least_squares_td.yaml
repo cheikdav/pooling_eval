@@ -1,7 +1,7 @@
 name: least_squares_td
 type: least_squares_td
-learning_rate: 0.001
-ridge_lambda: 0.1
+ridge_lambda: 0.03
+n_components: 50
 feature_extractor:
   type: policy_representation
   normalize: true

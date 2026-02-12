@@ -1,7 +1,7 @@
 name: least_squares_mc
 type: least_squares_mc
-learning_rate: 0.001
-ridge_lambda: 0.1
+ridge_lambda: 0.2
+n_components: 200
 feature_extractor:
   type: policy_representation
   normalize: true

@@ -1,4 +1,5 @@
 name: least_squares_td
 type: least_squares_td
-learning_rate: 0.001
-ridge_lambda: 0.1
+n_components: 500
+ridge_lambda: 2
+
