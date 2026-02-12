@@ -73,6 +73,7 @@ uv run -m src.run_all_estimators --config configs/example_config.yaml --mode clu
 # Cluster mode with custom settings
 uv run -m src.run_all_estimators --config configs/example_config.yaml --mode cluster \
     --grid-mem 16g \
+    --grid-ncpus 4 \
     --max-concurrent 10 \
     --no-overwrite
 
@@ -94,6 +95,10 @@ uv run -m src.run_all_estimators --config configs/example_config.yaml --mode seq
 - `SGE_TASK_ID` is automatically converted to batch index (1-indexed → 0-indexed)
 - Monitor jobs with `qstat`
 - View logs in `*.o*` and `*.e*` files
+- Use `--grid-mem` to specify memory per job (default: 8g)
+- Use `--grid-ncpus` to specify CPUs per job (default: 1)
+  - Recommended: 4-6 CPUs for large networks (Humanoid, Ant) or RBF features
+  - Recommended: 1-2 CPUs for simple networks (CartPole)
 - Use `--max-concurrent N` to limit concurrent tasks per method (useful for resource management)
 
 ### Evaluate Results
