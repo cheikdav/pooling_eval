@@ -9,6 +9,8 @@ import wandb
 import json
 import copy
 from dataclasses import asdict
+import sys
+from datetime import datetime
 
 from src.config import ExperimentConfig, BaseEstimatorConfig, LeastSquaresMCConfig, LeastSquaresTDConfig
 from src.estimators import ESTIMATOR_REGISTRY
@@ -463,6 +465,39 @@ def train_estimator(
         print(f"\nTraining {method_name}")
         print(f"Episodes used: {n_episodes}")
         print(f"Max epochs: {max_epochs_to_use}")
+
+        # Setup log file redirection if log_dir is provided
+        log_file_handle = None
+        original_stdout = None
+        original_stderr = None
+        log_file_path = None
+
+        if log_dir is not None:
+            # Sweep mode: append episode count to avoid conflicts between different episode counts
+            episode_log_dir = log_dir / f"{n_episodes}ep"
+            episode_log_dir.mkdir(parents=True, exist_ok=True)
+            log_file_path = episode_log_dir / "training.log"
+            log_exists = log_file_path.exists() and log_file_path.stat().st_size > 0
+
+            print(f"Logs: {log_file_path}")
+
+            # Save original stdout/stderr
+            original_stdout = sys.stdout
+            original_stderr = sys.stderr
+
+            # Redirect to log file (append mode)
+            log_file_handle = open(log_file_path, 'a', buffering=1)
+            sys.stdout = log_file_handle
+            sys.stderr = log_file_handle
+
+            # Add separator if this is a re-run
+            if log_exists:
+                print("\n" + "="*80)
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] WARNING: Log file exists - this appears to be a re-run!")
+                print("="*80 + "\n")
+
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting training")
+
         print()
 
         # Train estimator
@@ -473,6 +508,13 @@ def train_estimator(
 
         print(f"\nSaving estimator (MC loss={final_mc_loss:.6f}) to {checkpoint_path}")
         trained_estimator.save(checkpoint_path)
+
+        # Restore stdout/stderr if we redirected
+        if log_file_handle is not None:
+            sys.stdout = original_stdout
+            sys.stderr = original_stderr
+            log_file_handle.close()
+            print(f"Training complete. Logs saved to: {log_file_path}")
 
         stats = {
             'method': method_name,
