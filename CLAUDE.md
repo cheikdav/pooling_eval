@@ -137,16 +137,6 @@ wandb agent <sweep-id>
   - `final/std_val_mc_loss`: Standard deviation across episode counts
   - `final/{N}ep/best_mc_loss`: Best loss for specific episode count
 
-**Parallel Initialization:**
-- Multiple initializations within a run can be trained in parallel
-- Enable in sweep configs:
-  ```yaml
-  parameters:
-    parallel-inits:
-      value: true
-    n-jobs:
-      value: 4
-  ```
 
 **How it works:**
 - Sweep configs in `configs/sweeps/sweep_*.yaml` define hyperparameter search space
@@ -159,7 +149,7 @@ wandb agent <sweep-id>
 
 **Customizing sweeps:**
 - Edit `configs/sweeps/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- Supported parameters: learning_rate, target_update_rate, batch_size, ridge_lambda, n_initializations, parallel_inits, n_jobs
+- Supported parameters: learning_rate, target_update_rate, batch_size, ridge_lambda
 - Episode counts are loaded from the experiment config's `episode_subsets` field
 - Set `wandb-mode: offline` to avoid rate limits with many parallel agents
 
@@ -210,7 +200,7 @@ configs/
 
 **Method Config Files (e.g., monte_carlo.yaml):**
 - **Type**: Estimator type (monte_carlo, dqn, least_squares_mc, least_squares_td)
-- **Method-specific parameters**: Learning rate, n_initializations, target_update_rate, etc.
+- **Method-specific parameters**: Learning rate, target_update_rate, etc.
 
 **Legacy Format Support:**
 The system also supports legacy configs with all parameters in a single file using `method_configs` list.
@@ -290,11 +280,11 @@ All estimators inherit from **ValueEstimator** (base.py):
 - Example: If loss improves by < 0.0001 for 50 consecutive evaluations, training stops
 
 **Checkpointing:**
-- Saves `estimator_final.pt` at the end of training with the best model found across all initializations
+- Saves `estimator.pt` at the end of training
 - Saves `training_stats.json` with summary statistics
 
 **Fault Tolerance:**
-- Each estimator checks if `estimator_final.pt` exists before training
+- Each estimator checks if `estimator.pt` exists before training
 - Allows resuming experiments by skipping completed jobs
 
 ### Experiment Directory Structure
@@ -311,13 +301,15 @@ experiments/<experiment_id>/
 │   └── ...
 ├── estimators/
 │   ├── monte_carlo/
-│   │   ├── batch_0/
-│   │   │   ├── estimator_final.pt    # Best model across all initializations
-│   │   │   └── training_stats.json   # Summary statistics
-│   │   ├── batch_1/
-│   │   └── ...
+│   │   ├── <n_episodes>/
+│   │   │   ├── batch_0/
+│   │   │   │   ├── estimator.pt           # Trained model
+│   │   │   │   └── training_stats.json    # Summary statistics
+│   │   │   ├── batch_1/
+│   │   │   └── ...
 │   └── dqn/
-│       └── batch_0/
+│       └── <n_episodes>/
+│           └── batch_0/
 └── results/
     ├── evaluation_results.json
     └── *.png plots
@@ -396,7 +388,7 @@ The dashboard will automatically make the new metric available in the metric sel
 
 - All runs tagged with `experiment_id` for grouping
 - Training metrics logged: `train/loss`, `train/mse`, `train/mae`, `train/mean_value`, `train/mean_target`, `train/best_loss`
-- Run name format: `{method}_{batch_name}_{num_episodes}ep_init{idx}` (one run per initialization)
+- Run name format: `{method} ({env_name}, #{batch_name}, #ep {num_episodes})`
 
 **Offline Mode** (to avoid rate limits):
 
@@ -474,7 +466,7 @@ uv run -m src.generate_data --config config.yaml --end-batch-idx 20
 uv run -m src.run_all_estimators --config config.yaml --mode sequential --no-overwrite
 ```
 
-The framework checks for existing `estimator_episodes_*.pt` files and skips training if found.
+The framework checks for existing `estimator.pt` files and skips training if found.
 
 To force retraining all models, use `--overwrite`:
 ```bash

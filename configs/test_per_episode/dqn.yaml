@@ -3,5 +3,4 @@ type: dqn
 learning_rate:
   default: 0.003
   1000: 0.001
-n_initializations: 1
 target_update_rate: 0.1

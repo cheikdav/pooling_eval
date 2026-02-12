@@ -1,7 +1,6 @@
 # W&B Sweep configuration for Least Squares Monte Carlo estimator
 # Usage:
 #   python launch_episode_sweeps.py --config configs/config_humanoid.yaml --method least_squares_mc
-
 program: uv
 command:
   - ${env}
@@ -14,24 +13,18 @@ method: random  # bayes, grid, or random
 metric:
   name: final/mean_val_mc_loss
   goal: minimize
-
 # Termination conditions
 run_cap: 40  # Maximum number of runs before sweep terminates
-
 parameters:
   method:
     value: least_squares_mc
   log-frequency:
-    value: 1
+    value: 100
+  n-jobs:
+    value: 4
   ridge-lambda:
     min: 1.0e-4
     max: 1.0
     distribution: log_uniform_values
   n-components:
     values: [null, 32, 64, 128, 256, 512]
-  n-initializations:
-    value: 1
-  parallel-inits:
-    value: true
-  n-jobs:
-    value: 1

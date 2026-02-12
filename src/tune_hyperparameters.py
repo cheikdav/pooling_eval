@@ -38,13 +38,10 @@ def main():
     parser.add_argument("--rbf-n-components", type=none_or_int, default=None,
                        help="Number of RBF basis functions (for RBF feature extractor)")
     parser.add_argument("--preprocess-fraction", type=float, default=None)
-    parser.add_argument("--n-initializations", type=int, default=None)
-    parser.add_argument("--parallel-inits", type=lambda x: str(x).lower() == 'true', default=False,
-                       help="Train initializations in parallel")
-    parser.add_argument("--n-jobs", type=int, default=None,
-                       help="Number of parallel jobs (default: number of CPUs)")
     parser.add_argument("--log-frequency", type=int, default=None,
                        help="Override logging frequency for W&B (log every N epochs)")
+    parser.add_argument("--n-jobs", type=int, default=None,
+                       help="Number of parallel jobs for training different episode counts (None or 1 = sequential)")
     args = parser.parse_args()
 
     # Capture all output in buffer until we have the run ID
@@ -152,17 +149,8 @@ def main():
     if rbf_n_components is not None and method_config.feature_extractor is not None:
         method_config.feature_extractor.n_components = rbf_n_components
 
-    # Override n_initializations from wandb sweep or CLI
-    n_initializations = wandb.config.get('n_initializations', args.n_initializations)
-    if n_initializations is not None:
-        method_config.n_initializations = n_initializations
-    else:
-        # Default to 1 if not specified
-        method_config.n_initializations = 1
-
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training configuration:")
     print(f"  Episode counts: {episode_subsets}")
-    print(f"  Initializations per episode count: {method_config.n_initializations}")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
@@ -176,34 +164,23 @@ def main():
     sys.stdout.flush()
     sys.stderr.flush()
 
-    episode_results = []
-    for episode_count in episode_subsets:
-        print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training with {episode_count} episodes...")
-        sys.stdout.flush()
-        sys.stderr.flush()
+    log_freq = wandb.config.get('log_frequency', args.log_frequency)
+    n_jobs = wandb.config.get('n_jobs', args.n_jobs)
 
-        config.value_estimators.training.episode_subsets = [episode_count]
-
-        # Override log frequency from sweep config or use default
-        log_freq = wandb.config.get('log_frequency', args.log_frequency)
-
-        result = train_estimator(
+    episode_results = train_estimator(
             config=config,
             method_config=method_config,
             batch_path=batch_path,
-            output_dir=output_dir / f"{episode_count}ep",
+            output_dir=output_dir,
             batch_name="tuning",
             overwrite=True,
             use_wandb=True,
             sweep_mode=True,
-            parallel_inits=args.parallel_inits,
-            n_jobs=args.n_jobs,
             log_dir=log_dir,
-            log_frequency=log_freq
+            log_frequency=log_freq,
+            n_jobs=n_jobs
         )
 
-        if result:
-            episode_results.append(result)
 
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training completed for all episode counts")
 
@@ -223,8 +200,6 @@ def main():
         for r in episode_results:
             ep = r['num_episodes']
             aggregate_log[f'final/{ep}ep/best_mc_loss'] = r['best_mc_loss']
-            aggregate_log[f'final/{ep}ep/mean_mc_loss'] = r['mean_mc_loss']
-            aggregate_log[f'final/{ep}ep/std_mc_loss'] = r['std_mc_loss']
 
         wandb.log(aggregate_log)
 

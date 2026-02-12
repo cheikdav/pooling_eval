@@ -14,4 +14,3 @@ batch_size:
   200: 512
   400: 512
   600: 64
-n_initializations: 1
