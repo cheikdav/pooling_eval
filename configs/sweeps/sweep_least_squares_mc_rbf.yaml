@@ -11,14 +11,14 @@ method: random
 metric:
   name: final/mean_val_mc_loss
   goal: minimize
-
 run_cap: 40
-
 parameters:
   method:
     value: least_squares_mc_rbf
   log-frequency:
-    value: 1
+    value: 100
+  n-jobs:
+    value: 4
   ridge-lambda:
     min: 1.0e-4
     max: 1.0
