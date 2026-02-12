@@ -96,7 +96,6 @@ class FeatureExtractor(nn.Module, ABC):
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         pass
 
-    @abstractmethod
     def get_feature_dim(self) -> int:
         return self.repr_dim + 1 if self.add_bias else self.repr_dim
 
@@ -166,7 +165,7 @@ class PolicyRepresentationExtractor(FeatureExtractor):
             else:
                 raise ValueError(f"Unsupported algorithm for representation extraction: {self.algorithm}")
 
-        super().__init__(normalize=normalize, repr_dim=self.repr_dim)
+        super().__init__(normalize=normalize, repr_dim=dummy_features.shape[-1])
 
         if self.algorithm in ['ppo', 'a2c']:
             self.repr_net = policy.policy.mlp_extractor.policy_net
