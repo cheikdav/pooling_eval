@@ -141,7 +141,6 @@ class BaseEstimatorConfig:
     type: EstimatorType  # Method type
     learning_rate: Union[float, Dict] = 0.001
     batch_size: Optional[Union[int, Dict]] = None  # Override global batch_size if set
-    n_initializations: Union[int, Dict] = 1  # Number of random initializations to try
     max_epochs: Optional[Union[int, Dict]] = None  # Override global max_epochs if set
     feature_extractor: Optional[FeatureExtractorConfig] = None  # Feature extraction config
     network: Optional['NetworkConfig'] = None  # Method-specific network config (overrides global if set)

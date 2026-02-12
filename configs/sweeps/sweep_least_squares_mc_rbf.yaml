@@ -25,9 +25,3 @@ parameters:
     distribution: log_uniform_values
   rbf-n-components:
     values: [128, 256, 512, 1024]
-  n-initializations:
-    value: 1
-  parallel-inits:
-    value: true
-  n-jobs:
-    value: 1

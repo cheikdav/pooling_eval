@@ -1,4 +1,3 @@
 name: monte_carlo
 type: monte_carlo
 learning_rate: 0.001
-n_initializations: 3

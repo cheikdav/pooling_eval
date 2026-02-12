@@ -10,4 +10,3 @@ batch_size:
 target_update_rate:
   default: 0.05
   50: 0.28
-n_initializations: 1

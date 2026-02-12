@@ -29,9 +29,3 @@ parameters:
     distribution: log_uniform_values
   batch-size:
     values: [64, 128, 256, 512]
-  n-initializations:
-    value: 1
-  parallel-inits:
-    value: true
-  n-jobs:
-    value: 1

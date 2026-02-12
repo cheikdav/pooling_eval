@@ -38,11 +38,6 @@ def main():
     parser.add_argument("--rbf-n-components", type=none_or_int, default=None,
                        help="Number of RBF basis functions (for RBF feature extractor)")
     parser.add_argument("--preprocess-fraction", type=float, default=None)
-    parser.add_argument("--n-initializations", type=int, default=None)
-    parser.add_argument("--parallel-inits", type=lambda x: str(x).lower() == 'true', default=False,
-                       help="Train initializations in parallel")
-    parser.add_argument("--n-jobs", type=int, default=None,
-                       help="Number of parallel jobs (default: number of CPUs)")
     parser.add_argument("--log-frequency", type=int, default=None,
                        help="Override logging frequency for W&B (log every N epochs)")
     args = parser.parse_args()
@@ -152,17 +147,8 @@ def main():
     if rbf_n_components is not None and method_config.feature_extractor is not None:
         method_config.feature_extractor.n_components = rbf_n_components
 
-    # Override n_initializations from wandb sweep or CLI
-    n_initializations = wandb.config.get('n_initializations', args.n_initializations)
-    if n_initializations is not None:
-        method_config.n_initializations = n_initializations
-    else:
-        # Default to 1 if not specified
-        method_config.n_initializations = 1
-
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training configuration:")
     print(f"  Episode counts: {episode_subsets}")
-    print(f"  Initializations per episode count: {method_config.n_initializations}")
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
@@ -196,8 +182,6 @@ def main():
             overwrite=True,
             use_wandb=True,
             sweep_mode=True,
-            parallel_inits=args.parallel_inits,
-            n_jobs=args.n_jobs,
             log_dir=log_dir,
             log_frequency=log_freq
         )
@@ -223,8 +207,6 @@ def main():
         for r in episode_results:
             ep = r['num_episodes']
             aggregate_log[f'final/{ep}ep/best_mc_loss'] = r['best_mc_loss']
-            aggregate_log[f'final/{ep}ep/mean_mc_loss'] = r['mean_mc_loss']
-            aggregate_log[f'final/{ep}ep/std_mc_loss'] = r['std_mc_loss']
 
         wandb.log(aggregate_log)
 

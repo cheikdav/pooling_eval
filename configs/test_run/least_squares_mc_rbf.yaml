@@ -1,7 +1,6 @@
 name: least_squares_mc_rbf
 type: least_squares_mc
 learning_rate: 0.001
-n_initializations: 1
 max_epochs: 1
 ridge_lambda: 1.0e-6
 feature_extractor:

@@ -96,16 +96,28 @@ class FeatureExtractor(nn.Module, ABC):
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         pass
 
-    @abstractmethod
     def get_feature_dim(self) -> int:
         return self.repr_dim + 1 if self.add_bias else self.repr_dim
 
-    @abstractmethod
     def get_save_info(self) -> dict:
         """Return metadata needed to reconstruct this feature extractor.
 
         Returns:
-            Dictionary with 'type' key and any type-specific metadata
+            Dictionary with common fields (type, normalize, repr_dim) and subclass-specific metadata
+        """
+        info = {
+            'normalize': self.normalize,
+            'repr_dim': self.repr_dim,
+        }
+        info.update(self._get_type_specific_info())
+        return info
+
+    @abstractmethod
+    def _get_type_specific_info(self) -> dict:
+        """Return type-specific metadata needed to reconstruct this feature extractor.
+
+        Returns:
+            Dictionary with 'type' key and any type-specific parameters
         """
         pass
 
@@ -119,11 +131,9 @@ class IdentityExtractor(FeatureExtractor):
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         return observations
 
-    def get_save_info(self) -> dict:
+    def _get_type_specific_info(self) -> dict:
         return {
             'type': 'identity',
-            'normalize': self.normalize,
-            'obs_dim': self.obs_dim,
         }
 
 
@@ -188,11 +198,9 @@ class PolicyRepresentationExtractor(FeatureExtractor):
 
         return features
 
-
-    def get_save_info(self) -> dict:
+    def _get_type_specific_info(self) -> dict:
         return {
             'type': 'policy_representation',
-            'normalize': self.normalize,
             'policy_path': self.policy_path,
             'algorithm': self.algorithm,
         }
@@ -224,12 +232,10 @@ class RBFExtractor(FeatureExtractor):
         features = torch.from_numpy(features_np).float().to(observations.device)
         return features
 
-    def get_save_info(self) -> dict:
+    def _get_type_specific_info(self) -> dict:
         return {
             'type': 'rbf',
-            'normalize': self.normalize,
             'obs_dim': self.obs_dim,
-            'n_components': self.n_components,
             'gamma': self.gamma,
             'seed': self.seed,
         }
@@ -294,11 +300,13 @@ def create_feature_extractor_from_saved_info(save_info: dict, device: str = "aut
         FeatureExtractor instance
     """
     extractor_type = save_info['type']
+    normalize = save_info['normalize']
+    repr_dim = save_info['repr_dim']
 
     if extractor_type == 'identity':
         return IdentityExtractor(
-            obs_dim=save_info['obs_dim'],
-            normalize=save_info['normalize']
+            obs_dim=repr_dim,
+            normalize=normalize
         )
 
     elif extractor_type == 'policy_representation':
@@ -306,16 +314,16 @@ def create_feature_extractor_from_saved_info(save_info: dict, device: str = "aut
             policy_path=save_info['policy_path'],
             algorithm=save_info['algorithm'],
             device=device,
-            normalize=save_info['normalize']
+            normalize=normalize
         )
 
     elif extractor_type == 'rbf':
         return RBFExtractor(
             obs_dim=save_info['obs_dim'],
-            n_components=save_info['n_components'],
+            n_components=repr_dim,
             gamma=save_info['gamma'],
             seed=save_info['seed'],
-            normalize=save_info['normalize']
+            normalize=normalize
         )
 
     else:
