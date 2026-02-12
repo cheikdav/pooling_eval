@@ -26,6 +26,14 @@ class DQNEstimator(NeuralNetEstimator):
         self.target_update_rate = target_update_rate
 
         self.target_net = copy.deepcopy(self.value_net).to(self.device)
+
+        # Compile target network for faster execution (PyTorch 2.0+)
+        try:
+            self.target_net = torch.compile(self.target_net, mode='default')
+        except (AttributeError, RuntimeError) as e:
+            # torch.compile not available (PyTorch < 2.0) or compilation failed
+            pass
+
         self.target_net.eval()
         self.steps_since_target_update = 0
 

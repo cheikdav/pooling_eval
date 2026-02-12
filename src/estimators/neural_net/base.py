@@ -30,6 +30,14 @@ class NeuralNetEstimator(ValueEstimator):
 
         feature_dim = self.feature_extractor.get_feature_dim()
         self.value_net = ValueNetwork(feature_dim, hidden_sizes, activation).to(self.device)
+
+        # Compile network for faster execution (PyTorch 2.0+)
+        try:
+            self.value_net = torch.compile(self.value_net, mode='default')
+        except (AttributeError, RuntimeError) as e:
+            # torch.compile not available (PyTorch < 2.0) or compilation failed
+            pass
+
         self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=learning_rate)
 
     @classmethod
