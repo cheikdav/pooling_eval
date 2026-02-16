@@ -1,6 +1,7 @@
 name: nnls_mc
 type: monte_carlo
-learning_rate: 0.001
+learning_rate: 0.01
+batch_size: 64
 feature_extractor:
   type: policy_representation
   normalize: true

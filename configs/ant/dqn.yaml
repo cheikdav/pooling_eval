@@ -1,4 +1,5 @@
 name: dqn
 type: dqn
-learning_rate: 0.001
-target_update_rate: 0.005
+learning_rate: 0.002
+target_update_rate: 0.033
+batch_size: 128
