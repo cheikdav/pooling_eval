@@ -482,7 +482,15 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate and compare value estimators")
     parser.add_argument("--config", type=Path, required=True,
                        help="Path to config YAML file")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--eval-only", action="store_true",
+                      help="Only run evaluation on the standard test set")
+    mode.add_argument("--paired-only", action="store_true",
+                      help="Only run evaluation on the paired states dataset")
     args = parser.parse_args()
+
+    run_eval = not args.paired_only
+    run_paired = not args.eval_only
 
     config = ExperimentConfig.from_yaml(args.config)
 
@@ -498,40 +506,41 @@ def main():
     print(f"Methods: {[mc.name for mc in config.value_estimators.method_configs]}")
     print(f"Batches: {config.data_generation.n_batches}\n")
 
-    print("Loading evaluation batch...")
-    eval_batch = load_evaluation_batch(data_dir)
-    print(f"Loaded evaluation batch with {len(eval_batch['observations'])} episodes")
-
-    # Compute and save ground truth returns
-    print("\nComputing ground truth returns...")
-    gamma = config.value_estimators.training.gamma
-    ground_truth_df = compute_ground_truth_returns(eval_batch, gamma)
-
-    ground_truth_dir = results_dir / "ground_truth"
-    ground_truth_dir.mkdir(parents=True, exist_ok=True)
-    ground_truth_file = ground_truth_dir / "ground_truth_returns.parquet"
-    ground_truth_df.to_parquet(ground_truth_file, index=False)
-    print(f"Saved ground truth returns to: {ground_truth_file}")
-    print(f"  States: {len(ground_truth_df)}, Episodes: {ground_truth_df['episode_idx'].nunique()}, Gamma: {gamma}")
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"\nUsing device: {device}")
+    print(f"Using device: {device}")
 
-    prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device)
+    prediction_files = []
+    if run_eval:
+        print("\nLoading evaluation batch...")
+        eval_batch = load_evaluation_batch(data_dir)
+        print(f"Loaded evaluation batch with {len(eval_batch['observations'])} episodes")
 
-    # Try to load and evaluate paired states data if available
-    print("\n" + "="*80)
-    print("Checking for paired states data...")
-    paired_data = load_paired_states(data_dir)
+        print("\nComputing ground truth returns...")
+        gamma = config.value_estimators.training.gamma
+        ground_truth_df = compute_ground_truth_returns(eval_batch, gamma)
+
+        ground_truth_dir = results_dir / "ground_truth"
+        ground_truth_dir.mkdir(parents=True, exist_ok=True)
+        ground_truth_file = ground_truth_dir / "ground_truth_returns.parquet"
+        ground_truth_df.to_parquet(ground_truth_file, index=False)
+        print(f"Saved ground truth returns to: {ground_truth_file}")
+        print(f"  States: {len(ground_truth_df)}, Episodes: {ground_truth_df['episode_idx'].nunique()}, Gamma: {gamma}")
+
+        prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device)
+
     paired_prediction_files = []
+    if run_paired:
+        print("\n" + "="*80)
+        print("Checking for paired states data...")
+        paired_data = load_paired_states(data_dir)
 
-    if paired_data is not None:
-        print(f"Found paired states data with {len(paired_data['pair_indices'])} pairs")
-        paired_prediction_files = generate_paired_predictions(estimators_dir, config, paired_data, results_dir, device)
-        print(f"\nGenerated {len(paired_prediction_files)} paired prediction files")
-    else:
-        print("No paired states data found. Skipping paired state evaluation.")
-        print("To generate paired states data, run: uv run -m src.generate_data --config <config> --generate-paired")
+        if paired_data is not None:
+            print(f"Found paired states data with {len(paired_data['pair_indices'])} pairs")
+            paired_prediction_files = generate_paired_predictions(estimators_dir, config, paired_data, results_dir, device)
+            print(f"\nGenerated {len(paired_prediction_files)} paired prediction files")
+        else:
+            print("No paired states data found. Skipping paired state evaluation.")
+            print("To generate paired states data, run: uv run -m src.generate_data --config <config> --generate-paired")
 
     summary = {
         'experiment_id': config.experiment_id,
