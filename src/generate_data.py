@@ -251,6 +251,7 @@ def generate_trajectory_from_state(env, model, initial_obs, full_state, gamma: f
     Returns:
         Discounted return for the trajectory
     """
+    env.reset()  # reset TimeLimit counter and all wrapper state
     restore_full_state(env, full_state)
 
     obs = initial_obs.copy()
