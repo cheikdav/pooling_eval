@@ -9,17 +9,17 @@ from stable_baselines3 import PPO, A2C, SAC, TD3
 from sklearn.kernel_approximation import RBFSampler
 
 
-class RunningNormalizer:
+class RunningNormalizer(nn.Module):
     """Tracks running mean and std for online normalization."""
 
     def __init__(self, dim: int, epsilon: float = 1e-8, min_var: float = 1e-4):
-        self.dim = dim
+        super().__init__()
         self.epsilon = epsilon
-        self.min_var = min_var  # Minimum variance threshold for masking
-        self.mean = torch.zeros(dim)
-        self.var = torch.ones(dim)
-        self.mask = torch.ones(dim)  # Mask to zero out low-variance components
-        self.count = 0
+        self.min_var = min_var
+        self.register_buffer('mean', torch.zeros(dim))
+        self.register_buffer('var', torch.ones(dim))
+        self.register_buffer('mask', torch.ones(dim))
+        self.register_buffer('count', torch.tensor(0))
 
     def update(self, data: torch.Tensor) -> None:
         batch_mean = data.mean(dim=0)
@@ -36,27 +36,11 @@ class RunningNormalizer:
         self.var = M2 / total_count
         self.count = total_count
 
-        # Update mask: zero out components with variance below threshold
         self.mask = (self.var >= self.min_var).float()
 
-    def normalize(self, data: torch.Tensor) -> torch.Tensor:
-        # Normalize and apply mask to zero out low-variance components
+    def forward(self, data: torch.Tensor) -> torch.Tensor:
         normalized = (data - self.mean) / torch.sqrt(self.var + self.epsilon)
         return normalized * self.mask
-
-    def state_dict(self):
-        return {
-            'mean': self.mean,
-            'var': self.var,
-            'mask': self.mask,
-            'count': self.count,
-        }
-
-    def load_state_dict(self, state_dict):
-        self.mean = state_dict['mean']
-        self.var = state_dict['var']
-        self.mask = state_dict.get('mask', torch.ones_like(self.var))  # Backward compatibility
-        self.count = state_dict['count']
 
 
 class FeatureExtractor(nn.Module, ABC):
@@ -83,7 +67,7 @@ class FeatureExtractor(nn.Module, ABC):
         if self.normalize:
             if self.training:
                 self.normalizer.update(features)
-            features = self.normalizer.normalize(features)
+            features = self.normalizer(features)
 
         # Add bias column if requested
         if self.add_bias:
