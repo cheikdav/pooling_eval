@@ -708,7 +708,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Create log directory: logs/estimator/<exp_id>/<method>/batch_<name>/<timestamp>/
-    log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / args.method / f"batch_{batch_name}" / timestamp
+    log_dir = config.get_logs_dir() / "estimator" / config.experiment_id / args.method / timestamp / f"batch_{batch_name}" 
     log_dir.mkdir(parents=True, exist_ok=True)
 
     # Train estimator
