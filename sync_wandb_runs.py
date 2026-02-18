@@ -54,25 +54,15 @@ def sync_run(run_dir: Path, dry_run: bool = False) -> bool:
 
 
 def find_wandb_runs(experiments_dir: Path) -> list[Path]:
-    """Find all wandb offline run directories.
+    """Find all wandb offline run directories (any nesting structure).
 
     Returns:
         List of paths to wandb run directories
     """
     runs = []
-
-    for exp_dir in experiments_dir.iterdir():
-        if not exp_dir.is_dir():
-            continue
-
-        wandb_runs_dir = exp_dir / "wandb_offline" / "wandb"
-        if not wandb_runs_dir.exists():
-            continue
-
-        for item in wandb_runs_dir.iterdir():
-            if item.is_dir() and (item.name.startswith("run-") or item.name.startswith("offline-run-")):
-                runs.append(item)
-
+    for item in experiments_dir.rglob("*"):
+        if item.is_dir() and (item.name.startswith("run-") or item.name.startswith("offline-run-")):
+            runs.append(item)
     return sorted(runs)
 
 
@@ -131,8 +121,8 @@ def main():
     fail_count = 0
 
     for run_dir in runs_to_sync:
-        experiment_name = run_dir.parent.parent.name
-        print(f"[{experiment_name}] {run_dir.name}")
+        rel_path = run_dir.relative_to(args.experiments_dir)
+        print(f"{rel_path}")
 
         if sync_run(run_dir, dry_run=args.dry_run):
             success_count += 1
