@@ -25,3 +25,7 @@ parameters:
     distribution: log_uniform_values
   rbf-n-components:
     values: [512, 1024, 2048, 4096, 8192]
+  rbf-gamma:
+    min: 1.0e-3
+    max: 10.0
+    distribution: log_uniform_values

@@ -37,6 +37,8 @@ def main():
                        help="Number of SVD/PCA components for dimensionality reduction (LeastSquares methods)")
     parser.add_argument("--rbf-n-components", type=none_or_int, default=None,
                        help="Number of RBF basis functions (for RBF feature extractor)")
+    parser.add_argument("--rbf-gamma", type=float, default=None,
+                       help="Gamma parameter for RBF kernel")
     parser.add_argument("--preprocess-fraction", type=float, default=None)
     parser.add_argument("--log-frequency", type=int, default=None,
                        help="Override logging frequency for W&B (log every N epochs)")
@@ -151,6 +153,11 @@ def main():
     rbf_n_components = wandb.config.get('rbf_n_components', args.rbf_n_components)
     if rbf_n_components is not None and method_config.feature_extractor is not None:
         method_config.feature_extractor.n_components = rbf_n_components
+
+    # Override rbf_gamma for RBF feature extractor from wandb sweep or CLI
+    rbf_gamma = wandb.config.get('rbf_gamma', args.rbf_gamma)
+    if rbf_gamma is not None and method_config.feature_extractor is not None:
+        method_config.feature_extractor.gamma = rbf_gamma
 
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training configuration:")
     print(f"  Episode counts: {episode_subsets}")
