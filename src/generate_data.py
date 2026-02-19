@@ -237,24 +237,15 @@ def restore_full_state(env, state):
         raise ValueError(f"Environment {type(env)} does not support state restoration")
 
 
-def generate_trajectory_from_state(env, model, initial_obs, full_state, gamma: float = 0.99, deterministic: bool = False) -> float:
-    """Generate a single trajectory from an initial state and return discounted return.
-
-    Args:
-        env: Gymnasium environment (single env, not vectorized)
-        model: Trained SB3 model
-        initial_obs: Initial observation (for first action prediction)
-        full_state: Full state for environment restoration (obs for Classic Control, (qpos, qvel) for MuJoCo)
-        gamma: Discount factor
-        deterministic: Whether to use deterministic policy
-
-    Returns:
-        Discounted return for the trajectory
-    """
+def generate_trajectory_from_state(env, model, initial_obs, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None) -> float:
+    """Generate a single trajectory from an initial state and return discounted return."""
     env.reset()  # reset TimeLimit counter and all wrapper state
     restore_full_state(env, full_state)
 
     obs = initial_obs.copy()
+    if vec_normalize is not None:
+        obs = vec_normalize.normalize_obs(obs[None])[0]
+
     done = False
     truncated = False
     episode_return = 0.0
@@ -263,6 +254,8 @@ def generate_trajectory_from_state(env, model, initial_obs, full_state, gamma: f
     while not (done or truncated):
         action, _ = model.predict(obs, deterministic=deterministic)
         obs, reward, done, truncated, _ = env.step(action)
+        if vec_normalize is not None:
+            obs = vec_normalize.normalize_obs(obs[None])[0]
         episode_return += discount * reward
         discount *= gamma
 
@@ -317,7 +310,7 @@ def compute_confidence_interval(returns: np.ndarray, confidence: float = 0.95) -
     return mean - margin, mean + margin
 
 
-def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, gamma: float):
+def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, gamma: float, vec_normalize_path: Path = None):
     """Generate paired state evaluations with ground truth confidence intervals.
 
     Args:
@@ -334,6 +327,16 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
     print(f"Environment: {config.environment.name}")
     print(f"Number of pairs: {config.paired_state.n_pairs}")
     print(f"Trajectories per state: {config.paired_state.n_trajectories_per_state}")
+
+    # Load VecNormalize if available (needed for policies trained with observation normalization)
+    vec_normalize = None
+    if vec_normalize_path is not None and vec_normalize_path.exists():
+        from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
+        dummy_env = DummyVecEnv([lambda: gym.make(config.environment.name)])
+        vec_normalize = VecNormalize.load(str(vec_normalize_path), dummy_env)
+        vec_normalize.training = False
+        vec_normalize.norm_reward = False
+        print(f"Loaded VecNormalize from {vec_normalize_path}")
 
     env = gym.make(config.environment.name)
     env.reset(seed=config.paired_state.seed)
@@ -366,12 +369,12 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
     for pair_idx, (obs1, obs2, state1, state2) in enumerate(tqdm(state_pairs)):
         s1_returns = []
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, obs1, state1, gamma=gamma, deterministic=False)
+            ret = generate_trajectory_from_state(env, model, obs1, state1, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
             s1_returns.append(ret)
 
         s2_returns = []
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, obs2, state2, gamma=gamma, deterministic=False)
+            ret = generate_trajectory_from_state(env, model, obs2, state2, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
             s2_returns.append(ret)
 
         s1_returns = np.array(s1_returns)
@@ -554,7 +557,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     # Generate paired state evaluations if requested
     if generate_paired:
-        generate_paired_states(config, model, output_dir, gamma=config.value_estimators.training.gamma)
+        generate_paired_states(config, model, output_dir, gamma=config.value_estimators.training.gamma, vec_normalize_path=vec_normalize_path)
 
 
 def main():
