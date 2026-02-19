@@ -237,12 +237,24 @@ def restore_full_state(env, state):
         raise ValueError(f"Environment {type(env)} does not support state restoration")
 
 
-def generate_trajectory_from_state(env, model, initial_obs, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None) -> float:
+def get_obs_from_env(env) -> np.ndarray:
+    """Get current observation from env after state restoration."""
+    if hasattr(env.unwrapped, '_get_obs'):
+        return env.unwrapped._get_obs()
+    elif hasattr(env.unwrapped, 'state'):
+        state = env.unwrapped.state
+        return state.copy() if hasattr(state, 'copy') else np.array(state)
+    else:
+        raise ValueError(f"Cannot get observation from {type(env)}")
+
+
+def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None) -> float:
     """Generate a single trajectory from an initial state and return discounted return."""
     env.reset()  # reset TimeLimit counter and all wrapper state
     restore_full_state(env, full_state)
 
-    obs = initial_obs.copy()
+    # Get obs fresh from env after restoration to avoid any stale-obs mismatch
+    obs = get_obs_from_env(env)
     if vec_normalize is not None:
         obs = vec_normalize.normalize_obs(obs[None])[0]
 
@@ -369,12 +381,12 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
     for pair_idx, (obs1, obs2, state1, state2) in enumerate(tqdm(state_pairs)):
         s1_returns = []
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, obs1, state1, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
+            ret = generate_trajectory_from_state(env, model, state1, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
             s1_returns.append(ret)
 
         s2_returns = []
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, obs2, state2, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
+            ret = generate_trajectory_from_state(env, model, state2, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
             s2_returns.append(ret)
 
         s1_returns = np.array(s1_returns)
