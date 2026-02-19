@@ -469,57 +469,60 @@ def train_episode_count_worker(
         n_episodes, use_wandb=use_wandb, sweep_mode=sweep_mode, log_frequency=log_frequency
     )
 
-    print(f"\nSaving estimator (MC loss={final_mc_loss:.6f}) to {checkpoint_path}")
-    trained_estimator.save(checkpoint_path)
+ 
 
-    # Restore stdout/stderr if we redirected
+    if not sweep_mode:
+        print(f"\nSaving estimator (MC loss={final_mc_loss:.6f}) to {checkpoint_path}")
+        trained_estimator.save(checkpoint_path)
+
+        # Save stats and metadata
+        stats = {
+            'method': method_name,
+            'batch_name': batch_name,
+            'n_episodes': n_episodes,
+            'final_mc_loss': final_mc_loss,
+        }
+
+        stats_path = episodes_dir / "training_stats.json"
+        with open(stats_path, 'w') as f:
+            json.dump(stats, f, indent=2)
+
+        # Get data metadata
+        data_metadata = {}
+        data_metadata_path = batch_path.parent / "data_metadata.json"
+        if data_metadata_path.exists():
+            with open(data_metadata_path, 'r') as f:
+                data_metadata = json.load(f)
+
+        # Save estimator metadata
+        estimator_metadata = {
+            'method': method_name,
+            'batch_name': batch_name,
+            'n_episodes': n_episodes,
+            'batch_path': str(batch_path),
+            'gamma': gamma,
+            'final_mc_loss': final_mc_loss,
+            'seed': config.seed,
+            'max_epochs': config.value_estimators.training.max_epochs,
+            'convergence_threshold': config.value_estimators.training.convergence_threshold,
+            'convergence_patience': config.value_estimators.training.convergence_patience,
+            'estimator_config': asdict(method_config),
+            'network_config': {
+                'hidden_sizes': config.network.hidden_sizes,
+                'activation': config.network.activation,
+            },
+            'data_metadata': data_metadata,
+        }
+
+        metadata_path = episodes_dir / "estimator_metadata.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(estimator_metadata, f, indent=2)
+
+   # Restore stdout/stderr if we redirected
     if log_file_handle is not None:
         sys.stdout = original_stdout
         sys.stderr = original_stderr
         log_file_handle.close()
-
-    # Save stats and metadata
-    stats = {
-        'method': method_name,
-        'batch_name': batch_name,
-        'n_episodes': n_episodes,
-        'final_mc_loss': final_mc_loss,
-    }
-
-    stats_path = episodes_dir / "training_stats.json"
-    with open(stats_path, 'w') as f:
-        json.dump(stats, f, indent=2)
-
-    # Get data metadata
-    data_metadata = {}
-    data_metadata_path = batch_path.parent / "data_metadata.json"
-    if data_metadata_path.exists():
-        with open(data_metadata_path, 'r') as f:
-            data_metadata = json.load(f)
-
-    # Save estimator metadata
-    estimator_metadata = {
-        'method': method_name,
-        'batch_name': batch_name,
-        'n_episodes': n_episodes,
-        'batch_path': str(batch_path),
-        'gamma': gamma,
-        'final_mc_loss': final_mc_loss,
-        'seed': config.seed,
-        'max_epochs': config.value_estimators.training.max_epochs,
-        'convergence_threshold': config.value_estimators.training.convergence_threshold,
-        'convergence_patience': config.value_estimators.training.convergence_patience,
-        'estimator_config': asdict(method_config),
-        'network_config': {
-            'hidden_sizes': config.network.hidden_sizes,
-            'activation': config.network.activation,
-        },
-        'data_metadata': data_metadata,
-    }
-
-    metadata_path = episodes_dir / "estimator_metadata.json"
-    with open(metadata_path, 'w') as f:
-        json.dump(estimator_metadata, f, indent=2)
 
     if log_file_handle is None:
         print(f"Training complete for {method_name} batch_{batch_name} with {n_episodes} episodes.\n")
