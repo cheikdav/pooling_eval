@@ -12,6 +12,23 @@ METHOD_DISPLAY_NAMES = {
     'monte_carlo': 'monte_carlo'
 }
 
+METHOD_ORDER = [
+    'monte_carlo', 'dqn',
+    'least_squares_mc', 'least_squares_td',
+    'least_squares_mc_rbf', 'least_squares_td_rbf',
+    'nnls_mc', 'nnls_td',
+]
+
+
+def sort_methods(methods):
+    """Sort methods by METHOD_ORDER; unknown methods go last."""
+    def key(m):
+        try:
+            return (METHOD_ORDER.index(m), m)
+        except ValueError:
+            return (len(METHOD_ORDER), m)
+    return sorted(methods, key=key)
+
 
 def get_method_display_name(method):
     """Get display name for a method."""

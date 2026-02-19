@@ -7,26 +7,13 @@ import plotly.express as px
 import numpy as np
 from pathlib import Path
 
-from common import get_method_display_name
-
-
-# MC next to TD, then least squares pairs, then nnls pairs
-METHOD_ORDER = [
-    'monte_carlo', 'dqn',
-    'least_squares_mc', 'least_squares_td',
-    'least_squares_mc_rbf', 'least_squares_td_rbf',
-    'nnls_mc', 'nnls_td',
-]
+from common import get_method_display_name, sort_methods
 
 
 def sort_predictions(predictions_data):
     """Sort predictions_data dict by METHOD_ORDER, unknown methods go last."""
-    def key(method):
-        try:
-            return METHOD_ORDER.index(method)
-        except ValueError:
-            return len(METHOD_ORDER)
-    return dict(sorted(predictions_data.items(), key=lambda x: key(x[0])))
+    ordered = sort_methods(predictions_data.keys())
+    return {m: predictions_data[m] for m in ordered}
 
 
 def render_tab(filtered_metadata, methods, baseline_method):

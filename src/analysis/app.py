@@ -4,7 +4,7 @@ from pathlib import Path
 import streamlit as st
 import pandas as pd
 
-from common import load_predictions_data, get_method_display_name
+from common import load_predictions_data, get_method_display_name, sort_methods
 import tab_absolute
 import tab_comparison
 import tab_trajectory
@@ -59,7 +59,7 @@ def show_selection_filters(metadata_df):
     filtered = env_df[env_df['policy_display_name'] == selected_policy]
 
     # Method selection
-    methods = sorted(filtered['method'].unique())
+    methods = sort_methods(filtered['method'].unique())
     selected_methods = st.sidebar.multiselect(
         "Methods to Compare", methods, default=methods
     )
