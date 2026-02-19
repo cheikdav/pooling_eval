@@ -27,8 +27,8 @@ parameters:
     max: 0.1
     distribution: log_uniform_values
   target-update-rate:
-    min: 0.0001
-    max: 0.2
+    min: 0.001
+    max: 0.8
     distribution: log_uniform_values
   batch-size:
     values: [64, 128, 256, 512]

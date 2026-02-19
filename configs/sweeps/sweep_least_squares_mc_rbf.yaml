@@ -24,4 +24,4 @@ parameters:
     max: 1.0
     distribution: log_uniform_values
   rbf-n-components:
-    values: [128, 256, 512, 1024]
+    values: [512, 1024, 2048, 4096, 8192]
