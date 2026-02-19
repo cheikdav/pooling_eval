@@ -10,6 +10,25 @@ from pathlib import Path
 from common import get_method_display_name
 
 
+# MC next to TD, then least squares pairs, then nnls pairs
+METHOD_ORDER = [
+    'monte_carlo', 'dqn',
+    'least_squares_mc', 'least_squares_td',
+    'least_squares_mc_rbf', 'least_squares_td_rbf',
+    'nnls_mc', 'nnls_td',
+]
+
+
+def sort_predictions(predictions_data):
+    """Sort predictions_data dict by METHOD_ORDER, unknown methods go last."""
+    def key(method):
+        try:
+            return METHOD_ORDER.index(method)
+        except ValueError:
+            return len(METHOD_ORDER)
+    return dict(sorted(predictions_data.items(), key=lambda x: key(x[0])))
+
+
 def render_tab(filtered_metadata, methods, baseline_method):
     """Render the paired states tab.
 
@@ -154,29 +173,37 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
 
     # If we have predictions, show evaluation metrics
     if predictions_data:
+        predictions_data = sort_predictions(predictions_data)
         st.markdown("### Prediction Evaluation")
 
         # Compute metrics for each method
         metrics_data = []
         for method, pred_df in predictions_data.items():
-            # Extract s1 and s2 predictions, averaging over batches
             avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
-
-            # Combine all predictions
             all_pred = np.concatenate([avg_pred['s1_predicted'].values, avg_pred['s2_predicted'].values])
 
-            # Compute metrics
             errors = all_pred - all_gt_means
             mse = np.mean(errors**2)
             mae = np.mean(np.abs(errors))
 
-            # Coverage: fraction of predictions within CI
             in_ci_mask = (all_pred >= all_gt_ci_lower) & (all_pred <= all_gt_ci_upper)
             coverage = np.mean(in_ci_mask)
+
+            # Variance: mean per-state variance of predictions across batches
+            var_s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
+            var_s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
+            variance = np.mean(np.concatenate([var_s1, var_s2]))
+
+            # Squared bias: (mean_pred - gt_mean)^2 averaged over states
+            s1_bias_sq = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
+            s2_bias_sq = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
+            squared_bias = np.mean(np.concatenate([s1_bias_sq, s2_bias_sq]))
 
             metrics_data.append({
                 'Method': get_method_display_name(method),
                 'MSE': mse,
+                'Squared Bias': squared_bias,
+                'Variance': variance,
                 'MAE': mae,
                 'Coverage (95% CI)': coverage * 100
             })
@@ -184,6 +211,8 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
         metrics_df = pd.DataFrame(metrics_data)
         st.dataframe(metrics_df.style.format({
             'MSE': '{:.4f}',
+            'Squared Bias': '{:.4f}',
+            'Variance': '{:.4f}',
             'MAE': '{:.4f}',
             'Coverage (95% CI)': '{:.2f}%'
         }), use_container_width=True)
@@ -343,26 +372,32 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
 
     # If we have predictions, show evaluation metrics
     if predictions_data:
+        predictions_data = sort_predictions(predictions_data)
         st.markdown("### Prediction Evaluation for Differences")
 
         # Compute metrics for each method
         metrics_data = []
         for method, pred_df in predictions_data.items():
-            # Average predictions over batches
             avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
 
-            # Compute metrics
             errors = avg_pred - diff_means
             mse = np.mean(errors**2)
             mae = np.mean(np.abs(errors))
 
-            # Coverage: fraction of predicted differences within CI
             in_ci_mask = (avg_pred >= diff_ci_lower) & (avg_pred <= diff_ci_upper)
             coverage = np.mean(in_ci_mask)
+
+            # Variance: mean per-pair variance of diff predictions across batches
+            variance = pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).mean()
+
+            # Squared bias: (mean_pred - gt_mean)^2 averaged over pairs
+            squared_bias = np.mean((avg_pred - diff_means) ** 2)
 
             metrics_data.append({
                 'Method': get_method_display_name(method),
                 'MSE': mse,
+                'Squared Bias': squared_bias,
+                'Variance': variance,
                 'MAE': mae,
                 'Coverage (95% CI)': coverage * 100
             })
@@ -370,6 +405,8 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
         metrics_df = pd.DataFrame(metrics_data)
         st.dataframe(metrics_df.style.format({
             'MSE': '{:.4f}',
+            'Squared Bias': '{:.4f}',
+            'Variance': '{:.4f}',
             'MAE': '{:.4f}',
             'Coverage (95% CI)': '{:.2f}%'
         }), use_container_width=True)
