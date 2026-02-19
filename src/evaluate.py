@@ -8,6 +8,7 @@ import torch
 from pathlib import Path
 from typing import Dict
 from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
 
 from src.config import ExperimentConfig
 from src.env_utils import ESTIMATOR_CLASSES
@@ -370,112 +371,89 @@ def generate_paired_predictions_for_n_episodes(config: ExperimentConfig,
     return str(predictions_file.relative_to(results_dir))
 
 
+def _predictions_worker(task):
+    """Worker: load eval batch from disk and generate predictions for one (method, n_episodes)."""
+    config, data_dir, results_dir, method_name, n_episodes, n_ep_dir, device = task
+    eval_batch = dict(np.load(data_dir / "batch_eval.npz", allow_pickle=True))
+    return generate_predictions_for_n_episodes(
+        config, eval_batch, results_dir, method_name, n_episodes, n_ep_dir, device
+    )
+
+
 def generate_predictions(estimators_dir: Path, config: ExperimentConfig,
-                        eval_batch: Dict, results_dir: Path, device: str = "cpu"):
-    """Generate predictions from all trained models with metadata.
-
-    Processes one n_episodes at a time to avoid memory issues.
-
-    Args:
-        estimators_dir: Directory containing trained estimators
-        config: Experiment configuration
-        eval_batch: Evaluation batch data
-        results_dir: Root results directory
-        device: Device to use for inference
-
-    Saves:
-        For each method/n_episodes combination:
-        - results/<method>/<n_episodes>/predictions.parquet
-        - results/<method>/<n_episodes>/predictions_metadata.json
-    """
+                        eval_batch: Dict, results_dir: Path, device: str = "cpu",
+                        n_jobs: int = 1):
+    """Generate predictions from all trained models with metadata."""
     eval_obs_list = eval_batch['observations']
-    eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
-    n_states = len(eval_obs_flat)
+    n_states = len(np.concatenate(eval_obs_list, axis=0))
 
-    print(f"\nGenerating predictions on {n_states} states from {len(eval_obs_list)} episodes...")
-
-    prediction_files_created = []
-
+    # Build task list
+    tasks = []
     for method_config in config.value_estimators.method_configs:
         method_name = method_config.name
-        print(f"\n  Processing method: {method_name}")
-
-        # Get available n_episodes directories from estimators
         estimators_method_dir = estimators_dir / method_name
         if not estimators_method_dir.exists():
-            print(f"    Method directory not found: {estimators_method_dir}, skipping")
+            print(f"  Method directory not found: {estimators_method_dir}, skipping")
             continue
-
-        n_episodes_dirs = sorted([d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
-                                key=lambda d: int(d.name))
-
+        n_episodes_dirs = sorted(
+            [d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+            key=lambda d: int(d.name)
+        )
         for n_ep_dir in n_episodes_dirs:
-            n_episodes = int(n_ep_dir.name)
-            print(f"    Processing n_episodes={n_episodes}")
+            tasks.append((config, config.get_data_dir(), results_dir, method_name, int(n_ep_dir.name), n_ep_dir, device))
 
-            # Process this n_episodes and save immediately
-            predictions_file = generate_predictions_for_n_episodes(
-                config, eval_batch, results_dir,
-                method_name, n_episodes, n_ep_dir, device
-            )
+    print(f"\nGenerating predictions on {n_states} states from {len(eval_obs_list)} episodes...")
+    print(f"  {len(tasks)} (method, n_episodes) combinations, n_jobs={n_jobs}")
 
-            if predictions_file:
-                prediction_files_created.append(predictions_file)
+    if n_jobs == 1:
+        results = [_predictions_worker(t) for t in tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            results = list(executor.map(_predictions_worker, tasks))
 
-    return prediction_files_created
+    return [r for r in results if r is not None]
+
+
+def _paired_predictions_worker(task):
+    """Worker: load paired data from disk and generate predictions for one (method, n_episodes)."""
+    config, data_dir, results_dir, method_name, n_episodes, n_ep_dir, device = task
+    paired_data = dict(np.load(data_dir / "paired_states.npz", allow_pickle=True))
+    return generate_paired_predictions_for_n_episodes(
+        config, paired_data, results_dir, method_name, n_episodes, n_ep_dir, device
+    )
 
 
 def generate_paired_predictions(estimators_dir: Path, config: ExperimentConfig,
-                                paired_data: Dict, results_dir: Path, device: str = "cpu"):
-    """Generate predictions for paired states from all trained models.
-
-    Processes one n_episodes at a time to avoid memory issues.
-
-    Args:
-        estimators_dir: Directory containing trained estimators
-        config: Experiment configuration
-        paired_data: Paired states data
-        results_dir: Root results directory
-        device: Device to use for inference
-
-    Saves:
-        For each method/n_episodes combination:
-        - results/<method>/<n_episodes>/paired_predictions.parquet
-        - results/<method>/<n_episodes>/paired_predictions_metadata.json
-    """
+                                paired_data: Dict, results_dir: Path, device: str = "cpu",
+                                n_jobs: int = 1):
+    """Generate predictions for paired states from all trained models."""
     n_pairs = len(paired_data['pair_indices'])
 
-    print(f"\nGenerating paired state predictions for {n_pairs} pairs...")
-
-    prediction_files_created = []
-
+    # Build task list
+    tasks = []
     for method_config in config.value_estimators.method_configs:
         method_name = method_config.name
-        print(f"\n  Processing method: {method_name}")
-
-        # Get available n_episodes directories from estimators
         estimators_method_dir = estimators_dir / method_name
         if not estimators_method_dir.exists():
-            print(f"    Method directory not found: {estimators_method_dir}, skipping")
+            print(f"  Method directory not found: {estimators_method_dir}, skipping")
             continue
-
-        n_episodes_dirs = sorted([d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
-                                key=lambda d: int(d.name))
-
+        n_episodes_dirs = sorted(
+            [d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+            key=lambda d: int(d.name)
+        )
         for n_ep_dir in n_episodes_dirs:
-            n_episodes = int(n_ep_dir.name)
-            print(f"    Processing n_episodes={n_episodes}")
+            tasks.append((config, config.get_data_dir(), results_dir, method_name, int(n_ep_dir.name), n_ep_dir, device))
 
-            # Process this n_episodes and save immediately
-            predictions_file = generate_paired_predictions_for_n_episodes(
-                config, paired_data, results_dir,
-                method_name, n_episodes, n_ep_dir, device
-            )
+    print(f"\nGenerating paired state predictions for {n_pairs} pairs...")
+    print(f"  {len(tasks)} (method, n_episodes) combinations, n_jobs={n_jobs}")
 
-            if predictions_file:
-                prediction_files_created.append(predictions_file)
+    if n_jobs == 1:
+        results = [_paired_predictions_worker(t) for t in tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            results = list(executor.map(_paired_predictions_worker, tasks))
 
-    return prediction_files_created
+    return [r for r in results if r is not None]
 
 
 def main():
@@ -487,6 +465,8 @@ def main():
                       help="Only run evaluation on the standard test set")
     mode.add_argument("--paired-only", action="store_true",
                       help="Only run evaluation on the paired states dataset")
+    parser.add_argument("--n-jobs", type=int, default=1,
+                       help="Number of parallel workers for prediction generation (default: 1)")
     args = parser.parse_args()
 
     run_eval = not args.paired_only
@@ -526,7 +506,7 @@ def main():
         print(f"Saved ground truth returns to: {ground_truth_file}")
         print(f"  States: {len(ground_truth_df)}, Episodes: {ground_truth_df['episode_idx'].nunique()}, Gamma: {gamma}")
 
-        prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device)
+        prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device, n_jobs=args.n_jobs)
 
     paired_prediction_files = []
     if run_paired:
@@ -536,7 +516,7 @@ def main():
 
         if paired_data is not None:
             print(f"Found paired states data with {len(paired_data['pair_indices'])} pairs")
-            paired_prediction_files = generate_paired_predictions(estimators_dir, config, paired_data, results_dir, device)
+            paired_prediction_files = generate_paired_predictions(estimators_dir, config, paired_data, results_dir, device, n_jobs=args.n_jobs)
             print(f"\nGenerated {len(paired_prediction_files)} paired prediction files")
         else:
             print("No paired states data found. Skipping paired state evaluation.")
