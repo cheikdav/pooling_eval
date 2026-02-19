@@ -173,36 +173,55 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
             mse = np.mean(errors**2)
             mae = np.mean(np.abs(errors))
 
-            in_ci_mask = (all_pred >= all_gt_ci_lower) & (all_pred <= all_gt_ci_upper)
-            coverage = np.mean(in_ci_mask)
-
-            # Variance: mean per-state variance of predictions across batches
-            var_s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
-            var_s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
-            variance = np.mean(np.concatenate([var_s1, var_s2]))
-
-            # Squared bias: (mean_pred - gt_mean)^2 averaged over states
-            s1_bias_sq = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
-            s2_bias_sq = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
-            squared_bias = np.mean(np.concatenate([s1_bias_sq, s2_bias_sq]))
-
             metrics_data.append({
                 'Method': get_method_display_name(method),
                 'MSE': mse,
-                'Squared Bias': squared_bias,
-                'Variance': variance,
                 'MAE': mae,
-                'Coverage (95% CI)': coverage * 100
             })
 
         metrics_df = pd.DataFrame(metrics_data)
         st.dataframe(metrics_df.style.format({
             'MSE': '{:.4f}',
-            'Squared Bias': '{:.4f}',
-            'Variance': '{:.4f}',
             'MAE': '{:.4f}',
-            'Coverage (95% CI)': '{:.2f}%'
         }), use_container_width=True)
+
+        # Histograms: per-state MSE, squared bias, variance distributions
+        def _per_state_metric(metric_name, pred_df, avg_pred):
+            if metric_name == 'MSE':
+                s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
+                s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
+            elif metric_name == 'Squared Bias':
+                s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
+                s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
+            else:  # Variance
+                s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
+                s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
+            return np.concatenate([s1, s2])
+
+        for metric_name, title in [
+            ('MSE', 'Per-State MSE Distribution'),
+            ('Squared Bias', 'Per-State Squared Bias Distribution'),
+            ('Variance', 'Per-State Variance Distribution'),
+        ]:
+            st.markdown(f"### {title}")
+            hist_rows = []
+            for method, pred_df in predictions_data.items():
+                avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
+                values = _per_state_metric(metric_name, pred_df, avg_pred)
+                for v in values:
+                    hist_rows.append({'Method': get_method_display_name(method), metric_name: v})
+            hist_df = pd.DataFrame(hist_rows)
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                fig = px.histogram(hist_df, x=metric_name, color='Method', nbins=40, opacity=0.7,
+                                   barmode='overlay', title=f"{title} ({n_episodes} episodes)")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.markdown("**Statistics**")
+                summary = hist_df.groupby('Method')[metric_name].agg(mean='mean', std='std').reset_index()
+                st.dataframe(summary.style.format({'mean': '{:.4f}', 'std': '{:.4f}'}),
+                             use_container_width=True, hide_index=True)
 
         # Scatter plot: Predictions vs Ground Truth for each method
         st.markdown("### Predictions vs Ground Truth")
@@ -371,32 +390,51 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
             mse = np.mean(errors**2)
             mae = np.mean(np.abs(errors))
 
-            in_ci_mask = (avg_pred >= diff_ci_lower) & (avg_pred <= diff_ci_upper)
-            coverage = np.mean(in_ci_mask)
-
-            # Variance: mean per-pair variance of diff predictions across batches
-            variance = pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).mean()
-
-            # Squared bias: (mean_pred - gt_mean)^2 averaged over pairs
-            squared_bias = np.mean((avg_pred - diff_means) ** 2)
-
             metrics_data.append({
                 'Method': get_method_display_name(method),
                 'MSE': mse,
-                'Squared Bias': squared_bias,
-                'Variance': variance,
                 'MAE': mae,
-                'Coverage (95% CI)': coverage * 100
             })
 
         metrics_df = pd.DataFrame(metrics_data)
         st.dataframe(metrics_df.style.format({
             'MSE': '{:.4f}',
-            'Squared Bias': '{:.4f}',
-            'Variance': '{:.4f}',
             'MAE': '{:.4f}',
-            'Coverage (95% CI)': '{:.2f}%'
         }), use_container_width=True)
+
+        # Histograms: per-pair MSE, squared bias, variance distributions
+        def _per_pair_metric(metric_name, pred_df, avg_pred):
+            if metric_name == 'MSE':
+                return (avg_pred - diff_means) ** 2
+            elif metric_name == 'Squared Bias':
+                return (avg_pred - diff_means) ** 2
+            else:  # Variance
+                return pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).values
+
+        for metric_name, title in [
+            ('MSE', 'Per-Pair MSE Distribution'),
+            ('Squared Bias', 'Per-Pair Squared Bias Distribution'),
+            ('Variance', 'Per-Pair Variance Distribution'),
+        ]:
+            st.markdown(f"### {title}")
+            hist_rows = []
+            for method, pred_df in predictions_data.items():
+                avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
+                values = _per_pair_metric(metric_name, pred_df, avg_pred)
+                for v in values:
+                    hist_rows.append({'Method': get_method_display_name(method), metric_name: v})
+            hist_df = pd.DataFrame(hist_rows)
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                fig = px.histogram(hist_df, x=metric_name, color='Method', nbins=40, opacity=0.7,
+                                   barmode='overlay', title=f"{title} ({n_episodes} episodes)")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.markdown("**Statistics**")
+                summary = hist_df.groupby('Method')[metric_name].agg(mean='mean', std='std').reset_index()
+                st.dataframe(summary.style.format({'mean': '{:.4f}', 'std': '{:.4f}'}),
+                             use_container_width=True, hide_index=True)
 
         # Scatter plot: Predicted differences vs Ground Truth for each method
         st.markdown("### Predicted Differences vs Ground Truth")
