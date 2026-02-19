@@ -1,8 +1,8 @@
 name: least_squares_td_rbf
 type: least_squares_td
-learning_rate: 0.001
 max_epochs: 1
-ridge_lambda: 1.0e-6
+ridge_lambda: 2.0e-2
+n_components: 1028
 feature_extractor:
   type: rbf
   normalize: false
