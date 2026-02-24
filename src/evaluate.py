@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
 
 from src.config import ExperimentConfig
 from src.env_utils import ESTIMATOR_CLASSES
@@ -406,10 +407,12 @@ def generate_predictions(estimators_dir: Path, config: ExperimentConfig,
     print(f"  {len(tasks)} (method, n_episodes) combinations, n_jobs={n_jobs}")
 
     if n_jobs == 1:
-        results = [_predictions_worker(t) for t in tasks]
+        results = [_predictions_worker(t) for t in tqdm(tasks, desc="Processing tasks")]
     else:
         with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            results = list(executor.map(_predictions_worker, tasks))
+            results = list(tqdm(executor.map(_predictions_worker, tasks),
+                               total=len(tasks),
+                               desc="Processing tasks"))
 
     return [r for r in results if r is not None]
 
@@ -448,10 +451,12 @@ def generate_paired_predictions(estimators_dir: Path, config: ExperimentConfig,
     print(f"  {len(tasks)} (method, n_episodes) combinations, n_jobs={n_jobs}")
 
     if n_jobs == 1:
-        results = [_paired_predictions_worker(t) for t in tasks]
+        results = [_paired_predictions_worker(t) for t in tqdm(tasks, desc="Processing paired tasks")]
     else:
         with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            results = list(executor.map(_paired_predictions_worker, tasks))
+            results = list(tqdm(executor.map(_paired_predictions_worker, tasks),
+                               total=len(tasks),
+                               desc="Processing paired tasks"))
 
     return [r for r in results if r is not None]
 
