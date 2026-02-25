@@ -186,11 +186,17 @@ class LeastSquaresEstimator(ValueEstimator):
         return values.cpu().numpy()
 
     def _build_checkpoint(self) -> Dict[str, Any]:
-        """Build checkpoint with least squares specific fields."""
+        """Build checkpoint with least squares specific fields.
+
+        Only saves w (not A and b) for storage efficiency.
+        File size is linear in n_components instead of quadratic.
+        """
         checkpoint = super()._build_checkpoint()
+
+        # Ensure w is up to date before saving
+        self._update_w()
+
         checkpoint.update({
-            'A': self.A,
-            'b': self.b,
             'w': self.w,
             'd': self.d,
             'hidden_sizes': self.hidden_sizes,
@@ -204,16 +210,28 @@ class LeastSquaresEstimator(ValueEstimator):
         return checkpoint
 
     def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
-        """Load least squares specific fields."""
+        """Load least squares specific fields with backward compatibility.
+
+        New checkpoints only contain w (inference only).
+        Old checkpoints contain A, b, w (can resume training).
+        """
         super()._load_from_checkpoint_dict(checkpoint)
 
         self.working_dim = checkpoint.get('working_dim', self.repr_dim)
-
-        self.A = checkpoint['A']
-        self.b = checkpoint['b']
-        self.w = checkpoint['w']
         self.d = checkpoint.get('d', self.working_dim + 1)
         self.repr_dim = checkpoint['repr_dim']
+        self.w = checkpoint['w']
+
+        # Backward compatibility: load A and b if present, otherwise initialize
+        if 'A' in checkpoint and 'b' in checkpoint:
+            self.A = checkpoint['A']
+            self.b = checkpoint['b']
+            self.w_is_stale = False
+        else:
+            # Initialize to default (inference only, cannot resume training)
+            self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)
+            self.b = torch.zeros(self.d, 1, device=self.device)
+            self.w_is_stale = False
 
     @classmethod
     def load_from_checkpoint(cls, path: Path, device: str = "auto"):
@@ -251,6 +269,10 @@ class LeastSquaresEstimator(ValueEstimator):
         )
 
         estimator.load(path)
+
+        # Set to eval mode for inference
+        estimator.eval()
+        estimator.feature_extractor.eval()
 
         return estimator
 
