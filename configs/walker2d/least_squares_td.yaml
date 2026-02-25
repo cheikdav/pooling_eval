@@ -1,9 +1,9 @@
 name: least_squares_td
 type: least_squares_td
 n_components: 200
-ridge_lambda: 1.0e-04
+ridge_lambda: 0.0001
 feature_extractor:
   type: policy_representation
-  normalize: true
+  normalize: post
   policy_path: null
   algorithm: SAC

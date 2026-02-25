@@ -1,11 +1,11 @@
 name: nnls_td
 type: dqn
 learning_rate: 0.06
-target_update_rate: 2.0e-2
+target_update_rate: 0.02
 batch_size: 64
 feature_extractor:
   type: policy_representation
-  normalize: true
+  normalize: post
   policy_path: null
   algorithm: SAC
 network:

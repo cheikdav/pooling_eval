@@ -4,6 +4,6 @@ ridge_lambda: 0.03
 n_components: 50
 feature_extractor:
   type: policy_representation
-  normalize: true
+  normalize: post
   policy_path: null
   algorithm: PPO

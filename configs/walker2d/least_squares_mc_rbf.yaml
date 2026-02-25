@@ -1,11 +1,10 @@
 name: least_squares_mc_rbf
 type: least_squares_mc
-
 max_epochs: 1
-ridge_lambda: 2.0e-1
+ridge_lambda: 0.2
 feature_extractor:
   type: rbf
-  normalize: true
+  normalize: pre
   n_components: 1028
   gamma: 1.0
   seed: 42

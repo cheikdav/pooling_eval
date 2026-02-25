@@ -4,7 +4,7 @@ learning_rate: 0.01
 batch_size: 128
 feature_extractor:
   type: policy_representation
-  normalize: true
+  normalize: post
   policy_path: null
   algorithm: SAC
 network:

@@ -2,7 +2,7 @@
 
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Literal, Optional, Type, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -121,7 +121,7 @@ class EstimatorType(str, Enum):
 class FeatureExtractorConfig:
     """Configuration for feature extraction."""
     type: FeatureExtractorType = FeatureExtractorType.IDENTITY
-    normalize: bool = True
+    normalize: Optional[Literal['pre', 'post']] = 'post'  # None = no normalization, 'pre' = before extraction, 'post' = after extraction
     policy_path: Optional[str] = None  # Required for policy_representation type
     algorithm: Optional[str] = None  # Required for policy_representation type (PPO, A2C, SAC, TD3)
     n_components: Optional[int] = None  # Required for rbf type

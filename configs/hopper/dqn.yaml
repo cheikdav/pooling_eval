@@ -1,8 +1,8 @@
 name: dqn
 type: dqn
-learning_rate: 3.5e-4
-target_update_rate: 7.0e-2
+learning_rate: 0.00035
+target_update_rate: 0.07
 batch_size: 512
 feature_extractor:
   type: identity
-  normalize: true
+  normalize: post

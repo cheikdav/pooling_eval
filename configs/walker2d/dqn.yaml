@@ -5,4 +5,4 @@ target_update_rate: 0.027
 batch_size: 512
 feature_extractor:
   type: identity
-  normalize: true
+  normalize: post

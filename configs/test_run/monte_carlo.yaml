@@ -3,4 +3,4 @@ type: monte_carlo
 learning_rate: 0.001
 feature_extractor:
   type: identity
-  normalize: true
+  normalize: post

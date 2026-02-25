@@ -48,23 +48,42 @@ class FeatureExtractor(nn.Module, ABC):
 
     Template method pattern: forward() handles normalization, _forward() extracts features.
     Normalization statistics only update during training mode.
+
+    Args:
+        normalize: None (no normalization), 'pre' (before extraction), or 'post' (after extraction)
+        repr_dim: Dimension of extracted features (before bias)
+        obs_dim: Dimension of observations (required if normalize='pre')
     """
 
-    def __init__(self, normalize: bool = True, repr_dim: int = None):
+    def __init__(self, normalize: str = 'post', repr_dim: int = None, obs_dim: int = None):
         super().__init__()
         self.normalize = normalize
         self.repr_dim = repr_dim
+        self.obs_dim = obs_dim
         self.add_bias = False  # Can be set to True by estimators that need it (e.g., LeastSquares)
 
-        if self.normalize:
-            self.normalizer = RunningNormalizer(self.get_feature_dim())
-        else:
+        # Create normalizer based on mode
+        if self.normalize == 'pre':
+            if obs_dim is None:
+                raise ValueError("obs_dim is required when normalize='pre'")
+            self.normalizer = RunningNormalizer(obs_dim)
+        elif self.normalize == 'post':
+            self.normalizer = RunningNormalizer(repr_dim)
+        else:  # normalize is None
             self.normalizer = None
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        # Pre-normalization: normalize observations before feature extraction
+        if self.normalize == 'pre':
+            if self.training:
+                self.normalizer.update(observations)
+            observations = self.normalizer(observations)
+
+        # Feature extraction
         features = self._forward(observations)
 
-        if self.normalize:
+        # Post-normalization: normalize features after extraction
+        if self.normalize == 'post':
             if self.training:
                 self.normalizer.update(features)
             features = self.normalizer(features)
@@ -109,8 +128,8 @@ class FeatureExtractor(nn.Module, ABC):
 class IdentityExtractor(FeatureExtractor):
     """Returns observations as features."""
 
-    def __init__(self, obs_dim: int, normalize: bool = True):
-        super().__init__(normalize=normalize, repr_dim=obs_dim)
+    def __init__(self, obs_dim: int, normalize: str = 'post'):
+        super().__init__(normalize=normalize, repr_dim=obs_dim, obs_dim=obs_dim)
 
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         return observations
@@ -124,7 +143,7 @@ class IdentityExtractor(FeatureExtractor):
 class PolicyRepresentationExtractor(FeatureExtractor):
     """Extracts frozen intermediate representations from a trained policy network."""
 
-    def __init__(self, policy_path: str, algorithm: str, device: str = "auto", normalize: bool = True):
+    def __init__(self, policy_path: str, algorithm: str, device: str = "auto", normalize: str = 'post'):
         if device == "auto":
             device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
@@ -151,8 +170,9 @@ class PolicyRepresentationExtractor(FeatureExtractor):
         policy = policy_classes[self.algorithm].load(policy_path, device=device_obj)
         self.policy = policy
 
+        obs_dim = policy.observation_space.shape[0]
         with torch.no_grad():
-            dummy_obs = torch.zeros(1, policy.observation_space.shape[0], device=device_obj)
+            dummy_obs = torch.zeros(1, obs_dim, device=device_obj)
             if self.algorithm in ['ppo', 'a2c']:
                 dummy_features = policy.policy.mlp_extractor.forward_actor(dummy_obs)
             elif self.algorithm in ['sac', 'td3']:
@@ -160,7 +180,7 @@ class PolicyRepresentationExtractor(FeatureExtractor):
             else:
                 raise ValueError(f"Unsupported algorithm for representation extraction: {self.algorithm}")
 
-        super().__init__(normalize=normalize, repr_dim=dummy_features.shape[-1])
+        super().__init__(normalize=normalize, repr_dim=dummy_features.shape[-1], obs_dim=obs_dim)
 
         if self.algorithm in ['ppo', 'a2c']:
             self.repr_net = policy.policy.mlp_extractor.policy_net
@@ -193,7 +213,7 @@ class PolicyRepresentationExtractor(FeatureExtractor):
 class RBFExtractor(FeatureExtractor):
     """Extracts RBF kernel features using sklearn's RBFSampler."""
 
-    def __init__(self, obs_dim: int, n_components: int = 100, gamma: float = 1.0, seed: int = 42, normalize: bool = True):
+    def __init__(self, obs_dim: int, n_components: int = 100, gamma: float = 1.0, seed: int = 42, normalize: str = 'post'):
         self.obs_dim = obs_dim
         self.n_components = n_components
         self.gamma = gamma
@@ -208,7 +228,7 @@ class RBFExtractor(FeatureExtractor):
         dummy_obs = np.zeros((1, obs_dim))
         self.rbf_sampler.fit(dummy_obs)
 
-        super().__init__(normalize=normalize, repr_dim=n_components)
+        super().__init__(normalize=normalize, repr_dim=n_components, obs_dim=obs_dim)
 
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         obs_np = observations.cpu().numpy()
@@ -239,7 +259,7 @@ def create_feature_extractor(config, obs_dim: int, device: str = "auto") -> Feat
     from src.config import FeatureExtractorConfig, FeatureExtractorType
 
     if config is None:
-        return IdentityExtractor(obs_dim, normalize=True)
+        return IdentityExtractor(obs_dim, normalize='post')
 
     if not isinstance(config, FeatureExtractorConfig):
         raise ValueError(f"Expected FeatureExtractorConfig, got {type(config)}")
@@ -286,6 +306,10 @@ def create_feature_extractor_from_saved_info(save_info: dict, device: str = "aut
     extractor_type = save_info['type']
     normalize = save_info['normalize']
     repr_dim = save_info['repr_dim']
+
+    # Backward compatibility: convert old boolean normalize to new string format
+    if isinstance(normalize, bool):
+        normalize = 'post' if normalize else None
 
     if extractor_type == 'identity':
         return IdentityExtractor(

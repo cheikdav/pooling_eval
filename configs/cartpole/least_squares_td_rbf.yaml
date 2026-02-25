@@ -5,7 +5,7 @@ max_epochs: 1
 ridge_lambda: 0.2
 feature_extractor:
   type: rbf
-  normalize: true
+  normalize: pre
   n_components: 512
   gamma: 1.0
   seed: 42

@@ -5,7 +5,7 @@ target_update_rate: 0.14
 batch_size: 64
 feature_extractor:
   type: policy_representation
-  normalize: true
+  normalize: post
   policy_path: null
   algorithm: SAC
 network:

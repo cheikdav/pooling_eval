@@ -3,7 +3,7 @@ type: monte_carlo
 learning_rate: 0.001
 feature_extractor:
   type: policy_representation
-  normalize: true
+  normalize: post
   policy_path: null
   algorithm: PPO
 network:
