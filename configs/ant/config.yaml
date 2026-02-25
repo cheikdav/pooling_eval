@@ -26,12 +26,12 @@ policy:
   use_vec_normalize: false
 data_generation:
   n_batches: 100
-  episodes_per_batch: 1000
+  episodes_per_batch: 600
   deterministic_policy: false
-  n_envs: 64
-  tuning_episodes: 1000
+  n_envs: 128
+  tuning_episodes: 600
   validation_episodes_per_batch: 200
-  eval_episodes: 1000
+  eval_episodes: 600
 value_estimators:
   training:
     max_epochs: 50000
@@ -42,11 +42,11 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
+        - 25
+        - 50
         - 100
-        - 200
-        - 500
-        - 750
-        - 1000
+        - 300
+        - 600
   methods:
   - monte_carlo
   - dqn
@@ -72,4 +72,4 @@ paired_state:
   enabled: true
   n_pairs: 100
   n_trajectories_per_state: 50
-  seed: 42
+  seed: 43
