@@ -273,7 +273,7 @@ def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, 
         undiscounted_return += reward
         discount *= gamma
 
-    return episode_return
+    return episode_return, undiscounted_return
 
 
 def sample_state_pairs(env, config: ExperimentConfig):
