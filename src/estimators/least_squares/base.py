@@ -61,7 +61,7 @@ class LeastSquaresEstimator(ValueEstimator):
         if self.working_dim is None:
             raise ValueError("working_dim must be set before initializing least squares")
 
-        print(f"Initializing least squares with working dimension: {self.working_dim}")
+        #print(f"Initializing least squares with working dimension: {self.working_dim}")
 
         self.d = self.working_dim + 1
         self.A = self.ridge_lambda * torch.eye(self.d, device=self.device)

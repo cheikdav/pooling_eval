@@ -10,7 +10,8 @@ from src.config import ExperimentConfig
 from src.estimators.neural_net import MonteCarloEstimator, DQNEstimator
 from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTDEstimator
 
-
+import warnings
+warnings.filterwarnings('ignore', category=DeprecationWarning, module='gymnasium')
 # Centralized mapping from method names to estimator classes
 # Handles all method name variations including RBF and NNLS variants
 ESTIMATOR_CLASSES = {
@@ -81,7 +82,9 @@ def create_vec_env(
     use_vec_normalize = False
 
     if config.policy.use_vec_normalize:
-        if vec_normalize_path is not None and vec_normalize_path.exists():
+        if vec_normalize_path is not None:
+            if not vec_normalize_path.exists():
+                raise FileNotFoundError(f"VecNormalize path {vec_normalize_path} does not exist.")
             env = VecNormalize.load(vec_normalize_path, env)
             env.training = False
             env.norm_reward = False

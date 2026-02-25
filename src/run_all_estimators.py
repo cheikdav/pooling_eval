@@ -117,6 +117,7 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
             f"--grid_array={array_spec}",
             f"--grid_mem={memory}",
             f"--grid_ncpus={ncpus}",
+            "--grid_quiet",
             "uv run", "-m", "src.train_estimator",
             "--config", str(config_path.absolute()),
             "--method", method_config.name,
