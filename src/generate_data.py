@@ -261,6 +261,7 @@ def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, 
     done = False
     truncated = False
     episode_return = 0.0
+    undiscounted_return = 0.0
     discount = 1.0
 
     while not (done or truncated):
@@ -269,6 +270,7 @@ def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, 
         if vec_normalize is not None:
             obs = vec_normalize.normalize_obs(obs[None])[0]
         episode_return += discount * reward
+        undiscounted_return += reward
         discount *= gamma
 
     return episode_return
@@ -377,17 +379,26 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
         'diff_ci_lower': [],
         'diff_ci_upper': [],
     }
+    undiscounted_returns = [] 
 
     for pair_idx, (obs1, obs2, state1, state2) in enumerate(tqdm(state_pairs)):
         s1_returns = []
+        total_undiscounted_return = 0.0
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, state1, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
+            ret, undiscount_ret = generate_trajectory_from_state(env, model, state1, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
             s1_returns.append(ret)
+            total_undiscounted_return += undiscount_ret
+            
+        undiscounted_returns.append(total_undiscounted_return / config.paired_state.n_trajectories_per_state)
 
         s2_returns = []
+        total_undiscounted_return = 0.0
         for _ in range(config.paired_state.n_trajectories_per_state):
-            ret = generate_trajectory_from_state(env, model, state2, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
+            ret, undiscount_ret = generate_trajectory_from_state(env, model, state2, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
             s2_returns.append(ret)
+            total_undiscounted_return += undiscount_ret
+            
+        undiscounted_returns.append(total_undiscounted_return / config.paired_state.n_trajectories_per_state)
 
         s1_returns = np.array(s1_returns)
         s2_returns = np.array(s2_returns)
@@ -436,8 +447,9 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
 
     print(f"\nPaired state data saved to {output_path}")
     print(f"Sample statistics:")
-    print(f"  S1 mean returns: {np.mean(results['s1_mean']):.2f} ± {np.std(results['s1_mean']):.2f}")
-    print(f"  S2 mean returns: {np.mean(results['s2_mean']):.2f} ± {np.std(results['s2_mean']):.2f}")
+    print(f"  S1 mean discounted returns: {np.mean(results['s1_mean']):.2f} ± {np.std(results['s1_mean']):.2f}")
+    print(f"  S2 mean discounted returns: {np.mean(results['s2_mean']):.2f} ± {np.std(results['s2_mean']):.2f}")
+    print(f"  Mean undiscounted returns (averaged over trajectories): {np.mean(undiscounted_returns):.2f} ± {np.std(undiscounted_returns):.2f}")
     print(f"  Mean difference (V(s1) - V(s2)): {np.mean(results['diff_mean']):.2f} ± {np.std(results['diff_mean']):.2f}")
     print(f"  Average CI width for differences: {np.mean(results['diff_ci_upper'] - results['diff_ci_lower']):.2f}")
 
@@ -468,7 +480,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     AlgorithmClass = ALGORITHM_MAP[config.policy.algorithm]
     model = AlgorithmClass.load(policy_path)
 
-    vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
+    vec_normalize_path = policy_path.parent / "vec_normalize.pkl" if config.policy.use_vec_normalize else None
     env, use_vec_normalize = create_vec_env(
         config,
         n_envs=config.data_generation.n_envs,
