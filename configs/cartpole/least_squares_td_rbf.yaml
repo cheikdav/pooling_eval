@@ -7,5 +7,5 @@ feature_extractor:
   type: rbf
   normalize: pre
   n_components: 512
-  gamma: 1.0
+  gamma: 5.0e-2
   seed: 42

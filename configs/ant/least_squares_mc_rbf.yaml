@@ -5,6 +5,6 @@ ridge_lambda: 0.1
 feature_extractor:
   type: rbf
   normalize: pre
-  n_components: 2048
-  gamma: 0.005
+  n_components: 1024
+  gamma: 5.0e-2
   seed: 42

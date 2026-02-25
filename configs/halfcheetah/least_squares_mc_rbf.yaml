@@ -1,9 +1,9 @@
 name: least_squares_mc_rbf
 type: least_squares_mc
-ridge_lambda: 0.005
+ridge_lambda: 3.0e-2
 feature_extractor:
   type: rbf
   normalize: pre
-  n_components: 1024
-  gamma: 0.05
+  n_components: 2048
+  gamma: 5.0e-3
   seed: 42
