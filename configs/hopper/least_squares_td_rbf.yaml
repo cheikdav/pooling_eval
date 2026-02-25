@@ -1,11 +1,11 @@
 name: least_squares_td_rbf
 type: least_squares_td
-n_components: 1028
+
 max_epochs: 1
-ridge_lambda: 1.0e-1
+ridge_lambda: 2.0e-2
 feature_extractor:
   type: rbf
-  normalize: false
-  n_components: 100
-  gamma: 1.0
+  normalize: true
+  n_components: 512
+  gamma: 1.5e-1
   seed: 42
