@@ -186,28 +186,44 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
         }), use_container_width=True)
 
         # Histograms: per-state MSE, squared bias, variance distributions (log scale)
-        def _per_state_metric(metric_name, pred_df, avg_pred):
-            if metric_name == 'MSE':
-                s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
-                s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
-            elif metric_name == 'Squared Bias':
-                s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
-                s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
-            else:  # Variance
-                s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
-                s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
-            return np.concatenate([s1, s2])
-
         for metric_name, title, log_col_name in [
             ('MSE', 'Per-State MSE Distribution (Log Scale)', 'log10(MSE)'),
             ('Squared Bias', 'Per-State Squared Bias Distribution (Log Scale)', 'log10(Squared Bias)'),
             ('Variance', 'Per-State Variance Distribution (Log Scale)', 'log10(Variance)'),
         ]:
             st.markdown(f"### {title}")
+
+            # Add explanation for MSE
+            if metric_name == 'MSE':
+                st.info("**Note:** MSE histogram shows individual squared errors for each (method, batch_idx, state). "
+                       "Unlike Squared Bias and Variance below, this is NOT aggregated across batches.")
             hist_rows = []
             for method, pred_df in predictions_data.items():
-                avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
-                values = _per_state_metric(metric_name, pred_df, avg_pred)
+                if metric_name == 'MSE':
+                    # MSE: individual squared errors for each (batch_idx, state)
+                    # Merge ground truth with predictions
+                    pred_with_gt = pred_df.copy()
+                    pred_with_gt['s1_gt'] = pred_with_gt['pair_idx'].map(lambda i: paired_data['s1_mean'][i])
+                    pred_with_gt['s2_gt'] = pred_with_gt['pair_idx'].map(lambda i: paired_data['s2_mean'][i])
+
+                    # Compute squared errors for each prediction
+                    s1_errors = (pred_with_gt['s1_predicted'] - pred_with_gt['s1_gt']) ** 2
+                    s2_errors = (pred_with_gt['s2_predicted'] - pred_with_gt['s2_gt']) ** 2
+                    values = np.concatenate([s1_errors.values, s2_errors.values])
+
+                elif metric_name == 'Squared Bias':
+                    # Squared Bias: (mean_pred - ground_truth)^2 for each state
+                    avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
+                    s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
+                    s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
+                    values = np.concatenate([s1, s2])
+
+                else:  # Variance
+                    # Variance: variance of predictions across batches for each state
+                    s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
+                    s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
+                    values = np.concatenate([s1, s2])
+
                 for v in values:
                     # Apply log10 transformation, add small epsilon to avoid log(0)
                     log_v = np.log10(v + 1e-10)
@@ -405,24 +421,35 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
         }), use_container_width=True)
 
         # Histograms: per-pair MSE, squared bias, variance distributions (log scale)
-        def _per_pair_metric(metric_name, pred_df, avg_pred):
-            if metric_name == 'MSE':
-                return (avg_pred - diff_means) ** 2
-            elif metric_name == 'Squared Bias':
-                return (avg_pred - diff_means) ** 2
-            else:  # Variance
-                return pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).values
-
         for metric_name, title, log_col_name in [
             ('MSE', 'Per-Pair MSE Distribution (Log Scale)', 'log10(MSE)'),
             ('Squared Bias', 'Per-Pair Squared Bias Distribution (Log Scale)', 'log10(Squared Bias)'),
             ('Variance', 'Per-Pair Variance Distribution (Log Scale)', 'log10(Variance)'),
         ]:
             st.markdown(f"### {title}")
+
+            # Add explanation for MSE
+            if metric_name == 'MSE':
+                st.info("**Note:** MSE histogram shows individual squared errors for each (method, batch_idx, pair). "
+                       "Unlike Squared Bias and Variance below, this is NOT aggregated across batches.")
             hist_rows = []
             for method, pred_df in predictions_data.items():
-                avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
-                values = _per_pair_metric(metric_name, pred_df, avg_pred)
+                if metric_name == 'MSE':
+                    # MSE: individual squared errors for each (batch_idx, pair)
+                    pred_with_gt = pred_df.copy()
+                    pred_with_gt['diff_gt'] = pred_with_gt['pair_idx'].map(lambda i: diff_means[i])
+                    errors = (pred_with_gt['diff_predicted'] - pred_with_gt['diff_gt']) ** 2
+                    values = errors.values
+
+                elif metric_name == 'Squared Bias':
+                    # Squared Bias: (mean_pred - ground_truth)^2 for each pair
+                    avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
+                    values = (avg_pred - diff_means) ** 2
+
+                else:  # Variance
+                    # Variance: variance of predictions across batches for each pair
+                    values = pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).values
+
                 for v in values:
                     # Apply log10 transformation, add small epsilon to avoid log(0)
                     log_v = np.log10(v + 1e-10)
