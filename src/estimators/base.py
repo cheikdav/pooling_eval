@@ -193,6 +193,9 @@ class ValueEstimator(ABC):
 
         with torch.no_grad():
             if features is None:
+                # Handle object dtype arrays (can occur with certain env data)
+                if observations.dtype == np.object_:
+                    observations = observations.astype(np.float32)
                 obs = torch.FloatTensor(observations).to(self.device)
                 features = self.feature_extractor(obs)
             else:
