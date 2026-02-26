@@ -1,0 +1,30 @@
+# W&B Sweep configuration for NNLS Temporal Difference estimator
+# Usage:
+#   python launch_episode_sweeps.py --config configs/config_humanoid.yaml --method nnls_td
+program: uv
+command:
+  - ${env}
+  - uv
+  - run
+  - -m
+  - src.tune_hyperparameters
+  - ${args}
+method: random  # bayes, grid, or random
+metric:
+  name: final/mean_val_mc_loss
+  goal: minimize
+# Termination conditions
+run_cap: 40  # Maximum number of runs before sweep terminates
+parameters:
+  method:
+    value: nnls_td
+  log-frequency:
+    value: 100
+  n-jobs:
+    value: 4
+  ridge-lambda:
+    min: 1.0e-4
+    max: 1.0e2
+    distribution: log_uniform_values
+  n-components:
+    values: [null, 50, 100, 200, 500]
