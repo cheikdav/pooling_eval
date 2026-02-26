@@ -185,7 +185,7 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
             'MAE': '{:.4f}',
         }), use_container_width=True)
 
-        # Histograms: per-state MSE, squared bias, variance distributions
+        # Histograms: per-state MSE, squared bias, variance distributions (log scale)
         def _per_state_metric(metric_name, pred_df, avg_pred):
             if metric_name == 'MSE':
                 s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
@@ -198,10 +198,10 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
                 s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
             return np.concatenate([s1, s2])
 
-        for metric_name, title in [
-            ('MSE', 'Per-State MSE Distribution'),
-            ('Squared Bias', 'Per-State Squared Bias Distribution'),
-            ('Variance', 'Per-State Variance Distribution'),
+        for metric_name, title, log_col_name in [
+            ('MSE', 'Per-State MSE Distribution (Log Scale)', 'log10(MSE)'),
+            ('Squared Bias', 'Per-State Squared Bias Distribution (Log Scale)', 'log10(Squared Bias)'),
+            ('Variance', 'Per-State Variance Distribution (Log Scale)', 'log10(Variance)'),
         ]:
             st.markdown(f"### {title}")
             hist_rows = []
@@ -209,17 +209,19 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
                 avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
                 values = _per_state_metric(metric_name, pred_df, avg_pred)
                 for v in values:
-                    hist_rows.append({'Method': get_method_display_name(method), metric_name: v})
+                    # Apply log10 transformation, add small epsilon to avoid log(0)
+                    log_v = np.log10(v + 1e-10)
+                    hist_rows.append({'Method': get_method_display_name(method), log_col_name: log_v})
             hist_df = pd.DataFrame(hist_rows)
             col1, col2 = st.columns([3, 1])
             with col1:
-                fig = px.histogram(hist_df, x=metric_name, color='Method', nbins=40, opacity=0.7,
+                fig = px.histogram(hist_df, x=log_col_name, color='Method', nbins=40, opacity=0.7,
                                    barmode='overlay', title=f"{title} ({n_episodes} episodes)")
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
             with col2:
                 st.markdown("**Statistics**")
-                summary = hist_df.groupby('Method')[metric_name].agg(mean='mean', std='std').reset_index()
+                summary = hist_df.groupby('Method')[log_col_name].agg(mean='mean', std='std').reset_index()
                 st.dataframe(summary.style.format({'mean': '{:.4f}', 'std': '{:.4f}'}),
                              use_container_width=True, hide_index=True)
 
@@ -402,7 +404,7 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
             'MAE': '{:.4f}',
         }), use_container_width=True)
 
-        # Histograms: per-pair MSE, squared bias, variance distributions
+        # Histograms: per-pair MSE, squared bias, variance distributions (log scale)
         def _per_pair_metric(metric_name, pred_df, avg_pred):
             if metric_name == 'MSE':
                 return (avg_pred - diff_means) ** 2
@@ -411,10 +413,10 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
             else:  # Variance
                 return pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).values
 
-        for metric_name, title in [
-            ('MSE', 'Per-Pair MSE Distribution'),
-            ('Squared Bias', 'Per-Pair Squared Bias Distribution'),
-            ('Variance', 'Per-Pair Variance Distribution'),
+        for metric_name, title, log_col_name in [
+            ('MSE', 'Per-Pair MSE Distribution (Log Scale)', 'log10(MSE)'),
+            ('Squared Bias', 'Per-Pair Squared Bias Distribution (Log Scale)', 'log10(Squared Bias)'),
+            ('Variance', 'Per-Pair Variance Distribution (Log Scale)', 'log10(Variance)'),
         ]:
             st.markdown(f"### {title}")
             hist_rows = []
@@ -422,17 +424,19 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
                 avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
                 values = _per_pair_metric(metric_name, pred_df, avg_pred)
                 for v in values:
-                    hist_rows.append({'Method': get_method_display_name(method), metric_name: v})
+                    # Apply log10 transformation, add small epsilon to avoid log(0)
+                    log_v = np.log10(v + 1e-10)
+                    hist_rows.append({'Method': get_method_display_name(method), log_col_name: log_v})
             hist_df = pd.DataFrame(hist_rows)
             col1, col2 = st.columns([3, 1])
             with col1:
-                fig = px.histogram(hist_df, x=metric_name, color='Method', nbins=40, opacity=0.7,
+                fig = px.histogram(hist_df, x=log_col_name, color='Method', nbins=40, opacity=0.7,
                                    barmode='overlay', title=f"{title} ({n_episodes} episodes)")
                 fig.update_layout(height=400)
                 st.plotly_chart(fig, use_container_width=True)
             with col2:
                 st.markdown("**Statistics**")
-                summary = hist_df.groupby('Method')[metric_name].agg(mean='mean', std='std').reset_index()
+                summary = hist_df.groupby('Method')[log_col_name].agg(mean='mean', std='std').reset_index()
                 st.dataframe(summary.style.format({'mean': '{:.4f}', 'std': '{:.4f}'}),
                              use_container_width=True, hide_index=True)
 
