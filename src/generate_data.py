@@ -386,7 +386,7 @@ def _process_single_state(state_data: Tuple) -> Dict:
     }
 
 
-def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: float, vec_normalize_path: Path = None, policy_path: Path = None):
+def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: float, vec_normalize_path: Path = None, policy_path: Path = None, n_workers: int = None):
     """Generate paired state evaluations with ground truth confidence intervals.
 
     Args:
@@ -395,6 +395,7 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
         gamma: Discount factor for value computation
         vec_normalize_path: Optional path to VecNormalize file
         policy_path: Optional path to policy file (defaults to experiments/<exp_id>/policy/policy_final.zip)
+        n_workers: Number of parallel workers (None = use all CPUs)
     """
     if not (is_classic_control_env(config.environment.name) or is_mujoco_env(config.environment.name)):
         print(f"\nSkipping paired state generation: {config.environment.name} is not a supported environment")
@@ -435,10 +436,10 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
             str(vec_normalize_path) if vec_normalize_path else None
         ))
 
-    print(f"Generating trajectories from {len(all_states)} states in parallel...")
+    print(f"Generating trajectories from {len(all_states)} states in parallel (n_workers={n_workers or 'all CPUs'})...")
 
     # Process all states in parallel
-    with mp.Pool() as pool:
+    with mp.Pool(processes=n_workers) as pool:
         state_results = list(tqdm(
             pool.imap(_process_single_state, all_states),
             total=len(all_states),
@@ -517,7 +518,7 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
     print(f"  Average CI width for differences: {np.mean(results['diff_ci_upper'] - results['diff_ci_lower']):.2f}")
 
 
-def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None, generate_paired: bool = False, eval_only: bool = False):
+def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None, generate_paired: bool = False, eval_only: bool = False, n_workers: int = None):
     """Generate n batches of k episodes using trained policy.
 
     Args:
@@ -528,6 +529,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         end_batch_idx: Stop after this index (exclusive, None = generate all batches)
         generate_paired: Whether to generate paired state evaluations
         eval_only: If True, only generate the eval batch (skips all other batches)
+        n_workers: Number of parallel workers for paired state generation (None = use all CPUs)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -644,7 +646,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     # Generate paired state evaluations if requested
     if generate_paired:
-        generate_paired_states(config, output_dir, gamma=config.value_estimators.training.gamma, vec_normalize_path=vec_normalize_path, policy_path=policy_path)
+        generate_paired_states(config, output_dir, gamma=config.value_estimators.training.gamma, vec_normalize_path=vec_normalize_path, policy_path=policy_path, n_workers=n_workers)
 
 
 def main():
@@ -664,6 +666,8 @@ def main():
                        help="Skip paired state generation (overrides config)")
     parser.add_argument("--eval-only", action="store_true",
                        help="Only generate the eval batch (skips tuning, regular, and validation batches)")
+    parser.add_argument("--n-workers", type=int, default=None,
+                       help="Number of parallel workers for paired state generation (default: use all CPUs)")
     args = parser.parse_args()
 
     # Load configuration
@@ -698,7 +702,8 @@ def main():
                  start_batch_idx=args.start_batch_idx,
                  end_batch_idx=args.end_batch_idx,
                  generate_paired=generate_paired,
-                 eval_only=args.eval_only)
+                 eval_only=args.eval_only,
+                 n_workers=args.n_workers)
 
 
 if __name__ == "__main__":
