@@ -7,6 +7,7 @@ data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Ant-v4
+  max_episode_steps: 3000
 policy:
   algorithm: SAC
   total_timesteps: 1000000
@@ -31,7 +32,7 @@ data_generation:
   n_envs: 128
   tuning_episodes: 600
   validation_episodes_per_batch: 200
-  eval_episodes: 600
+  eval_episodes: 300
 value_estimators:
   training:
     max_epochs: 50000

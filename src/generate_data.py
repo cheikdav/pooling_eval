@@ -346,13 +346,13 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
     vec_normalize = None
     if vec_normalize_path is not None and vec_normalize_path.exists():
         from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
-        dummy_env = DummyVecEnv([lambda: gym.make(config.environment.name)])
+        dummy_env = DummyVecEnv([lambda: gym.make(config.environment.name, max_episode_steps=config.environment.max_episode_steps)])
         vec_normalize = VecNormalize.load(str(vec_normalize_path), dummy_env)
         vec_normalize.training = False
         vec_normalize.norm_reward = False
         print(f"Loaded VecNormalize from {vec_normalize_path}")
 
-    env = gym.make(config.environment.name)
+    env = gym.make(config.environment.name, max_episode_steps=config.environment.max_episode_steps)
     env.reset(seed=config.paired_state.seed)
 
     print("Sampling state pairs by resetting environment...")
@@ -456,7 +456,7 @@ def generate_paired_states(config: ExperimentConfig, model, output_dir: Path, ga
     env.close()
 
 
-def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None, generate_paired: bool = False):
+def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None, generate_paired: bool = False, eval_only: bool = False):
     """Generate n batches of k episodes using trained policy.
 
     Args:
@@ -465,6 +465,8 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         output_dir: Directory to save generated data
         start_batch_idx: Skip batches before this index (for resuming interrupted runs)
         end_batch_idx: Stop after this index (exclusive, None = generate all batches)
+        generate_paired: Whether to generate paired state evaluations
+        eval_only: If True, only generate the eval batch (skips all other batches)
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -525,7 +527,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     # Generate all batches
     for batch_name, n_episodes in batches_to_generate:
         print(f"Collecting {batch_name} ({n_episodes} episodes)")
-        if batch_name == "skip":
+        if batch_name == "skip" or (eval_only and batch_name != "batch_eval"):
             print(f"  Skipping batch {batch_name}\n")
             current_seed += 1
             continue
@@ -599,6 +601,8 @@ def main():
                        help="Generate paired state evaluations with ground truth CIs (overrides config)")
     parser.add_argument("--no-generate-paired", action="store_true",
                        help="Skip paired state generation (overrides config)")
+    parser.add_argument("--eval-only", action="store_true",
+                       help="Only generate the eval batch (skips tuning, regular, and validation batches)")
     args = parser.parse_args()
 
     # Load configuration
@@ -632,7 +636,8 @@ def main():
     generate_data(config, policy_path, output_dir,
                  start_batch_idx=args.start_batch_idx,
                  end_batch_idx=args.end_batch_idx,
-                 generate_paired=generate_paired)
+                 generate_paired=generate_paired,
+                 eval_only=args.eval_only)
 
 
 if __name__ == "__main__":

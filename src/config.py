@@ -49,6 +49,7 @@ def resolve_param_for_episodes(param_value: Union[Any, Dict], num_episodes: int)
 @dataclass
 class EnvironmentConfig:
     name: str
+    max_episode_steps: Optional[int] = None
 
 
 @dataclass

@@ -29,19 +29,20 @@ ESTIMATOR_CLASSES = {
 }
 
 
-def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None) -> Callable:
+def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_episode_steps: int = None) -> Callable:
     """Create a factory function for environment creation.
 
     Args:
         env_name: Gymnasium environment name
         use_monitor: Whether to wrap environment with Monitor for tracking episode statistics
         seed: Random seed for this environment instance
+        max_episode_steps: Maximum number of steps per episode (None = use default)
 
     Returns:
         Function that creates and returns the environment
     """
     def _make():
-        env = gym.make(env_name)
+        env = gym.make(env_name, max_episode_steps=max_episode_steps)
         if use_monitor:
             env = Monitor(env)
         if seed is not None:
@@ -74,7 +75,7 @@ def create_vec_env(
         seed = config.seed
 
     env_fns = [
-        make_env_fn(config.environment.name, use_monitor, seed + i)
+        make_env_fn(config.environment.name, use_monitor, seed + i, config.environment.max_episode_steps)
         for i in range(n_envs)
     ]
     env = SubprocVecEnv(env_fns, start_method='fork')
