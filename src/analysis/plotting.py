@@ -139,7 +139,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
         st.plotly_chart(fig, use_container_width=True)
 
 
-def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p=0.2):
+def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p=0.2, adjust_constant=False):
     """Create evolution plot across n_episodes.
 
     Args:
@@ -152,6 +152,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
         dataset_type: 'full', 'differences', or 'temporal'
         n_buckets: Number of buckets for decile-based metrics
         temporal_p: Geometric distribution parameter for temporal differences
+        adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
     """
     metric_info = METRICS[metric_key]
     is_comparison = metric_info['is_comparison']
@@ -173,7 +174,8 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
                 baseline_row.iloc[0]['predictions_path'],
                 n_ep,
                 dataset_type=dataset_type,
-                temporal_p=temporal_p
+                temporal_p=temporal_p,
+                adjust_constant=adjust_constant
             )
         else:
             baseline_stats = None
@@ -195,7 +197,8 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
                 method_row.iloc[0]['predictions_path'],
                 n_ep,
                 dataset_type=dataset_type,
-                temporal_p=temporal_p
+                temporal_p=temporal_p,
+                adjust_constant=adjust_constant
             )
 
             # Compute metric for this method vs baseline

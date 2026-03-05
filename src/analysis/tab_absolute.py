@@ -7,7 +7,7 @@ from common import compute_stats_from_predictions, apply_data_filters
 from plotting import plot_metric_for_single_episodes, plot_metric_evolution
 
 
-def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p=0.2):
+def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p=0.2, adjust_constant=False):
     """Render the absolute metrics tab.
 
     Args:
@@ -20,6 +20,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         filter_high_variance: Percentage of top variance states to exclude
         filter_extreme_mean: Percentage of top/bottom mean states to exclude
         temporal_p: Geometric distribution parameter for temporal differences
+        adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
     """
     st.header("📊 Absolute Metrics")
 
@@ -54,7 +55,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     stats_dict_single = {}
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods:
-            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p)
+            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant)
             # Apply data filters
             stats = apply_data_filters(stats, filter_high_variance, filter_extreme_mean)
             stats_dict_single[row['method']] = stats
@@ -70,4 +71,4 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     # Section 2: Evolution across training sizes
     st.subheader("Evolution Across Training Sizes")
 
-    plot_metric_evolution(filtered_metadata, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p)
+    plot_metric_evolution(filtered_metadata, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p, adjust_constant)

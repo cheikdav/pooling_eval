@@ -118,11 +118,21 @@ def show_selection_filters(metadata_df):
         help="Exclude states with extreme mean values (top x% and bottom x%)"
     )
 
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Value Adjustment**")
+
+    # Constant adjustment toggle
+    adjust_constant = st.sidebar.checkbox(
+        "Adjust State-Independent Constant",
+        value=False,
+        help="Add a constant to each estimator so that mean(V(s)) = mean(ground_truth) for fair comparison"
+    )
+
     # Ensure baseline method is included in the data
     methods_to_load = list(set(selected_methods + [baseline_method]))
     filtered = filtered[filtered['method'].isin(methods_to_load)]
 
-    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p
+    return filtered, selected_env, selected_policy, selected_methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p, adjust_constant
 
 
 # Main App
@@ -156,7 +166,7 @@ if metadata_df.empty:
     st.stop()
 
 # Sidebar filters
-filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p = show_selection_filters(metadata_df)
+filtered_metadata, env, policy, methods, baseline_method, epsilon, dataset_type, n_buckets, filter_high_variance, filter_extreme_mean, temporal_p, adjust_constant = show_selection_filters(metadata_df)
 
 if not methods:
     st.warning("Please select at least one method")
@@ -179,13 +189,15 @@ with col4:
     }[dataset_type]
     st.metric("Dataset", dataset_label)
 
-if filter_high_variance > 0 or filter_extreme_mean > 0:
+if filter_high_variance > 0 or filter_extreme_mean > 0 or adjust_constant:
     filters_active = []
     if filter_high_variance > 0:
         filters_active.append(f"Excluding top {filter_high_variance}% variance")
     if filter_extreme_mean > 0:
         filters_active.append(f"Excluding top/bottom {filter_extreme_mean}% mean")
-    st.info(f"**Active Filters:** {', '.join(filters_active)}")
+    if adjust_constant:
+        filters_active.append("State-independent constant adjustment enabled")
+    st.info(f"**Active Settings:** {', '.join(filters_active)}")
 
 st.markdown("---")
 
@@ -195,23 +207,23 @@ tab1, tab2, tab3, tab4 = st.tabs(["Absolute Metrics", "Comparison Metrics", "Epi
 with tab1:
     tab_absolute.render_tab(
         filtered_metadata, methods, baseline_method, epsilon, dataset_type,
-        n_buckets, filter_high_variance, filter_extreme_mean, temporal_p
+        n_buckets, filter_high_variance, filter_extreme_mean, temporal_p, adjust_constant
     )
 
 with tab2:
     tab_comparison.render_tab(
         filtered_metadata, methods, baseline_method, epsilon, dataset_type,
-        n_buckets, filter_high_variance, filter_extreme_mean, temporal_p
+        n_buckets, filter_high_variance, filter_extreme_mean, temporal_p, adjust_constant
     )
 
 with tab3:
     tab_trajectory.render_tab(
-        filtered_metadata, methods, baseline_method
+        filtered_metadata, methods, baseline_method, adjust_constant
     )
 
 with tab4:
     tab_paired_states.render_tab(
-        filtered_metadata, methods, baseline_method
+        filtered_metadata, methods, baseline_method, adjust_constant
     )
 
 st.markdown("---")

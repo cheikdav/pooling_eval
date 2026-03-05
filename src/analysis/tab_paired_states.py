@@ -7,7 +7,7 @@ import plotly.express as px
 import numpy as np
 from pathlib import Path
 
-from common import get_method_display_name, sort_methods
+from common import get_method_display_name, sort_methods, _get_ground_truth_mean
 
 
 def sort_predictions(predictions_data):
@@ -16,13 +16,14 @@ def sort_predictions(predictions_data):
     return {m: predictions_data[m] for m in ordered}
 
 
-def render_tab(filtered_metadata, methods, baseline_method):
+def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=False):
     """Render the paired states tab.
 
     Args:
         filtered_metadata: DataFrame with experiment metadata
         methods: List of methods to display
         baseline_method: Baseline method name (not used here, passed for consistency)
+        adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
     """
     st.header("🎯 Paired State Evaluation")
 
@@ -70,6 +71,9 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
     # Load paired predictions from each method
     predictions_data = {}
+    results_dir = None
+    mean_ground_truth = None
+
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods:
             method = row['method']
@@ -81,6 +85,38 @@ def render_tab(filtered_metadata, methods, baseline_method):
             if paired_predictions_path.exists():
                 # Load paired predictions
                 pred_df = pd.read_parquet(paired_predictions_path)
+
+                # Apply constant adjustment if requested
+                if adjust_constant:
+                    # Get ground truth mean (cached, computed once)
+                    if results_dir is None:
+                        results_dir = str(predictions_path.parent.parent.parent)
+                        mean_ground_truth = _get_ground_truth_mean(results_dir)
+
+                    if mean_ground_truth is not None:
+                        # Load regular predictions to compute batch constants
+                        regular_predictions_path = predictions_path
+                        regular_df = pd.read_parquet(regular_predictions_path)
+
+                        # Compute constant for each batch
+                        batch_constants = {}
+                        for batch_name, batch_df in regular_df.groupby('batch_name'):
+                            mean_batch = batch_df['predicted_value'].mean()
+                            batch_constants[batch_name] = mean_ground_truth - mean_batch
+
+                        # Apply constants to paired predictions
+                        def adjust_batch(batch_df):
+                            batch_name = batch_df['batch_name'].iloc[0]
+                            if batch_name in batch_constants:
+                                constant = batch_constants[batch_name]
+                                batch_df = batch_df.copy()
+                                batch_df['s1_predicted'] = batch_df['s1_predicted'] + constant
+                                batch_df['s2_predicted'] = batch_df['s2_predicted'] + constant
+                                # diff_predicted remains unchanged (constant cancels out in difference)
+                            return batch_df
+
+                        pred_df = pred_df.groupby('batch_name', group_keys=False).apply(adjust_batch)
+
                 predictions_data[method] = pred_df
             else:
                 # No paired predictions available for this method

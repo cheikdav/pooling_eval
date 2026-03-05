@@ -8,13 +8,14 @@ from common import get_method_display_name, load_predictions_for_trajectory, loa
 from pathlib import Path
 
 
-def render_tab(filtered_metadata, methods, baseline_method):
+def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=False):
     """Render the trajectory visualization tab.
 
     Args:
         filtered_metadata: DataFrame with experiment metadata
         methods: List of methods to display
         baseline_method: Baseline method name (not used here, but kept for consistency)
+        adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
     """
     st.header("📈 Episode Trajectory Analysis")
     st.markdown("Visualize how value predictions change along episode trajectories")
@@ -25,7 +26,7 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
     # Load predictions from first method to get episode info
     first_predictions_path = filtered_metadata.iloc[0]['predictions_path']
-    first_pred_df = load_predictions_for_trajectory(first_predictions_path)
+    first_pred_df = load_predictions_for_trajectory(first_predictions_path, adjust_constant=adjust_constant)
     n_eval_episodes = first_pred_df['episode_idx'].nunique()
 
     st.markdown("---")
@@ -101,7 +102,7 @@ def render_tab(filtered_metadata, methods, baseline_method):
 
         # Load predictions using shared function
         predictions_path = method_row.iloc[0]['predictions_path']
-        pred_df = load_predictions_for_trajectory(predictions_path)
+        pred_df = load_predictions_for_trajectory(predictions_path, adjust_constant=adjust_constant)
 
         # Filter to this episode
         episode_preds = pred_df[pred_df['episode_idx'] == selected_episode].copy()
@@ -177,7 +178,7 @@ def render_tab(filtered_metadata, methods, baseline_method):
                 continue
 
             predictions_path = method_row.iloc[0]['predictions_path']
-            pred_df = load_predictions_for_trajectory(predictions_path)
+            pred_df = load_predictions_for_trajectory(predictions_path, adjust_constant=adjust_constant)
             episode_preds = pred_df[pred_df['episode_idx'] == selected_episode]
 
             if not episode_preds.empty:

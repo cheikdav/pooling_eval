@@ -45,7 +45,26 @@ def load_predictions_data(experiments_dir):
 
 
 @st.cache_data
-def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2):
+def _get_ground_truth_mean(results_dir):
+    """Load ground truth and return mean value (cached).
+
+    Args:
+        results_dir: Path to results directory
+
+    Returns:
+        Mean ground truth value, or None if file doesn't exist
+    """
+    ground_truth_file = Path(results_dir) / "ground_truth" / "ground_truth_returns.parquet"
+
+    if not ground_truth_file.exists():
+        return None
+
+    ground_truth_df = pd.read_parquet(ground_truth_file)
+    return ground_truth_df['ground_truth_return'].mean()
+
+
+@st.cache_data
+def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False):
     """Load predictions and compute statistics aggregated across batches.
 
     Memory-efficient: loads raw data, computes stats, then frees raw data.
@@ -59,6 +78,7 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
         s1_proportion: Proportion of episodes for S1 partition (used for differences)
         seed: Random seed for episode partitioning
         temporal_p: Geometric distribution parameter for temporal gaps (used for temporal mode)
+        adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
 
     Returns:
         DataFrame with columns: state_idx, n_episodes, mean, variance, std, count
@@ -67,6 +87,25 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
     """
     # Load raw predictions
     df = pd.read_parquet(predictions_path)
+
+    # Apply constant adjustment if requested
+    # Each batch gets its own constant: c_batch = mean(ground_truth) - mean(predictions_batch)
+    if adjust_constant:
+        # Get cached ground truth mean
+        predictions_path_obj = Path(predictions_path)
+        results_dir = str(predictions_path_obj.parent.parent.parent)
+        mean_ground_truth = _get_ground_truth_mean(results_dir)
+
+        if mean_ground_truth is not None:
+            # Compute and apply constant for each batch separately
+            def adjust_batch(batch_df):
+                mean_batch_predictions = batch_df['predicted_value'].mean()
+                constant = mean_ground_truth - mean_batch_predictions
+                batch_df = batch_df.copy()
+                batch_df['predicted_value'] = batch_df['predicted_value'] + constant
+                return batch_df
+
+            df = df.groupby('batch_name', group_keys=False).apply(adjust_batch)
 
     if dataset_type == 'full':
         # Compute statistics grouped by state_idx, aggregated across batches
@@ -265,16 +304,33 @@ def apply_data_filters(stats, filter_high_variance=0, filter_extreme_mean=0):
 
 
 @st.cache_data
-def load_predictions_for_trajectory(predictions_path):
+def load_predictions_for_trajectory(predictions_path, adjust_constant=False):
     """Load predictions and compute mean across batches for each state.
 
     Args:
         predictions_path: Path to predictions.parquet file
+        adjust_constant: If True, apply per-batch constant adjustment before averaging
 
     Returns:
         DataFrame with episode_idx, state_idx, mean_value, step_in_episode
     """
     df = pd.read_parquet(predictions_path)
+
+    # Apply constant adjustment if requested
+    if adjust_constant:
+        predictions_path_obj = Path(predictions_path)
+        results_dir = str(predictions_path_obj.parent.parent.parent)
+        mean_ground_truth = _get_ground_truth_mean(results_dir)
+
+        if mean_ground_truth is not None:
+            def adjust_batch(batch_df):
+                mean_batch_predictions = batch_df['predicted_value'].mean()
+                constant = mean_ground_truth - mean_batch_predictions
+                batch_df = batch_df.copy()
+                batch_df['predicted_value'] = batch_df['predicted_value'] + constant
+                return batch_df
+
+            df = df.groupby('batch_name', group_keys=False).apply(adjust_batch)
 
     # Compute mean across batches for each state
     mean_df = df.groupby(['state_idx', 'episode_idx'])['predicted_value'].mean().reset_index()
