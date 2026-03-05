@@ -1,6 +1,7 @@
 """Tab for absolute (non-comparison) metrics."""
 
 import streamlit as st
+import pandas as pd
 
 from metrics import METRICS, get_metrics_by_type
 from common import compute_stats_from_predictions, apply_data_filters
@@ -64,11 +65,101 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         st.error(f"No data for {selected_n_ep} episodes")
         return
 
-    plot_metric_for_single_episodes(stats_dict_single, metric_key, methods, selected_n_ep, baseline_method, epsilon, n_buckets)
+    # Special handling for batch_constants metric
+    if metric_key == 'batch_constants':
+        from common import compute_all_batch_constants, get_method_display_name
+        import plotly.express as px
+
+        constants_df = compute_all_batch_constants(filtered_metadata, methods, selected_n_ep)
+
+        if constants_df.empty:
+            st.warning("No ground truth data available to compute adjustment constants")
+        else:
+            # Add display names
+            constants_df['method_display'] = constants_df['method'].apply(get_method_display_name)
+
+            col1, col2 = st.columns([3, 1])
+
+            with col1:
+                fig = px.histogram(
+                    constants_df, x='constant', color='method_display',
+                    nbins=40, opacity=0.7, barmode='overlay',
+                    title=f"Batch Adjustment Constants Distribution ({selected_n_ep} episodes)",
+                    labels={'constant': 'Adjustment Constant', 'method_display': 'Method'}
+                )
+
+                fig.add_vline(
+                    x=0, line_dash="dash", line_color="red",
+                    annotation_text="No Adjustment"
+                )
+
+                fig.update_layout(height=500)
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                st.markdown("**Statistics**")
+                summary = constants_df.groupby('method_display')['constant'].agg(
+                    mean='mean', std='std'
+                ).reset_index()
+                st.dataframe(summary, use_container_width=True, hide_index=True)
+    else:
+        plot_metric_for_single_episodes(stats_dict_single, metric_key, methods, selected_n_ep, baseline_method, epsilon, n_buckets)
 
     st.markdown("---")
 
     # Section 2: Evolution across training sizes
     st.subheader("Evolution Across Training Sizes")
 
-    plot_metric_evolution(filtered_metadata, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p, adjust_constant)
+    # Special handling for batch_constants metric in evolution
+    if metric_key == 'batch_constants':
+        from common import compute_all_batch_constants, get_method_display_name
+        import plotly.graph_objects as go
+
+        # Collect constants for all n_episodes
+        all_evolution_data = []
+        for n_ep in n_episodes_values:
+            constants_df = compute_all_batch_constants(filtered_metadata, methods, n_ep)
+            if not constants_df.empty:
+                # Compute mean and std for each method at this n_episodes
+                for method in methods:
+                    method_data = constants_df[constants_df['method'] == method]
+                    if not method_data.empty:
+                        all_evolution_data.append({
+                            'method': get_method_display_name(method),
+                            'n_episodes': n_ep,
+                            'mean': method_data['constant'].mean(),
+                            'std': method_data['constant'].std()
+                        })
+
+        if all_evolution_data:
+            evolution_df = pd.DataFrame(all_evolution_data)
+
+            # Create line plot
+            fig = go.Figure()
+
+            for method in evolution_df['method'].unique():
+                method_data = evolution_df[evolution_df['method'] == method]
+                fig.add_trace(go.Scatter(
+                    x=method_data['n_episodes'],
+                    y=method_data['mean'],
+                    mode='lines+markers',
+                    name=method,
+                    line=dict(width=2),
+                    marker=dict(size=8)
+                ))
+
+            fig.update_layout(
+                title="Mean Adjustment Constant vs Training Episodes",
+                xaxis_title="Number of Training Episodes",
+                yaxis_title="Mean Adjustment Constant",
+                height=500,
+                hovermode='x unified'
+            )
+
+            fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
+
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No ground truth data available to compute adjustment constants")
+    else:
+        plot_metric_evolution(filtered_metadata, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p, adjust_constant)

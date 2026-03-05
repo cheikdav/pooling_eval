@@ -374,6 +374,16 @@ METRICS = {
         'compute_fn': compute_ground_truth_error,
         'is_comparison': False,
         'plot_type': 'histogram'
+    },
+    'batch_constants': {
+        'name': 'Batch Adjustment Constants',
+        'description': 'Per-batch constants used for adjustment: c = mean(ground_truth) - mean(predictions_batch)',
+        'reference_line': 0,
+        'reference_label': 'No Adjustment',
+        'compute_fn': None,  # Special handling required
+        'is_comparison': False,
+        'plot_type': 'histogram',
+        'requires_special_handling': True  # Flag for special processing
     }
 }
 

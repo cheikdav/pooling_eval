@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from metrics import METRICS, compute_metric
-from common import get_method_display_name, compute_stats_from_predictions
+from common import get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants
 
 
 def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes, baseline_method, epsilon, n_buckets):

@@ -64,6 +64,54 @@ def _get_ground_truth_mean(results_dir):
 
 
 @st.cache_data
+def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
+    """Compute per-batch adjustment constants for all selected methods.
+
+    Args:
+        filtered_metadata: DataFrame with experiment metadata
+        methods: List of method names to compute constants for
+        n_episodes: Number of training episodes to filter by
+
+    Returns:
+        DataFrame with columns: batch_name, constant, method
+        Returns empty DataFrame if no data available
+    """
+    all_constants = []
+
+    # Filter to selected n_episodes
+    filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == n_episodes]
+
+    for _, row in filtered_for_n_ep.iterrows():
+        if row['method'] not in methods:
+            continue
+
+        predictions_path = row['predictions_path']
+        method_name = row['method']
+
+        # Get ground truth mean
+        predictions_path_obj = Path(predictions_path)
+        results_dir = str(predictions_path_obj.parent.parent.parent)
+        mean_ground_truth = _get_ground_truth_mean(results_dir)
+
+        if mean_ground_truth is None:
+            continue
+
+        # Load predictions and compute constant for each batch
+        df = pd.read_parquet(predictions_path)
+
+        for batch_name, batch_df in df.groupby('batch_name'):
+            mean_batch = batch_df['predicted_value'].mean()
+            constant = mean_ground_truth - mean_batch
+            all_constants.append({
+                'batch_name': batch_name,
+                'constant': constant,
+                'method': method_name
+            })
+
+    return pd.DataFrame(all_constants)
+
+
+@st.cache_data
 def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False):
     """Load predictions and compute statistics aggregated across batches.
 
