@@ -1,7 +1,6 @@
 name: least_squares_td
 type: least_squares_td
-ridge_lambda: 2
-n_components: 64
+ridge_lambda: 2.0e-2
 feature_extractor:
   type: policy_representation
   normalize: post
