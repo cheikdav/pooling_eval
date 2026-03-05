@@ -10,16 +10,12 @@ def _is_hidden_path(path: Path, base_path: Path) -> bool:
 
     Args:
         path: Path to check
-        base_path: Base path to compute relative path from
+        base_path: Not used (kept for signature compatibility)
 
     Returns:
-        True if any directory component (relative to base_path) starts with '.'
+        True if any directory component in the full path starts with '.'
     """
-    try:
-        relative = path.relative_to(base_path)
-        return any(part.startswith('.') for part in relative.parts)
-    except ValueError:
-        return False
+    return any(part.startswith('.') for part in path.parts)
 
 
 def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Dict[str, Any]]:
