@@ -44,6 +44,8 @@ def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Di
             # Skip hidden directories (those starting with '.')
             if _is_hidden_path(metadata_path, results_dir):
                 continue
+
+            print(f"Discovered: {metadata_path}")
             try:
                 with open(metadata_path, 'r') as f:
                     pred_metadata = json.load(f)
@@ -108,6 +110,8 @@ def discover_estimators(experiments_dir: Path = Path("experiments")) -> List[Dic
             # Skip hidden directories (those starting with '.')
             if _is_hidden_path(metadata_path, estimators_dir):
                 continue
+
+            print(f"Discovered estimator: {metadata_path}")
             try:
                 with open(metadata_path, 'r') as f:
                     estimator_metadata = json.load(f)
