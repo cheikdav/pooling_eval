@@ -5,6 +5,23 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 
+def _is_hidden_path(path: Path, base_path: Path) -> bool:
+    """Check if path contains any directory component starting with a dot.
+
+    Args:
+        path: Path to check
+        base_path: Base path to compute relative path from
+
+    Returns:
+        True if any directory component (relative to base_path) starts with '.'
+    """
+    try:
+        relative = path.relative_to(base_path)
+        return any(part.startswith('.') for part in relative.parts)
+    except ValueError:
+        return False
+
+
 def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Dict[str, Any]]:
     """Discover all predictions with metadata in the experiments/results directories.
 
@@ -24,6 +41,9 @@ def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Di
             continue
 
         for metadata_path in results_dir.rglob("predictions_metadata.json"):
+            # Skip hidden directories (those starting with '.')
+            if _is_hidden_path(metadata_path, results_dir):
+                continue
             try:
                 with open(metadata_path, 'r') as f:
                     pred_metadata = json.load(f)
@@ -85,6 +105,9 @@ def discover_estimators(experiments_dir: Path = Path("experiments")) -> List[Dic
             continue
 
         for metadata_path in estimators_dir.rglob("estimator_metadata.json"):
+            # Skip hidden directories (those starting with '.')
+            if _is_hidden_path(metadata_path, estimators_dir):
+                continue
             try:
                 with open(metadata_path, 'r') as f:
                     estimator_metadata = json.load(f)
