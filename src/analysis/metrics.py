@@ -105,6 +105,28 @@ def compute_variance(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
+def compute_mean(baseline_stats, method_stats, epsilon=1e-10):
+    """Compute mean (no ratio).
+
+    Args:
+        baseline_stats: Not used (kept for signature compatibility)
+        method_stats: DataFrame with columns [state_idx, n_episodes, mean, ...]
+        epsilon: Not used (kept for signature compatibility)
+
+    Returns:
+        DataFrame with metric_value column using raw mean
+    """
+    result = method_stats.copy()
+    result['metric_value'] = result['mean']
+
+    if result['metric_value'].isnull().any():
+        null_count = result['metric_value'].isnull().sum()
+        st.error(f"Found {null_count} NaN values after computation!")
+
+    return result
+
+
+@st.cache_data
 def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
     """Compute average variance per bucket of state values.
 
@@ -305,6 +327,15 @@ METRICS = {
         'reference_line': None,
         'reference_label': None,
         'compute_fn': compute_variance,
+        'is_comparison': False,
+        'plot_type': 'histogram'
+    },
+    'mean': {
+        'name': 'Mean',
+        'description': 'Raw mean values',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_mean,
         'is_comparison': False,
         'plot_type': 'histogram'
     },
