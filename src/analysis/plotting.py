@@ -6,10 +6,10 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from metrics import METRICS, compute_metric
-from common import get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants
+from common import get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants, compute_ground_truth_stats
 
 
-def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes, baseline_method, epsilon, n_buckets):
+def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes, baseline_method, epsilon, n_buckets, ground_truth_stats=None):
     """Plot metric for a single n_episodes value.
 
     Args:
@@ -20,6 +20,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
         baseline_method: Baseline method name (for comparison metrics)
         epsilon: Small value added before taking log
         n_buckets: Number of buckets for decile-based metrics
+        ground_truth_stats: DataFrame with ground truth values (for ground_truth_error metric)
     """
     metric_info = METRICS[metric_key]
     plot_type = metric_info['plot_type']
@@ -42,7 +43,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
             continue
 
         method_stats = stats_dict[method]
-        metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets)
+        metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets, ground_truth_stats=ground_truth_stats)
         metric_df['method'] = get_method_display_name(method)
         metric_list.append(metric_df)
 
@@ -162,6 +163,19 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
 
     # Process one n_episodes at a time
     for n_ep in n_episodes_values:
+        # Compute ground truth stats once per n_episodes (for ground_truth_error metric)
+        ground_truth_stats = None
+        if metric_key == 'ground_truth_error':
+            # Get results_dir from any method at this n_episodes
+            any_method_row = metadata_df[metadata_df['n_episodes'] == n_ep]
+            if not any_method_row.empty:
+                predictions_path = any_method_row.iloc[0]['predictions_path']
+                from pathlib import Path
+                results_dir = str(Path(predictions_path).parent.parent.parent)
+                ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
+                                                                s1_proportion=0.9, seed=42,
+                                                                temporal_p=temporal_p)
+
         # Load baseline stats for this n_episodes (only needed for comparison metrics)
         if is_comparison:
             baseline_row = metadata_df[(metadata_df['method'] == baseline_method) &
@@ -202,7 +216,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             )
 
             # Compute metric for this method vs baseline
-            metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets)
+            metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets, ground_truth_stats=ground_truth_stats)
 
             # Store summary statistics
             if not metric_df.empty:

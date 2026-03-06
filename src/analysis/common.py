@@ -64,6 +64,120 @@ def _get_ground_truth_mean(results_dir):
 
 
 @st.cache_data
+def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2):
+    """Load ground truth and compute statistics matching the dataset type.
+
+    Args:
+        results_dir: Path to results directory
+        dataset_type: 'full' for all data, 'differences' for paired differences,
+                     'temporal' for within-episode temporal differences
+        s1_proportion: Proportion of episodes for S1 partition (used for differences)
+        seed: Random seed for episode partitioning
+        temporal_p: Geometric distribution parameter for temporal gaps (used for temporal mode)
+
+    Returns:
+        DataFrame with columns: state_idx, ground_truth_value
+        For differences/temporal modes, returns difference values
+    """
+    ground_truth_file = Path(results_dir) / "ground_truth" / "ground_truth_returns.parquet"
+
+    if not ground_truth_file.exists():
+        return pd.DataFrame(columns=['state_idx', 'ground_truth_value'])
+
+    df = pd.read_parquet(ground_truth_file)
+
+    if dataset_type == 'full':
+        # Simple case: just return ground truth values
+        result = df[['state_idx', 'ground_truth_return']].copy()
+        result.rename(columns={'ground_truth_return': 'ground_truth_value'}, inplace=True)
+        return result
+
+    elif dataset_type == 'differences':
+        # Split episodes into S1 (90%) and S2 (10%) - same logic as predictions
+        episodes = df['episode_idx'].unique()
+        np.random.seed(seed)
+        shuffled = np.random.permutation(episodes)
+        n_s1 = int(len(episodes) * s1_proportion)
+        s1_eps = set(shuffled[:n_s1])
+        s2_eps = set(shuffled[n_s1:])
+
+        df_s1 = df[df['episode_idx'].isin(s1_eps)].copy()
+        df_s2 = df[df['episode_idx'].isin(s2_eps)].copy()
+
+        # Create stable pairings: each S1 state gets paired with a random S2 state
+        np.random.seed(seed + 1)
+        s1_states = df_s1['state_idx'].unique()
+        s2_states = df_s2['state_idx'].unique()
+        pairings = {s: np.random.choice(s2_states) for s in s1_states}
+
+        # Compute differences for each pairing
+        differences = []
+        for s1_idx, s2_idx in pairings.items():
+            s1_value = df_s1[df_s1['state_idx'] == s1_idx]['ground_truth_return'].iloc[0]
+            s2_value = df_s2[df_s2['state_idx'] == s2_idx]['ground_truth_return'].iloc[0]
+            differences.append({
+                'state_idx': s1_idx,
+                'ground_truth_value': s1_value - s2_value
+            })
+
+        return pd.DataFrame(differences)
+
+    elif dataset_type == 'temporal':
+        # Within-episode temporal differences - same logic as predictions
+        np.random.seed(seed)
+
+        # Get episode info
+        episode_info = df.groupby('episode_idx').agg({
+            'state_idx': ['min', 'count']
+        }).reset_index()
+        episode_info.columns = ['episode_idx', 'min_state_idx', 'episode_length']
+
+        # Sample temporal pairs
+        n_episodes = len(episode_info)
+        max_episode_length = int(episode_info['episode_length'].max())
+        max_pairs = max_episode_length // 2 + 1
+
+        deltas = np.random.geometric(temporal_p, size=(n_episodes, max_pairs))
+        buffers = np.random.geometric(temporal_p, size=(n_episodes, max_pairs))
+
+        steps = deltas + buffers
+        positions = np.concatenate([np.zeros((n_episodes, 1), dtype=int), np.cumsum(steps[:, :-1], axis=1)], axis=1)
+
+        episode_lengths = episode_info['episode_length'].values[:, np.newaxis]
+        valid_mask = (positions + deltas) < episode_lengths
+
+        valid_episode_idx, valid_pair_idx = np.where(valid_mask)
+
+        if len(valid_episode_idx) == 0:
+            return pd.DataFrame(columns=['state_idx', 'ground_truth_value'])
+
+        valid_positions = positions[valid_episode_idx, valid_pair_idx]
+        valid_deltas = deltas[valid_episode_idx, valid_pair_idx]
+
+        actual_episode_idx = episode_info.iloc[valid_episode_idx]['episode_idx'].values
+        min_state_idx = episode_info.iloc[valid_episode_idx]['min_state_idx'].values
+
+        state_t_idx = min_state_idx + valid_positions
+        state_t_delta_idx = min_state_idx + valid_positions + valid_deltas
+
+        # Get ground truth values
+        differences = []
+        for ep_idx, st_idx, st_delta_idx in zip(actual_episode_idx, state_t_idx, state_t_delta_idx):
+            ep_df = df[df['episode_idx'] == ep_idx]
+            value_t = ep_df[ep_df['state_idx'] == st_idx]['ground_truth_return'].iloc[0]
+            value_t_delta = ep_df[ep_df['state_idx'] == st_delta_idx]['ground_truth_return'].iloc[0]
+            differences.append({
+                'state_idx': st_idx,
+                'ground_truth_value': value_t - value_t_delta
+            })
+
+        return pd.DataFrame(differences)
+
+    else:
+        raise ValueError(f"Unknown dataset_type: {dataset_type}")
+
+
+@st.cache_data
 def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
     """Compute per-batch adjustment constants for all selected methods.
 

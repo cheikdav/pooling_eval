@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from metrics import METRICS, get_metrics_by_type
-from common import compute_stats_from_predictions, apply_data_filters
+from common import compute_stats_from_predictions, apply_data_filters, compute_ground_truth_stats
 from plotting import plot_metric_for_single_episodes, plot_metric_evolution
 
 
@@ -65,6 +65,17 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         st.error(f"No data for {selected_n_ep} episodes")
         return
 
+    # Compute ground truth stats once for all methods (used by ground_truth_error metric)
+    ground_truth_stats = None
+    if metric_key == 'ground_truth_error':
+        # Get results_dir from any method's stats
+        first_method_stats = next(iter(stats_dict_single.values()))
+        if 'results_dir' in first_method_stats.columns:
+            results_dir = first_method_stats['results_dir'].iloc[0]
+            ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
+                                                            s1_proportion=0.9, seed=42,
+                                                            temporal_p=temporal_p)
+
     # Special handling for batch_constants metric
     if metric_key == 'batch_constants':
         from common import compute_all_batch_constants, get_method_display_name
@@ -103,7 +114,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
                 ).reset_index()
                 st.dataframe(summary, use_container_width=True, hide_index=True)
     else:
-        plot_metric_for_single_episodes(stats_dict_single, metric_key, methods, selected_n_ep, baseline_method, epsilon, n_buckets)
+        plot_metric_for_single_episodes(stats_dict_single, metric_key, methods, selected_n_ep, baseline_method, epsilon, n_buckets, ground_truth_stats)
 
     st.markdown("---")
 

@@ -238,53 +238,38 @@ def compute_variance_percentiles(baseline_stats, method_stats, epsilon=1e-10, n_
 
 
 @st.cache_data
-def compute_ground_truth_error(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+def compute_ground_truth_error(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10, ground_truth_stats=None):
     """Compute prediction error relative to ground truth returns.
 
     Args:
         baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with metadata columns predictions_path and results_dir
+        method_stats: DataFrame with state_idx, mean columns
         epsilon: Not used (kept for signature compatibility)
         n_buckets: Not used (kept for signature compatibility)
+        ground_truth_stats: DataFrame with state_idx, ground_truth_value columns (computed with same dataset_type)
 
     Returns:
         DataFrame with metric_value column containing (predicted - ground_truth)
     """
-    # Extract metadata from method_stats
-    if 'predictions_path' not in method_stats.columns or 'results_dir' not in method_stats.columns:
-        st.error("Ground truth metric requires predictions_path and results_dir in stats")
+    if ground_truth_stats is None or ground_truth_stats.empty:
+        st.warning("Ground truth data not available")
         return pd.DataFrame()
 
-    predictions_path = method_stats['predictions_path'].iloc[0]
-    results_dir = method_stats['results_dir'].iloc[0]
-
-    # Load ground truth
-    ground_truth_file = Path(results_dir) / "ground_truth" / "ground_truth_returns.parquet"
-    if not ground_truth_file.exists():
-        st.warning(f"Ground truth file not found: {ground_truth_file}")
-        return pd.DataFrame()
-
-    ground_truth_df = pd.read_parquet(ground_truth_file)
-
-    # Load predictions (need raw predictions, not aggregated stats)
-    predictions_df = pd.read_parquet(predictions_path)
-
-    # Compute mean prediction per state across all batches
-    pred_mean = predictions_df.groupby('state_idx')['predicted_value'].mean().reset_index()
-    pred_mean.columns = ['state_idx', 'mean_predicted']
+    # Use already computed mean from method_stats (which includes any adjustments)
+    result = method_stats[['state_idx', 'mean', 'n_episodes']].copy()
 
     # Merge with ground truth
-    merged = pred_mean.merge(
-        ground_truth_df[['state_idx', 'ground_truth_return']],
+    result = result.merge(
+        ground_truth_stats[['state_idx', 'ground_truth_value']],
         on='state_idx',
         how='inner'
     )
 
     # Compute error: predicted - ground_truth
-    merged['metric_value'] = merged['mean_predicted'] - merged['ground_truth_return']
+    result['metric_value'] = result['mean'] - result['ground_truth_value']
 
-    result = merged[['state_idx', 'metric_value']].copy()
-    result['n_episodes'] = method_stats['n_episodes'].iloc[0]
+    # Keep only needed columns
+    result = result[['state_idx', 'metric_value', 'n_episodes']].copy()
 
     if result['metric_value'].isnull().any():
         null_count = result['metric_value'].isnull().sum()
@@ -401,7 +386,7 @@ def get_metrics_by_type(is_comparison):
 
 
 @st.cache_data
-def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10, n_buckets=10):
+def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10, n_buckets=10, ground_truth_stats=None):
     """Compute the specified metric with error handling.
 
     Args:
@@ -410,6 +395,7 @@ def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10, n_bu
         metric_key: Key identifying which metric to compute
         epsilon: Small value added before taking log to avoid log(0)
         n_buckets: Number of buckets for decile-based metrics
+        ground_truth_stats: DataFrame with ground truth values (for ground_truth_error metric)
 
     Returns:
         DataFrame with metric_value column
@@ -420,9 +406,11 @@ def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10, n_bu
 
         compute_fn = METRICS[metric_key]['compute_fn']
 
-        # Pass n_buckets parameter for decile-based metrics
+        # Pass appropriate parameters based on metric type
         if metric_key in ['variance_by_value_decile', 'normalized_variance_by_value_decile']:
             return compute_fn(baseline_stats, method_stats, epsilon=epsilon, n_buckets=n_buckets)
+        elif metric_key == 'ground_truth_error':
+            return compute_fn(baseline_stats, method_stats, epsilon=epsilon, n_buckets=n_buckets, ground_truth_stats=ground_truth_stats)
         else:
             return compute_fn(baseline_stats, method_stats, epsilon=epsilon)
     except Exception as e:
