@@ -18,6 +18,15 @@ def show_selection_filters(metadata_df):
     """Display sidebar filters and return filtered metadata."""
     st.sidebar.header("Filters")
 
+    # Constant adjustment toggle (at top for visibility)
+    adjust_constant = st.sidebar.checkbox(
+        "Adjust State-Independent Constant",
+        value=False,
+        help="Add a constant to each estimator so that mean(V(s)) = mean(ground_truth) for fair comparison"
+    )
+
+    st.sidebar.markdown("---")
+
     # Dataset type selection
     dataset_type = st.sidebar.radio(
         "Dataset Type",
@@ -116,16 +125,6 @@ def show_selection_filters(metadata_df):
         value=0,
         step=1,
         help="Exclude states with extreme mean values (top x% and bottom x%)"
-    )
-
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("**Value Adjustment**")
-
-    # Constant adjustment toggle
-    adjust_constant = st.sidebar.checkbox(
-        "Adjust State-Independent Constant",
-        value=False,
-        help="Add a constant to each estimator so that mean(V(s)) = mean(ground_truth) for fair comparison"
     )
 
     # Ensure baseline method is included in the data
