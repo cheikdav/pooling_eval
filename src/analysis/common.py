@@ -83,12 +83,42 @@ def load_predictions_data(experiments_dir):
     return pd.DataFrame(all_preds)
 
 
+def filter_states_far_from_truncation(df: pd.DataFrame, gamma: float, truncation_coefficient: float = 10.0) -> pd.DataFrame:
+    """Filter states that are at least C/(1-gamma) steps away from episode end for truncated episodes.
+
+    For truncated episodes, only keep states where (episode_length - timestep_in_episode - 1) >= C/(1-gamma).
+    For naturally terminated episodes, keep all states.
+
+    Args:
+        df: DataFrame with columns: timestep_in_episode, episode_length, is_truncated
+        gamma: Discount factor
+        truncation_coefficient: Coefficient C for computing distance threshold
+
+    Returns:
+        Filtered DataFrame
+    """
+    n_discard = int(truncation_coefficient / (1 - gamma))
+
+    # For each state, compute steps remaining until end of episode
+    steps_to_end = df['episode_length'] - df['timestep_in_episode'] - 1
+
+    # Keep states that are either:
+    # 1. From non-truncated episodes (keep all)
+    # 2. From truncated episodes BUT far enough from the end
+    mask = (~df['is_truncated']) | (steps_to_end >= n_discard)
+
+    return df[mask]
+
+
 @st.cache_data
-def _get_ground_truth_mean(results_dir):
+def _get_ground_truth_mean(results_dir, gamma=None, truncation_coefficient=10.0, filter_truncation=True):
     """Load ground truth and return mean value (cached).
 
     Args:
         results_dir: Path to results directory
+        gamma: Discount factor (required if filter_truncation=True)
+        truncation_coefficient: Coefficient for truncation filtering
+        filter_truncation: If True, exclude states near truncation
 
     Returns:
         Mean ground truth value, or None if file doesn't exist
@@ -99,6 +129,10 @@ def _get_ground_truth_mean(results_dir):
         return None
 
     ground_truth_df = pd.read_parquet(ground_truth_file)
+
+    if filter_truncation and gamma is not None:
+        ground_truth_df = filter_states_far_from_truncation(ground_truth_df, gamma, truncation_coefficient)
+
     return ground_truth_df['ground_truth_return'].mean()
 
 
@@ -348,7 +382,8 @@ def _compute_temporal_differences(df, split, value_column):
 
 
 @st.cache_data
-def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2):
+def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2,
+                                gamma=None, truncation_coefficient=10.0, filter_truncation=True):
     """Load ground truth and compute statistics matching the dataset type.
 
     Args:
@@ -358,6 +393,9 @@ def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0
         s1_proportion: Proportion of episodes for S1 partition (used for differences)
         seed: Random seed for episode partitioning
         temporal_p: Geometric distribution parameter for temporal gaps (used for temporal mode)
+        gamma: Discount factor (required if filter_truncation=True)
+        truncation_coefficient: Coefficient for truncation filtering
+        filter_truncation: If True, exclude states near truncation from truncated episodes
 
     Returns:
         DataFrame with columns: state_idx, ground_truth_value
@@ -369,6 +407,10 @@ def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0
         return pd.DataFrame(columns=['state_idx', 'ground_truth_value'])
 
     df = pd.read_parquet(ground_truth_file)
+
+    # Apply truncation filtering if requested
+    if filter_truncation and gamma is not None:
+        df = filter_states_far_from_truncation(df, gamma, truncation_coefficient)
 
     if dataset_type == 'full':
         # Simple case: just return ground truth values
@@ -419,20 +461,29 @@ def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
         predictions_path = row['predictions_path']
         method_name = row['method']
 
-        # Get ground truth mean
+        # Get ground truth mean with truncation filtering
         predictions_path_obj = Path(predictions_path)
         results_dir = str(predictions_path_obj.parent.parent.parent)
-        mean_ground_truth = _get_ground_truth_mean(results_dir)
+        gamma = row.get('policy_gamma', 0.99)
+        truncation_coefficient = row.get('truncation_coefficient', 10.0)
+        mean_ground_truth = _get_ground_truth_mean(results_dir, gamma=gamma,
+                                                   truncation_coefficient=truncation_coefficient,
+                                                   filter_truncation=True)
 
         if mean_ground_truth is None:
             continue
 
-        # Load predictions and compute constant for each batch
+        # Load predictions and compute constant for each batch (using filtered predictions)
         df = pd.read_parquet(predictions_path)
 
         for batch_name, batch_df in df.groupby('batch_name'):
-            mean_batch = batch_df['predicted_value'].mean()
-            constant = mean_ground_truth - mean_batch
+            # Filter to states far from truncation
+            batch_df_filtered = filter_states_far_from_truncation(batch_df, gamma, truncation_coefficient)
+            if len(batch_df_filtered) > 0:
+                mean_batch = batch_df_filtered['predicted_value'].mean()
+                constant = mean_ground_truth - mean_batch
+            else:
+                constant = 0.0
             all_constants.append({
                 'batch_name': batch_name,
                 'constant': constant,

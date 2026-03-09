@@ -158,15 +158,20 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
         # Compute ground truth stats once per n_episodes (for ground_truth_error metric)
         ground_truth_stats = None
         if metric_key == 'ground_truth_error':
-            # Get results_dir from any method at this n_episodes
+            # Get results_dir and gamma from any method at this n_episodes
             any_method_row = metadata_df[metadata_df['n_episodes'] == n_ep]
             if not any_method_row.empty:
                 predictions_path = any_method_row.iloc[0]['predictions_path']
+                gamma = any_method_row.iloc[0].get('policy_gamma', 0.99)
+                truncation_coefficient = any_method_row.iloc[0].get('truncation_coefficient', 10.0)
                 from pathlib import Path
                 results_dir = str(Path(predictions_path).parent.parent.parent)
                 ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
                                                                 s1_proportion=0.9, seed=42,
-                                                                temporal_p=temporal_p)
+                                                                temporal_p=temporal_p,
+                                                                gamma=gamma,
+                                                                truncation_coefficient=truncation_coefficient,
+                                                                filter_truncation=True)
 
         # Load stats for all methods at this n_episodes
         method_stats_dict = {}

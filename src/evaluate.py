@@ -60,16 +60,19 @@ def compute_ground_truth_returns(eval_batch: Dict, gamma: float) -> pd.DataFrame
         gamma: Discount factor
 
     Returns:
-        DataFrame with columns: state_idx, episode_idx, ground_truth_return
+        DataFrame with columns: state_idx, episode_idx, timestep_in_episode,
+                               episode_length, is_truncated, ground_truth_return
     """
     eval_obs_list = eval_batch['observations']
     rewards_list = eval_batch['rewards']
+    truncated_array = eval_batch.get('truncated', np.zeros(len(eval_obs_list), dtype=bool))
 
     ground_truth_data = []
     state_idx = 0
 
     for ep_idx, (obs_array, rewards_array) in enumerate(zip(eval_obs_list, rewards_list)):
         episode_length = len(rewards_array)
+        is_truncated = bool(truncated_array[ep_idx])
 
         # Compute discounted return from each timestep
         for t in range(episode_length):
@@ -81,6 +84,9 @@ def compute_ground_truth_returns(eval_batch: Dict, gamma: float) -> pd.DataFrame
             ground_truth_data.append({
                 'state_idx': state_idx,
                 'episode_idx': ep_idx,
+                'timestep_in_episode': t,
+                'episode_length': episode_length,
+                'is_truncated': is_truncated,
                 'ground_truth_return': float(discounted_return)
             })
             state_idx += 1
@@ -130,11 +136,22 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
     eval_obs_list = eval_batch['observations']
     eval_obs_flat = np.concatenate(eval_obs_list, axis=0)
     n_states = len(eval_obs_flat)
+    truncated_array = eval_batch.get('truncated', np.zeros(len(eval_obs_list), dtype=bool))
 
-    # Create episode index mapping for each state
+    # Create episode metadata mapping for each state
     episode_indices = []
+    timesteps_in_episode = []
+    episode_lengths = []
+    is_truncated_per_state = []
+
     for ep_idx, obs_array in enumerate(eval_obs_list):
-        episode_indices.extend([ep_idx] * len(obs_array))
+        ep_length = len(obs_array)
+        is_truncated = bool(truncated_array[ep_idx])
+
+        episode_indices.extend([ep_idx] * ep_length)
+        timesteps_in_episode.extend(list(range(ep_length)))
+        episode_lengths.extend([ep_length] * ep_length)
+        is_truncated_per_state.extend([is_truncated] * ep_length)
 
     # Load metadata from first batch
     first_batch_metadata_path = n_ep_dir / "batch_0" / "estimator_metadata.json"
@@ -169,6 +186,9 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
             predictions.append({
                 'state_idx': state_idx,
                 'episode_idx': episode_indices[state_idx],
+                'timestep_in_episode': timesteps_in_episode[state_idx],
+                'episode_length': episode_lengths[state_idx],
+                'is_truncated': is_truncated_per_state[state_idx],
                 'batch_name': batch_name,
                 'predicted_value': values[state_idx]
             })

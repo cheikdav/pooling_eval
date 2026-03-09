@@ -7,7 +7,7 @@ import plotly.express as px
 import numpy as np
 from pathlib import Path
 
-from common import get_method_display_name, sort_methods, _get_ground_truth_mean
+from common import get_method_display_name, sort_methods, _get_ground_truth_mean, filter_states_far_from_truncation
 
 
 def sort_predictions(predictions_data):
@@ -88,21 +88,29 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
 
                 # Apply constant adjustment if requested
                 if adjust_constant:
-                    # Get ground truth mean (cached, computed once)
+                    # Get ground truth mean (cached, computed once) with truncation filtering
                     if results_dir is None:
                         results_dir = str(predictions_path.parent.parent.parent)
-                        mean_ground_truth = _get_ground_truth_mean(results_dir)
+                        # Get gamma from metadata
+                        gamma = row.get('policy_gamma', 0.99)
+                        truncation_coefficient = row.get('truncation_coefficient', 10.0)
+                        mean_ground_truth = _get_ground_truth_mean(results_dir, gamma=gamma,
+                                                                   truncation_coefficient=truncation_coefficient,
+                                                                   filter_truncation=True)
 
                     if mean_ground_truth is not None:
                         # Load regular predictions to compute batch constants
                         regular_predictions_path = predictions_path
                         regular_df = pd.read_parquet(regular_predictions_path)
 
-                        # Compute constant for each batch
+                        # Compute constant for each batch (using only states far from truncation)
                         batch_constants = {}
                         for batch_name, batch_df in regular_df.groupby('batch_name'):
-                            mean_batch = batch_df['predicted_value'].mean()
-                            batch_constants[batch_name] = mean_ground_truth - mean_batch
+                            # Filter to states far from truncation
+                            batch_df_filtered = filter_states_far_from_truncation(batch_df, gamma, truncation_coefficient)
+                            if len(batch_df_filtered) > 0:
+                                mean_batch = batch_df_filtered['predicted_value'].mean()
+                                batch_constants[batch_name] = mean_ground_truth - mean_batch
 
                         # Apply constants to paired predictions
                         def adjust_batch(batch_df):

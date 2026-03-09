@@ -68,13 +68,18 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     # Compute ground truth stats once for all methods (used by ground_truth_error metric)
     ground_truth_stats = None
     if metric_key == 'ground_truth_error':
-        # Get results_dir from any method's stats
+        # Get results_dir and gamma from any method's stats
         first_method_stats = next(iter(stats_dict_single.values()))
         if 'results_dir' in first_method_stats.columns:
             results_dir = first_method_stats['results_dir'].iloc[0]
+            gamma = first_method_stats.get('policy_gamma', pd.Series([0.99])).iloc[0]
+            truncation_coefficient = first_method_stats.get('truncation_coefficient', pd.Series([10.0])).iloc[0]
             ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
                                                             s1_proportion=0.9, seed=42,
-                                                            temporal_p=temporal_p)
+                                                            temporal_p=temporal_p,
+                                                            gamma=gamma,
+                                                            truncation_coefficient=truncation_coefficient,
+                                                            filter_truncation=True)
 
     # Create MetricContext for single episode analysis
     context = MetricContext(
