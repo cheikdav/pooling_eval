@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from metrics import METRICS, get_metrics_by_type
-from common import compute_stats_from_predictions, apply_data_filters, compute_ground_truth_stats
+from common import compute_stats_from_predictions, apply_data_filters, compute_ground_truth_stats, MetricContext
 from plotting import plot_metric_for_single_episodes, plot_metric_evolution
 
 
@@ -76,6 +76,19 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
                                                             s1_proportion=0.9, seed=42,
                                                             temporal_p=temporal_p)
 
+    # Create MetricContext for single episode analysis
+    context = MetricContext(
+        method_stats=stats_dict_single,
+        baseline_method=baseline_method,
+        methods_to_display=methods,
+        ground_truth_stats=ground_truth_stats,
+        n_episodes=selected_n_ep,
+        epsilon=epsilon,
+        n_buckets=n_buckets,
+        dataset_type=dataset_type,
+        temporal_p=temporal_p
+    )
+
     # Special handling for batch_constants metric
     if metric_key == 'batch_constants':
         from common import compute_all_batch_constants, get_method_display_name
@@ -114,7 +127,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
                 ).reset_index()
                 st.dataframe(summary, use_container_width=True, hide_index=True)
     else:
-        plot_metric_for_single_episodes(stats_dict_single, metric_key, methods, selected_n_ep, baseline_method, epsilon, n_buckets, ground_truth_stats)
+        plot_metric_for_single_episodes(context, metric_key)
 
     st.markdown("---")
 

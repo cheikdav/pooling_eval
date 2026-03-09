@@ -5,45 +5,37 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from metrics import METRICS, compute_metric
-from common import get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants, compute_ground_truth_stats
+from metrics import METRICS
+from common import get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants, compute_ground_truth_stats, MetricContext
 
 
-def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes, baseline_method, epsilon, n_buckets, ground_truth_stats=None):
+def plot_metric_for_single_episodes(context: MetricContext, metric_key: str):
     """Plot metric for a single n_episodes value.
 
     Args:
-        stats_dict: Dict mapping method names to DataFrames
+        context: MetricContext with all data and parameters
         metric_key: Metric to compute
-        methods: List of methods to display
-        n_episodes: Number of episodes (for display)
-        baseline_method: Baseline method name (for comparison metrics)
-        epsilon: Small value added before taking log
-        n_buckets: Number of buckets for decile-based metrics
-        ground_truth_stats: DataFrame with ground truth values (for ground_truth_error metric)
     """
     metric_info = METRICS[metric_key]
     plot_type = metric_info['plot_type']
     is_comparison = metric_info['is_comparison']
 
-    if is_comparison and baseline_method not in stats_dict:
-        st.error(f"Baseline method {baseline_method} not found")
+    if is_comparison and context.baseline_method not in context.method_stats:
+        st.error(f"Baseline method {context.baseline_method} not found")
         return
-
-    baseline_stats = stats_dict.get(baseline_method) if is_comparison else None
 
     # Compute metrics for each method
     metric_list = []
-    for method in methods:
+    for method in context.methods_to_display:
         # For comparison metrics, skip the baseline method
-        if is_comparison and method == baseline_method:
+        if is_comparison and method == context.baseline_method:
             continue
 
-        if method not in stats_dict:
+        if method not in context.method_stats:
             continue
 
-        method_stats = stats_dict[method]
-        metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets, ground_truth_stats=ground_truth_stats)
+        compute_fn = metric_info['compute_fn']
+        metric_df = compute_fn(context, method)
         metric_df['method'] = get_method_display_name(method)
         metric_list.append(metric_df)
 
@@ -61,7 +53,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
             fig = px.histogram(
                 combined, x='metric_value', color='method',
                 nbins=40, opacity=0.7, barmode='overlay',
-                title=f"{metric_info['name']} Distribution ({n_episodes} episodes)",
+                title=f"{metric_info['name']} Distribution ({context.n_episodes} episodes)",
                 labels={'metric_value': metric_info['name']}
             )
 
@@ -76,7 +68,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
 
         with col2:
             if is_comparison:
-                st.markdown(f"**Statistics** (vs {get_method_display_name(baseline_method)})")
+                st.markdown(f"**Statistics** (vs {get_method_display_name(context.baseline_method)})")
             else:
                 st.markdown("**Statistics**")
             summary = combined.groupby('method')['metric_value'].agg(
@@ -92,9 +84,9 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
             y='metric_value',
             color='method',
             barmode='group',
-            title=f"{metric_info['name']} ({n_episodes} episodes, {n_buckets} buckets)",
+            title=f"{metric_info['name']} ({context.n_episodes} episodes, {context.n_buckets} buckets)",
             labels={
-                'decile': f'Value Bucket (0=lowest, {n_buckets-1}=highest)',
+                'decile': f'Value Bucket (0=lowest, {context.n_buckets-1}=highest)',
                 'metric_value': metric_info['name']
             }
         )
@@ -111,12 +103,12 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
         # Line plot for percentile-based metrics
         fig = go.Figure()
 
-        for method in methods:
+        for method in context.methods_to_display:
             # For comparison metrics, skip the baseline method
-            if is_comparison and method == baseline_method:
+            if is_comparison and method == context.baseline_method:
                 continue
 
-            if method not in stats_dict:
+            if method not in context.method_stats:
                 continue
 
             method_data = combined[combined['method'] == get_method_display_name(method)]
@@ -130,7 +122,7 @@ def plot_metric_for_single_episodes(stats_dict, metric_key, methods, n_episodes,
                 ))
 
         fig.update_layout(
-            title=f"{metric_info['name']} ({n_episodes} episodes)",
+            title=f"{metric_info['name']} ({context.n_episodes} episodes)",
             xaxis_title="Percentile",
             yaxis_title=metric_info['name'],
             height=500,
@@ -176,23 +168,35 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
                                                                 s1_proportion=0.9, seed=42,
                                                                 temporal_p=temporal_p)
 
-        # Load baseline stats for this n_episodes (only needed for comparison metrics)
-        if is_comparison:
-            baseline_row = metadata_df[(metadata_df['method'] == baseline_method) &
-                                       (metadata_df['n_episodes'] == n_ep)]
+        # Load stats for all methods at this n_episodes
+        method_stats_dict = {}
+        for method in methods:
+            method_row = metadata_df[(metadata_df['method'] == method) &
+                                    (metadata_df['n_episodes'] == n_ep)]
+            if not method_row.empty:
+                method_stats_dict[method] = compute_stats_from_predictions(
+                    method_row.iloc[0]['predictions_path'],
+                    n_ep,
+                    dataset_type=dataset_type,
+                    temporal_p=temporal_p,
+                    adjust_constant=adjust_constant
+                )
 
-            if baseline_row.empty:
-                continue
+        if not method_stats_dict:
+            continue
 
-            baseline_stats = compute_stats_from_predictions(
-                baseline_row.iloc[0]['predictions_path'],
-                n_ep,
-                dataset_type=dataset_type,
-                temporal_p=temporal_p,
-                adjust_constant=adjust_constant
-            )
-        else:
-            baseline_stats = None
+        # Create MetricContext for this n_episodes
+        context = MetricContext(
+            method_stats=method_stats_dict,
+            baseline_method=baseline_method,
+            methods_to_display=methods,
+            ground_truth_stats=ground_truth_stats,
+            n_episodes=n_ep,
+            epsilon=epsilon,
+            n_buckets=n_buckets,
+            dataset_type=dataset_type,
+            temporal_p=temporal_p
+        )
 
         # Process each method for this n_episodes
         for method in methods:
@@ -200,23 +204,12 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             if is_comparison and method == baseline_method:
                 continue
 
-            method_row = metadata_df[(metadata_df['method'] == method) &
-                                    (metadata_df['n_episodes'] == n_ep)]
-
-            if method_row.empty:
+            if method not in method_stats_dict:
                 continue
 
-            # Load method stats
-            method_stats = compute_stats_from_predictions(
-                method_row.iloc[0]['predictions_path'],
-                n_ep,
-                dataset_type=dataset_type,
-                temporal_p=temporal_p,
-                adjust_constant=adjust_constant
-            )
-
-            # Compute metric for this method vs baseline
-            metric_df = compute_metric(baseline_stats, method_stats, metric_key, epsilon=epsilon, n_buckets=n_buckets, ground_truth_stats=ground_truth_stats)
+            # Compute metric using context
+            compute_fn = metric_info['compute_fn']
+            metric_df = compute_fn(context, method)
 
             # Store summary statistics
             if not metric_df.empty:
@@ -227,12 +220,8 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
                     'std': metric_df['metric_value'].std()
                 })
 
-            # Discard method stats and metric immediately
-            del method_stats, metric_df
-
-        # Discard baseline stats after processing all methods for this n_episodes
-        if baseline_stats is not None:
-            del baseline_stats
+        # Clean up after processing this n_episodes
+        del method_stats_dict, context
 
     if not summary_records:
         st.warning("No data available")

@@ -3,7 +3,7 @@
 import streamlit as st
 
 from metrics import METRICS, get_metrics_by_type
-from common import compute_stats_from_predictions, apply_data_filters
+from common import compute_stats_from_predictions, apply_data_filters, MetricContext
 from plotting import plot_metric_for_single_episodes, plot_metric_evolution
 
 
@@ -65,7 +65,20 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         st.error(f"No data for {selected_n_ep} episodes")
         return
 
-    plot_metric_for_single_episodes(stats_dict_single, metric_key, methods, selected_n_ep, baseline_method, epsilon, n_buckets)
+    # Create MetricContext for single episode analysis
+    context = MetricContext(
+        method_stats=stats_dict_single,
+        baseline_method=baseline_method,
+        methods_to_display=methods,
+        ground_truth_stats=None,  # Not used for comparison metrics
+        n_episodes=selected_n_ep,
+        epsilon=epsilon,
+        n_buckets=n_buckets,
+        dataset_type=dataset_type,
+        temporal_p=temporal_p
+    )
+
+    plot_metric_for_single_episodes(context, metric_key)
 
     st.markdown("---")
 

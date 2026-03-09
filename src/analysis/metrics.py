@@ -4,27 +4,33 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from pathlib import Path
+from .common import MetricContext
 
 
 @st.cache_data
-def compute_log_variance_ratio(baseline_stats, method_stats, epsilon=1e-10):
+def compute_log_variance_ratio(context: MetricContext, method: str):
     """Compute log variance ratios relative to a baseline method.
 
     Args:
-        baseline_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
-        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
-        epsilon: Small value added before taking log to avoid log(0)
+        context: MetricContext with all data and parameters
+        method: Method name to compute ratio for
 
     Returns:
         DataFrame with metric_value column using log(x+eps) - log(y+eps)
     """
+    baseline_stats = context.get_baseline_stats()
+    method_stats = context.method_stats.get(method)
+
+    if baseline_stats is None or method_stats is None:
+        return pd.DataFrame()
+
     baseline_values = baseline_stats[['state_idx', 'n_episodes', 'variance']].copy()
     baseline_values.columns = ['state_idx', 'n_episodes', 'baseline_variance']
 
     merged = method_stats.merge(baseline_values, on=['state_idx', 'n_episodes'])
 
     # Compute log(method_variance + eps) - log(baseline_variance + eps)
-    merged['metric_value'] = np.log(merged['variance'] + epsilon) - np.log(merged['baseline_variance'] + epsilon)
+    merged['metric_value'] = np.log(merged['variance'] + context.epsilon) - np.log(merged['baseline_variance'] + context.epsilon)
 
     if merged['metric_value'].isnull().any():
         null_count = merged['metric_value'].isnull().sum()
@@ -34,24 +40,29 @@ def compute_log_variance_ratio(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
-def compute_log_mean_ratio(baseline_stats, method_stats, epsilon=1e-10):
+def compute_log_mean_ratio(context: MetricContext, method: str):
     """Compute log mean ratios relative to a baseline method.
 
     Args:
-        baseline_stats: DataFrame with columns [state_idx, n_episodes, mean, ...]
-        method_stats: DataFrame with columns [state_idx, n_episodes, mean, ...]
-        epsilon: Small value added before taking log to avoid log(0)
+        context: MetricContext with all data and parameters
+        method: Method name to compute ratio for
 
     Returns:
         DataFrame with metric_value column using log(|x|+eps) - log(|y|+eps)
     """
+    baseline_stats = context.get_baseline_stats()
+    method_stats = context.method_stats.get(method)
+
+    if baseline_stats is None or method_stats is None:
+        return pd.DataFrame()
+
     baseline_values = baseline_stats[['state_idx', 'n_episodes', 'mean']].copy()
     baseline_values.columns = ['state_idx', 'n_episodes', 'baseline_mean']
 
     merged = method_stats.merge(baseline_values, on=['state_idx', 'n_episodes'])
 
     # Compute log(|method_mean| + eps) - log(|baseline_mean| + eps)
-    merged['metric_value'] = np.log(merged['mean'].abs() + epsilon) - np.log(merged['baseline_mean'].abs() + epsilon)
+    merged['metric_value'] = np.log(merged['mean'].abs() + context.epsilon) - np.log(merged['baseline_mean'].abs() + context.epsilon)
 
     if merged['metric_value'].isnull().any():
         null_count = merged['metric_value'].isnull().sum()
@@ -61,19 +72,23 @@ def compute_log_mean_ratio(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
-def compute_log_variance(baseline_stats, method_stats, epsilon=1e-10):
+def compute_log_variance(context: MetricContext, method: str):
     """Compute log variance (no ratio).
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
-        epsilon: Small value added before taking log to avoid log(0)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with metric_value column using log(variance + eps)
     """
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
     result = method_stats.copy()
-    result['metric_value'] = np.log(result['variance'] + epsilon)
+    result['metric_value'] = np.log(result['variance'] + context.epsilon)
 
     if result['metric_value'].isnull().any():
         null_count = result['metric_value'].isnull().sum()
@@ -83,17 +98,21 @@ def compute_log_variance(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
-def compute_variance(baseline_stats, method_stats, epsilon=1e-10):
+def compute_variance(context: MetricContext, method: str):
     """Compute variance (no ratio).
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
-        epsilon: Not used (kept for signature compatibility)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with metric_value column using raw variance
     """
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
     result = method_stats.copy()
     result['metric_value'] = result['variance']
 
@@ -105,17 +124,21 @@ def compute_variance(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
-def compute_mean(baseline_stats, method_stats, epsilon=1e-10):
+def compute_mean(context: MetricContext, method: str):
     """Compute mean (no ratio).
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with columns [state_idx, n_episodes, mean, ...]
-        epsilon: Not used (kept for signature compatibility)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with metric_value column using raw mean
     """
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
     result = method_stats.copy()
     result['metric_value'] = result['mean']
 
@@ -127,7 +150,7 @@ def compute_mean(baseline_stats, method_stats, epsilon=1e-10):
 
 
 @st.cache_data
-def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+def compute_variance_by_value_decile(context: MetricContext, method: str):
     """Compute average variance per bucket of state values.
 
     For each method/episode number:
@@ -136,21 +159,24 @@ def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10
     3. Compute average variance in each bucket
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with columns [state_idx, n_episodes, mean, variance, ...]
-        epsilon: Not used (kept for signature compatibility)
-        n_buckets: Number of buckets to divide states into (default: 10)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with columns [decile, metric_value] where:
         - decile: 0 to n_buckets-1 (0 = lowest bucket by mean value)
         - metric_value: average variance in that bucket
     """
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
     result = method_stats.copy()
 
     # Sort states by mean value and assign buckets
     result = result.sort_values('mean').reset_index(drop=True)
-    result['decile'] = pd.qcut(result['mean'], q=n_buckets, labels=False, duplicates='drop')
+    result['decile'] = pd.qcut(result['mean'], q=context.n_buckets, labels=False, duplicates='drop')
 
     # Compute average variance per bucket
     decile_stats = result.groupby('decile')['variance'].mean().reset_index()
@@ -167,7 +193,7 @@ def compute_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10
 
 
 @st.cache_data
-def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+def compute_normalized_variance_by_value_decile(context: MetricContext, method: str):
     """Compute average of (variance / mean²) per bucket of state values.
 
     For each method/episode number:
@@ -177,24 +203,27 @@ def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, ep
     4. Average the ratios within each bucket
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with columns [state_idx, n_episodes, mean, variance, ...]
-        epsilon: Small value added to avoid division by zero
-        n_buckets: Number of buckets to divide states into (default: 10)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with columns [decile, metric_value] where:
         - decile: 0 to n_buckets-1 (0 = lowest bucket by mean value)
         - metric_value: average of (variance / mean²) in that bucket
     """
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
     result = method_stats.copy()
 
     # Compute normalized variance for each state FIRST
-    result['normalized_variance'] = result['variance'] / ((result['mean'].abs() + epsilon) ** 2)
+    result['normalized_variance'] = result['variance'] / ((result['mean'].abs() + context.epsilon) ** 2)
 
     # Sort states by mean value and assign buckets
     result = result.sort_values('mean').reset_index(drop=True)
-    result['decile'] = pd.qcut(result['mean'], q=n_buckets, labels=False, duplicates='drop')
+    result['decile'] = pd.qcut(result['mean'], q=context.n_buckets, labels=False, duplicates='drop')
 
     # Average the normalized variance per bucket
     decile_stats = result.groupby('decile')['normalized_variance'].mean().reset_index()
@@ -211,18 +240,21 @@ def compute_normalized_variance_by_value_decile(baseline_stats, method_stats, ep
 
 
 @st.cache_data
-def compute_variance_percentiles(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10):
+def compute_variance_percentiles(context: MetricContext, method: str):
     """Compute variance at different percentiles.
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with columns [state_idx, n_episodes, variance, ...]
-        epsilon: Not used (kept for signature compatibility)
-        n_buckets: Not used (kept for signature compatibility)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with columns [percentile, metric_value]
     """
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
     result = method_stats.copy()
     percentiles = np.arange(1, 100, 1)  # 1st to 99th percentile
 
@@ -238,20 +270,22 @@ def compute_variance_percentiles(baseline_stats, method_stats, epsilon=1e-10, n_
 
 
 @st.cache_data
-def compute_ground_truth_error(baseline_stats, method_stats, epsilon=1e-10, n_buckets=10, ground_truth_stats=None):
+def compute_ground_truth_error(context: MetricContext, method: str):
     """Compute prediction error relative to ground truth returns.
 
     Args:
-        baseline_stats: Not used (kept for signature compatibility)
-        method_stats: DataFrame with state_idx, mean columns
-        epsilon: Not used (kept for signature compatibility)
-        n_buckets: Not used (kept for signature compatibility)
-        ground_truth_stats: DataFrame with state_idx, ground_truth_value columns (computed with same dataset_type)
+        context: MetricContext with all data and parameters
+        method: Method name to compute for
 
     Returns:
         DataFrame with metric_value column containing (predicted - ground_truth)
     """
-    if ground_truth_stats is None or ground_truth_stats.empty:
+    method_stats = context.method_stats.get(method)
+
+    if method_stats is None:
+        return pd.DataFrame()
+
+    if context.ground_truth_stats is None or context.ground_truth_stats.empty:
         st.warning("Ground truth data not available")
         return pd.DataFrame()
 
@@ -260,7 +294,7 @@ def compute_ground_truth_error(baseline_stats, method_stats, epsilon=1e-10, n_bu
 
     # Merge with ground truth
     result = result.merge(
-        ground_truth_stats[['state_idx', 'ground_truth_value']],
+        context.ground_truth_stats[['state_idx', 'ground_truth_value']],
         on='state_idx',
         how='inner'
     )
@@ -383,38 +417,3 @@ def get_metrics_by_type(is_comparison):
         List of metric keys
     """
     return [key for key, info in METRICS.items() if info['is_comparison'] == is_comparison]
-
-
-@st.cache_data
-def compute_metric(baseline_stats, method_stats, metric_key, epsilon=1e-10, n_buckets=10, ground_truth_stats=None):
-    """Compute the specified metric with error handling.
-
-    Args:
-        baseline_stats: DataFrame with baseline method stats
-        method_stats: DataFrame with method stats to compare
-        metric_key: Key identifying which metric to compute
-        epsilon: Small value added before taking log to avoid log(0)
-        n_buckets: Number of buckets for decile-based metrics
-        ground_truth_stats: DataFrame with ground truth values (for ground_truth_error metric)
-
-    Returns:
-        DataFrame with metric_value column
-    """
-    try:
-        if metric_key not in METRICS:
-            raise ValueError(f"Unknown metric: {metric_key}")
-
-        compute_fn = METRICS[metric_key]['compute_fn']
-
-        # Pass appropriate parameters based on metric type
-        if metric_key in ['variance_by_value_decile', 'normalized_variance_by_value_decile']:
-            return compute_fn(baseline_stats, method_stats, epsilon=epsilon, n_buckets=n_buckets)
-        elif metric_key == 'ground_truth_error':
-            return compute_fn(baseline_stats, method_stats, epsilon=epsilon, n_buckets=n_buckets, ground_truth_stats=ground_truth_stats)
-        else:
-            return compute_fn(baseline_stats, method_stats, epsilon=epsilon)
-    except Exception as e:
-        st.error(f"Error computing {metric_key}: {str(e)}")
-        import traceback
-        st.code(traceback.format_exc())
-        raise

@@ -1,10 +1,49 @@
 """Common utilities for the Streamlit dashboard."""
 
 from pathlib import Path
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 import streamlit as st
 import pandas as pd
 import numpy as np
 from metadata_discovery import discover_predictions
+
+
+@dataclass
+class MetricContext:
+    """All data and parameters needed to compute and plot metrics.
+
+    This centralizes all the data and settings in one place, making it easier
+    to pass around and audit what data is being used for metric computation.
+    """
+    # Method data - stats for each method being compared
+    method_stats: Dict[str, pd.DataFrame]  # method_name -> stats DataFrame
+
+    # Baseline method for comparison metrics
+    baseline_method: str
+
+    # Methods to display in plots
+    methods_to_display: List[str]
+
+    # Ground truth data (loaded once, shared by all metrics that need it)
+    ground_truth_stats: Optional[pd.DataFrame] = None
+
+    # Display settings
+    n_episodes: int = 0  # Number of training episodes for current view
+
+    # Computation parameters
+    epsilon: float = 1e-10  # Small value for log computations
+    n_buckets: int = 10  # Number of buckets for decile-based metrics
+
+    # Dataset configuration
+    dataset_type: str = 'full'  # 'full', 'differences', or 'temporal'
+    temporal_p: float = 0.2  # Geometric parameter for temporal differences
+    seed: int = 42  # Random seed for partitioning
+    s1_proportion: float = 0.9  # Proportion for S1 partition in differences mode
+
+    def get_baseline_stats(self) -> Optional[pd.DataFrame]:
+        """Get baseline method stats if available."""
+        return self.method_stats.get(self.baseline_method)
 
 
 METHOD_DISPLAY_NAMES = {
