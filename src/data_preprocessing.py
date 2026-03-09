@@ -27,11 +27,12 @@ def compute_monte_carlo_returns(rewards: np.ndarray, gamma: float) -> np.ndarray
     return returns
 
 
-def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float) -> Dict[str, np.ndarray]:
+def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float, truncation_coefficient: float = 10.0) -> Dict[str, np.ndarray]:
     """Preprocess episode-based batch into transition-based format with MC returns.
 
     Takes episode data (lists of variable-length arrays) and flattens into individual
-    transitions, computing Monte Carlo returns for each state.
+    transitions, computing Monte Carlo returns for each state. Discards the last
+    truncation_coefficient/(1-gamma) states from truncated episodes to handle truncation errors.
 
     Args:
         batch: Dictionary containing episode data:
@@ -40,7 +41,10 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float) -> Dict[str,
             - rewards: List of (T_i,) arrays
             - dones: List of (T_i,) arrays
             - next_observations: List of (T_i, obs_dim) arrays
+            - truncated: (n_episodes,) boolean array (optional, defaults to all False)
         gamma: Discount factor for computing returns
+        truncation_coefficient: Coefficient for computing how many states to discard
+            from the end of truncated episodes (discard last truncation_coefficient/(1-gamma) states)
 
     Returns:
         Dictionary containing flattened transition data:
@@ -55,6 +59,9 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float) -> Dict[str,
     if not isinstance(batch['observations'], list):
         # Already flattened, assume mc_returns is present
         return batch
+
+    # Compute number of states to discard from the end of truncated episodes
+    n_discard = int(truncation_coefficient / (1 - gamma))
 
     # Lists to collect flattened data
     all_observations = []
@@ -75,13 +82,27 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float) -> Dict[str,
         # Compute MC returns for this episode
         mc_returns = compute_monte_carlo_returns(rewards, gamma)
 
-        # Add to lists
-        all_observations.append(obs)
-        all_actions.append(actions)
-        all_rewards.append(rewards)
-        all_dones.append(dones)
-        all_next_observations.append(next_obs)
-        all_mc_returns.append(mc_returns)
+        # Check if this episode was truncated
+        truncated = batch.get('truncated', np.zeros(len(batch['observations']), dtype=bool))[i]
+
+        # Only discard states from truncated episodes
+        episode_length = len(rewards)
+        if truncated:
+            keep_length = max(0, episode_length - n_discard)
+            if keep_length == 0:
+                # Skip episodes that are too short after discarding
+                continue
+        else:
+            # Keep all states for naturally terminated episodes
+            keep_length = episode_length
+
+        # Add to lists (only keeping first keep_length states)
+        all_observations.append(obs[:keep_length])
+        all_actions.append(actions[:keep_length])
+        all_rewards.append(rewards[:keep_length])
+        all_dones.append(dones[:keep_length])
+        all_next_observations.append(next_obs[:keep_length])
+        all_mc_returns.append(mc_returns[:keep_length])
 
     # Concatenate all episodes
     preprocessed = {

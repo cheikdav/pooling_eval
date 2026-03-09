@@ -101,6 +101,7 @@ class ValueEstimatorTrainingConfig:
     gamma: float = 0.99
     episode_subsets: Optional[List[int]] = None
     shuffle_frequency: int = 100  # Re-shuffle DataLoader every N epochs (0 = never, 1 = every epoch)
+    truncation_coefficient: float = 10.0  # Discard last truncation_coefficient/(1-gamma) states from each episode
 
 
 class FeatureExtractorType(str, Enum):

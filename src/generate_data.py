@@ -76,6 +76,7 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
         next_obs = step_result[0]
         rewards = step_result[1]
         dones = step_result[2]
+        infos = step_result[3] if len(step_result) > 3 else [{} for _ in range(n_envs)]
 
         if use_vec_normalize:
             original_next_obs = env.get_original_obs()
@@ -90,12 +91,17 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
                 episode_data[i]['next_observations'].append(original_next_obs[i].copy())
 
                 if dones[i] and len(completed_episodes) < n_episodes:
+                    # Extract truncation info from info dict
+                    info = infos[i] if isinstance(infos, (list, tuple)) else {}
+                    truncated = info.get('TimeLimit.truncated', False)
+
                     completed_episodes.append({
                         'observations': np.array(episode_data[i]['observations']),
                         'actions': np.array(episode_data[i]['actions']),
                         'rewards': np.array(episode_data[i]['rewards']),
                         'dones': np.array(episode_data[i]['dones']),
                         'next_observations': np.array(episode_data[i]['next_observations']),
+                        'truncated': truncated,
                     })
 
                     episode_data[i] = {
@@ -130,6 +136,7 @@ def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
             - rewards: List of (T_i,) arrays
             - dones: List of (T_i,) arrays
             - next_observations: List of (T_i, obs_dim) arrays
+            - truncated: (n_episodes,) boolean array indicating if episode was truncated
             - episode_lengths: (n_episodes,) array of episode lengths
             - episode_returns: (n_episodes,) array of total returns
     """
@@ -144,6 +151,7 @@ def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
         'rewards': [],
         'dones': [],
         'next_observations': [],
+        'truncated': [],
         'episode_lengths': [],
         'episode_returns': [],
     }
@@ -156,8 +164,9 @@ def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
         batch_data['episode_returns'].append(episode['rewards'].sum())
 
     for key in batch_data.keys():
-        if key not in ['episode_lengths', 'episode_returns']:
+        if key not in ['episode_lengths', 'episode_returns', 'truncated']:
             batch_data[key] = np.array(batch_data[key], dtype=object)
+    batch_data['truncated'] = np.array(batch_data['truncated'], dtype=bool)
     batch_data['episode_lengths'] = np.array(batch_data['episode_lengths'])
     batch_data['episode_returns'] = np.array(batch_data['episode_returns'])
     return batch_data

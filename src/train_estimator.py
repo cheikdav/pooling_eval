@@ -405,9 +405,10 @@ def train_episode_count_worker(
 
     # Load and preprocess validation batch if it exists
     validation_dataset = None
+    truncation_coefficient = config.value_estimators.training.truncation_coefficient
     if validation_batch_path.exists():
         validation_batch_raw = load_batch_data(validation_batch_path)
-        validation_batch = preprocess_episodes(validation_batch_raw, gamma)
+        validation_batch = preprocess_episodes(validation_batch_raw, gamma, truncation_coefficient)
         validation_dataset = TransitionDataset(validation_batch)
 
     # Load training batch
@@ -420,7 +421,7 @@ def train_episode_count_worker(
     checkpoint_path = episodes_dir / "estimator.pt"
 
     # Preprocess training batch
-    train_batch = preprocess_episodes(train_batch_raw, gamma)
+    train_batch = preprocess_episodes(train_batch_raw, gamma, truncation_coefficient)
 
     # Use method-specific max_epochs if set, otherwise use global
     from src.config import resolve_param_for_episodes
