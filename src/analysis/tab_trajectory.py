@@ -86,9 +86,18 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
     else:
         st.success(f"Loaded ground truth with {len(ground_truth_df)} states from {ground_truth_df['episode_idx'].nunique()} episodes")
 
+    # Get gamma and truncation_coefficient from metadata
+    first_method_row = filtered_metadata[
+        (filtered_metadata['method'] == selected_methods[0]) &
+        (filtered_metadata['n_episodes'] == selected_n_ep)
+    ].iloc[0]
+    gamma = first_method_row.get('policy_gamma', 0.99)
+    truncation_coefficient = first_method_row.get('truncation_coefficient', 10.0)
+
     # Load predictions for each method
     fig = go.Figure()
     episode_length = None
+    is_truncated = None
 
     for method in selected_methods:
         # Filter metadata for this method and n_episodes
@@ -110,9 +119,12 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         if episode_preds.empty:
             continue
 
-        # Get episode length from first method
+        # Get episode metadata from first method
         if episode_length is None:
             episode_length = len(episode_preds)
+            # Check if episode is truncated
+            if 'is_truncated' in episode_preds.columns:
+                is_truncated = episode_preds['is_truncated'].iloc[0]
 
         # Use step_in_episode from the dataframe
         steps = episode_preds['step_in_episode'].values
@@ -132,6 +144,12 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
     if ground_truth_df is not None:
         ground_truth_episode = ground_truth_df[ground_truth_df['episode_idx'] == selected_episode].copy()
         if not ground_truth_episode.empty:
+            # Also get truncation info from ground truth if not already captured
+            if is_truncated is None and 'is_truncated' in ground_truth_episode.columns:
+                is_truncated = ground_truth_episode['is_truncated'].iloc[0]
+            if episode_length is None and 'episode_length' in ground_truth_episode.columns:
+                episode_length = ground_truth_episode['episode_length'].iloc[0]
+
             fig.add_trace(go.Scatter(
                 x=ground_truth_episode['step_in_episode'].values,
                 y=ground_truth_episode['ground_truth_return'].values,
@@ -139,6 +157,20 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
                 name='Ground Truth',
                 line=dict(width=3, color='white', dash='dash')
             ))
+
+    # Add vertical line showing truncation cutoff for truncated episodes
+    if is_truncated and episode_length is not None:
+        n_discard = int(truncation_coefficient / (1 - gamma))
+        cutoff_step = episode_length - n_discard
+        if cutoff_step > 0:
+            fig.add_vline(
+                x=cutoff_step,
+                line_dash="dot",
+                line_color="red",
+                line_width=2,
+                annotation_text=f"Truncation cutoff (C/(1-γ)={n_discard})",
+                annotation_position="top"
+            )
 
     # Update layout
     fig.update_layout(
@@ -159,8 +191,14 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
     st.plotly_chart(fig, use_container_width=True)
 
     # Show episode info after plot
-    if episode_length is not None:
-        st.metric("Episode Length", episode_length)
+    col1, col2 = st.columns(2)
+    with col1:
+        if episode_length is not None:
+            st.metric("Episode Length", episode_length)
+    with col2:
+        if is_truncated is not None:
+            status = "Yes (time limit)" if is_truncated else "No (natural end)"
+            st.metric("Truncated", status)
 
     st.markdown("---")
 

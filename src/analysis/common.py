@@ -630,8 +630,14 @@ def load_predictions_for_trajectory(predictions_path, adjust_constant=False):
 
             df = df.groupby('batch_name', group_keys=False).apply(adjust_batch)
 
-    # Compute mean across batches for each state
-    mean_df = df.groupby(['state_idx', 'episode_idx'])['predicted_value'].mean().reset_index()
+    # Compute mean across batches for each state, preserving episode metadata
+    agg_dict = {'predicted_value': 'mean'}
+    if 'is_truncated' in df.columns:
+        agg_dict['is_truncated'] = 'first'
+    if 'episode_length' in df.columns:
+        agg_dict['episode_length'] = 'first'
+
+    mean_df = df.groupby(['state_idx', 'episode_idx']).agg(agg_dict).reset_index()
     mean_df.rename(columns={'predicted_value': 'mean_value'}, inplace=True)
 
     # For each episode, create step_in_episode (0, 1, 2, ...) by sorting by state_idx
