@@ -168,35 +168,45 @@ class PolicyRepresentationExtractor(FeatureExtractor):
             raise ValueError(f"Unknown algorithm: {self.algorithm}")
 
         policy = policy_classes[self.algorithm].load(policy_path, device=device_obj)
-        self.policy = policy
 
         obs_dim = policy.observation_space.shape[0]
         with torch.no_grad():
             dummy_obs = torch.zeros(1, obs_dim, device=device_obj)
             if self.algorithm in ['ppo', 'a2c']:
-                dummy_features = policy.policy.mlp_extractor.forward_actor(dummy_obs)
+                dummy_features = policy.policy.features_extractor(dummy_obs)
+                dummy_latent = policy.policy.mlp_extractor.forward_actor(dummy_features)
             elif self.algorithm in ['sac', 'td3']:
-                dummy_features = policy.critic.features_extractor(dummy_obs)
+                dummy_features = policy.actor.features_extractor(dummy_obs)
+                dummy_latent = policy.actor.latent_pi(dummy_features)
             else:
                 raise ValueError(f"Unsupported algorithm for representation extraction: {self.algorithm}")
 
-        super().__init__(normalize=normalize, repr_dim=dummy_features.shape[-1], obs_dim=obs_dim)
+        super().__init__(normalize=normalize, repr_dim=dummy_latent.shape[-1], obs_dim=obs_dim)
 
         if self.algorithm in ['ppo', 'a2c']:
-            self.repr_net = policy.policy.mlp_extractor.policy_net
+            self.features_extractor = policy.policy.features_extractor
+            self.repr_net = policy.policy.mlp_extractor
         elif self.algorithm in ['sac', 'td3']:
-            self.repr_net = policy.critic.features_extractor
+            self.features_extractor = policy.actor.features_extractor
+            self.repr_net = policy.actor.latent_pi
 
         for param in self.repr_net.parameters():
             param.requires_grad = False
         self.repr_net.eval()
 
+        if self.features_extractor is not None:
+            for param in self.features_extractor.parameters():
+                param.requires_grad = False
+            self.features_extractor.eval()
+
     def _forward(self, observations: torch.Tensor) -> torch.Tensor:
         with torch.no_grad():
             if self.algorithm in ['ppo', 'a2c']:
-                features = self.policy.policy.mlp_extractor.forward_actor(observations)
+                extracted_features = self.features_extractor(observations)
+                features = self.repr_net.forward_actor(extracted_features)
             elif self.algorithm in ['sac', 'td3']:
-                features = self.repr_net(observations)
+                extracted_features = self.features_extractor(observations)
+                features = self.repr_net(extracted_features)
             else:
                 raise ValueError(f"Unsupported algorithm: {self.algorithm}")
 
