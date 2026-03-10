@@ -50,6 +50,12 @@ class LeastSquaresTDEstimator(LeastSquaresEstimator):
         gamma_mask = self.discount_factor * (1.0 - dones)
         features_diff = features - gamma_mask * next_features
 
+        # Debug: Check feature similarity and magnitude
+        features_norm = torch.norm(features, dim=1).mean().item()
+        features_diff_norm = torch.norm(features_diff, dim=1).mean().item()
+        cosine_sim = torch.nn.functional.cosine_similarity(features, next_features, dim=1).mean().item()
+        print(f"[LSTD DEBUG] Features: {features_norm:.4f}, Diff: {features_diff_norm:.4f}, Ratio: {features_diff_norm/features_norm:.4f}, Cosine: {cosine_sim:.4f}")
+
         self.A = self.A + features.T @ features_diff
         self.b = self.b + features.T @ rewards
 
