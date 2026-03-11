@@ -482,7 +482,7 @@ uv run -m src.run_all_estimators --config config.yaml --mode sequential --overwr
 
 - **Classic Control**: CartPole-v1, Acrobot-v1, MountainCar-v0
 - **Atari**: ALE/Pong-v5, ALE/Breakout-v5 (requires `gymnasium[atari,accept-rom-license]`)
-- **MuJoCo**: HalfCheetah-v4, Hopper-v4, Walker2d-v4 (requires `gymnasium[mujoco]`)
+- **MuJoCo**: HalfCheetah-v5, Hopper-v5, Walker2d-v5, Ant-v5, Humanoid-v5 (requires `gymnasium[mujoco]`)
 - Any Gymnasium-compatible environment
 
 ## Key Dependencies

@@ -1,4 +1,4 @@
-# Humanoid-v4 experiment configuration
+# Humanoid-v5 experiment configuration
 # Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: humanoid_baseline
@@ -6,7 +6,8 @@ seed: 42
 data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
-  name: Humanoid-v4
+  name: Humanoid-v5
+  reset_noise_scale: 0.04  # Noise scale for initial state (default: 0.01)
 policy:
   algorithm: PPO
   total_timesteps: 20000000

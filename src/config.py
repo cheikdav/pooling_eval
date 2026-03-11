@@ -50,6 +50,7 @@ def resolve_param_for_episodes(param_value: Union[Any, Dict], num_episodes: int)
 class EnvironmentConfig:
     name: str
     max_episode_steps: Optional[int] = None
+    reset_noise_scale: Optional[float] = None  # Noise scale for MuJoCo environment resets (default: 0.01 in MuJoCo)
 
 
 @dataclass
@@ -252,7 +253,7 @@ class LoggingConfig:
         """Get environment-specific W&B project name.
 
         Args:
-            env_name: Full environment name (e.g., "CartPole-v1", "Hopper-v4")
+            env_name: Full environment name (e.g., "CartPole-v1", "Hopper-v5")
 
         Returns:
             Project name in format: {base_project}-{simplified_env_name}

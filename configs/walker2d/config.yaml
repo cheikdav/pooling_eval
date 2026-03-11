@@ -1,4 +1,4 @@
-# Walker2d-v4 experiment configuration
+# Walker2d-v5 experiment configuration
 # Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: walker2d_baseline
@@ -6,8 +6,9 @@ seed: 42
 data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
-  name: Walker2d-v4
+  name: Walker2d-v5
   max_episode_steps: 3000
+  reset_noise_scale: 0.02  # Noise scale for initial state (default: 0.01)
 policy:
   algorithm: SAC
   total_timesteps: 1000000

@@ -29,7 +29,7 @@ ESTIMATOR_CLASSES = {
 }
 
 
-def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_episode_steps: int = None) -> Callable:
+def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_episode_steps: int = None, reset_noise_scale: float = None) -> Callable:
     """Create a factory function for environment creation.
 
     Args:
@@ -37,12 +37,19 @@ def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_e
         use_monitor: Whether to wrap environment with Monitor for tracking episode statistics
         seed: Random seed for this environment instance
         max_episode_steps: Maximum number of steps per episode (None = use default)
+        reset_noise_scale: Noise scale for MuJoCo environment resets (None = use MuJoCo default of 0.01)
 
     Returns:
         Function that creates and returns the environment
     """
     def _make():
-        env = gym.make(env_name, max_episode_steps=max_episode_steps)
+        env_kwargs = {}
+        if max_episode_steps is not None:
+            env_kwargs['max_episode_steps'] = max_episode_steps
+        if reset_noise_scale is not None:
+            env_kwargs['reset_noise_scale'] = reset_noise_scale
+
+        env = gym.make(env_name, **env_kwargs)
         if use_monitor:
             env = Monitor(env)
         if seed is not None:
@@ -75,7 +82,13 @@ def create_vec_env(
         seed = config.seed
 
     env_fns = [
-        make_env_fn(config.environment.name, use_monitor, seed + i, config.environment.max_episode_steps)
+        make_env_fn(
+            config.environment.name,
+            use_monitor,
+            seed + i,
+            config.environment.max_episode_steps,
+            config.environment.reset_noise_scale
+        )
         for i in range(n_envs)
     ]
     env = SubprocVecEnv(env_fns, start_method='fork')
