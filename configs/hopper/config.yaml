@@ -7,9 +7,10 @@ data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Hopper-v4
+  max_episode_steps: 3000
 policy:
   algorithm: SAC
-  total_timesteps: 1000000
+  total_timesteps: 300000
   learning_rate: 0.0003
   batch_size: 256
   gamma: 0.99
@@ -25,13 +26,13 @@ policy:
     - 256
   use_vec_normalize: false
 data_generation:
-  n_batches: 100
-  episodes_per_batch: 1000
+  n_batches: 40
+  episodes_per_batch: 100
   deterministic_policy: false
   n_envs: 128
-  tuning_episodes: 1000
-  validation_episodes_per_batch: 300
-  eval_episodes: 1000
+  tuning_episodes: 100
+  validation_episodes_per_batch: 40
+  eval_episodes: 100
 value_estimators:
   training:
     max_epochs: 30000
@@ -42,21 +43,22 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
-        - 30
-        - 100
-        - 300
-        - 750
-        - 1000
+       - 1
+       - 5
+       - 10
+       - 25
+       - 50
+       - 100
 
   methods:
-  - least_squares_mc
-  - least_squares_td
+  #- least_squares_mc
+  #- least_squares_td
   - least_squares_mc_rbf
   - least_squares_td_rbf
-  - monte_carlo
-  - dqn
-  - nnls_mc
-  - nnls_td
+  #- monte_carlo
+  #- dqn
+  #- nnls_mc
+  #- nnls_td
 network:
   hidden_sizes:
   - 256

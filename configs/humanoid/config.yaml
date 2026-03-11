@@ -34,13 +34,13 @@ policy:
   normalize_obs: true
   normalize_reward: false
 data_generation:
-  n_batches: 80
-  episodes_per_batch: 600
+  n_batches: 40
+  episodes_per_batch: 100
   deterministic_policy: false
   n_envs: 128
-  tuning_episodes: 400
-  validation_episodes_per_batch: 100
-  eval_episodes: 600
+  tuning_episodes: 100
+  validation_episodes_per_batch: 30
+  eval_episodes: 100
 value_estimators:
   training:
     max_epochs: 100000
@@ -51,11 +51,12 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
+    - 1
+    - 5
+    - 10
+    - 25
     - 50
     - 100
-    - 200
-    - 400
-    - 600
   methods:
   - monte_carlo
   - dqn

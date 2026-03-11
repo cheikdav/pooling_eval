@@ -7,6 +7,7 @@ data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
   name: CartPole-v1
+  max_episode_steps: 2000
 policy:
   algorithm: PPO
   total_timesteps: 10000
@@ -22,13 +23,13 @@ policy:
   vf_coef: 0.5
   n_envs: 4
 data_generation:
-  n_batches: 80
-  episodes_per_batch: 1000
+  n_batches: 40
+  episodes_per_batch: 100
   deterministic_policy: false
   n_envs: 64
-  tuning_episodes: 1000
-  validation_episodes_per_batch: 200
-  eval_episodes: 400
+  tuning_episodes: 100
+  validation_episodes_per_batch: 30
+  eval_episodes: 100
 value_estimators:
   training:
     max_epochs: 80000
@@ -38,12 +39,12 @@ value_estimators:
     eval_frequency: 10
     gamma: 0.99
     episode_subsets:
+    - 1
+    - 5
+    - 10
     - 25
     - 50
     - 100
-    - 250
-    - 500
-    - 1000
     shuffle_frequency: 100
   methods:
   - monte_carlo
