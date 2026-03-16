@@ -8,10 +8,10 @@ results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Ant-v5
   max_episode_steps: 3000
-  reset_noise_scale: 0.3  # Noise scale for initial state (default: 0.01)
+  reset_noise_scale: 0.2
 policy:
   algorithm: SAC
-  total_timesteps: 1000000
+  total_timesteps: 500000
   learning_rate: 0.0003
   batch_size: 256
   gamma: 0.99
@@ -74,5 +74,5 @@ logging:
 paired_state:
   enabled: true
   n_pairs: 100
-  n_trajectories_per_state: 50
+  n_trajectories_per_state: 800
   seed: 43
