@@ -238,12 +238,16 @@ def train_single_estimator(
     batch_size_raw = method_config.batch_size if (method_config and method_config.batch_size is not None) else training_config.batch_size
     batch_size = resolve_param_for_episodes(batch_size_raw, num_episodes)
 
-    # Pre-training pass to initialize normalizer
+    # Pre-training pass to initialize normalizer and accumulate reward statistics
     print("Running pre-training pass to initialize normalizer...")
     pre_train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     for mini_batch in pre_train_dataloader:
         estimator.pre_training_pass(mini_batch)
 
+    reward_centering = config.value_estimators.training.reward_centering
+    estimator.finalize_pre_training(reward_centering)
+    if reward_centering:
+        print(f"Reward centering enabled: mean_reward={estimator.mean_reward:.6f}, offset={estimator.reward_offset:.6f}")
     print("Normalizer initialized and frozen.")
 
     # Cache features to avoid recomputation during training

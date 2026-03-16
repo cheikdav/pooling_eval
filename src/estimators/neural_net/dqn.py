@@ -54,14 +54,16 @@ class DQNEstimator(NeuralNetEstimator):
 
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         next_features = feature_batch['next_features']
-        rewards = feature_batch['rewards']
+        rewards = feature_batch['rewards'] - self.mean_reward
         dones = feature_batch['dones']
 
         self.target_net.eval()
 
         with torch.no_grad():
             next_values = self.target_net(next_features).squeeze(-1)
-            targets = rewards + self.discount_factor * next_values * (1 - dones)
+            # Terminal value: -mean_reward/(1-gamma) under reward centering, 0 otherwise
+            terminal_value = -self.reward_offset
+            targets = rewards + self.discount_factor * (next_values * (1 - dones) + dones * terminal_value)
 
         return targets
 

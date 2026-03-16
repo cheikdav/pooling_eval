@@ -25,7 +25,7 @@ class MonteCarloEstimator(NeuralNetEstimator):
         return returns
 
     def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        return feature_batch['mc_returns']
+        return feature_batch['mc_returns'] - self.reward_offset
 
     def get_config(self) -> Dict:
         config = super().get_config()

@@ -103,6 +103,7 @@ class ValueEstimatorTrainingConfig:
     episode_subsets: Optional[List[int]] = None
     shuffle_frequency: int = 100  # Re-shuffle DataLoader every N epochs (0 = never, 1 = every epoch)
     truncation_coefficient: float = 10.0  # Discard last truncation_coefficient/(1-gamma) states from each episode
+    reward_centering: bool = False  # Subtract mean reward from all rewards (for NN methods)
 
 
 class FeatureExtractorType(str, Enum):

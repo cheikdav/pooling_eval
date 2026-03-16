@@ -55,6 +55,9 @@ class ValueEstimator(ABC):
         self.obs_dim = obs_dim
         self.discount_factor = discount_factor
         self.feature_extractor = feature_extractor
+        self.mean_reward = 0.0
+        self._reward_sum = 0.0
+        self._reward_count = 0
 
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -63,6 +66,11 @@ class ValueEstimator(ABC):
 
         self.feature_extractor.to(self.device)
         self.training_step = 0
+
+    @property
+    def reward_offset(self) -> float:
+        """Offset to add to centered predictions to recover true values: mean_reward / (1 - gamma)."""
+        return self.mean_reward / (1 - self.discount_factor) if self.mean_reward != 0.0 else 0.0
 
     @classmethod
     @abstractmethod
@@ -93,13 +101,14 @@ class ValueEstimator(ABC):
         """Pre-training pass over a batch of data for initialization.
 
         This should be called once before training on the full training dataset.
-        It performs initialization tasks like updating normalizer statistics.
+        It performs initialization tasks like updating normalizer statistics
+        and accumulating reward statistics for reward centering.
 
         Sets feature_extractor to training mode to enable normalizer updates.
         After all pre_training_pass calls, feature_extractor should be set to eval mode.
 
         Args:
-            mini_batch: Dictionary containing observations
+            mini_batch: Dictionary containing observations and rewards
         """
         self.eval()  # Set estimator to eval mode
         self.feature_extractor.train()  # Set feature extractor to training mode for normalizer updates
@@ -109,6 +118,20 @@ class ValueEstimator(ABC):
             # Extract features to update normalizer (only from obs, not next_obs)
             self.feature_extractor(obs)
         self.feature_extractor.eval()
+
+        # Accumulate reward statistics for reward centering
+        rewards = mini_batch['rewards']
+        self._reward_sum += rewards.sum().item()
+        self._reward_count += len(rewards)
+
+    def finalize_pre_training(self, reward_centering: bool = False):
+        """Finalize pre-training: compute mean_reward from accumulated stats.
+
+        Args:
+            reward_centering: If True, set mean_reward from accumulated reward statistics.
+        """
+        if reward_centering and self._reward_count > 0:
+            self.mean_reward = self._reward_sum / self._reward_count
 
     def cache_features_in_dataset(self, dataset, batch_size: int = 1024):
         """Extract and cache features for entire dataset to avoid recomputation.
@@ -182,12 +205,14 @@ class ValueEstimator(ABC):
     def predict(self, observations: np.ndarray, features: torch.Tensor = None) -> np.ndarray:
         """Extract features from observations then call _predict().
 
+        Adds reward_offset to convert centered predictions back to true values.
+
         Args:
             observations: Observation array
             features: Optional pre-computed features. If provided, skips feature extraction.
 
         Returns:
-            Predicted values
+            Predicted values (uncentered, i.e. true value estimates)
         """
         self.eval()
 
@@ -200,7 +225,7 @@ class ValueEstimator(ABC):
                 features = self.feature_extractor(obs)
             else:
                 features = features.to(self.device)
-            return self._predict(features)
+            return self._predict(features) + self.reward_offset
 
     @abstractmethod
     def _predict(self, features: torch.Tensor) -> np.ndarray:
@@ -226,6 +251,7 @@ class ValueEstimator(ABC):
             'training_step': self.training_step,
             'obs_dim': self.obs_dim,
             'discount_factor': self.discount_factor,
+            'mean_reward': self.mean_reward,
         }
 
     def save(self, path: Path):
@@ -237,6 +263,7 @@ class ValueEstimator(ABC):
         """Load state from checkpoint dictionary. Subclasses override to load extra fields."""
         self.feature_extractor.load_state_dict(checkpoint['feature_extractor_state_dict'])
         self.training_step = checkpoint['training_step']
+        self.mean_reward = checkpoint.get('mean_reward', 0.0)
 
     def load(self, path: Path):
         """Load estimator from disk."""

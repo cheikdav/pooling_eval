@@ -102,7 +102,8 @@ class NeuralNetEstimator(ValueEstimator):
 
         with torch.no_grad():
             mae = torch.abs(values - targets).mean().item()
-            mc_loss = nn.functional.mse_loss(values, mc_returns).item()
+            # mc_returns are uncentered; network outputs centered values
+            mc_loss = nn.functional.mse_loss(values, mc_returns - self.reward_offset).item()
 
         self.training_step += 1
 
