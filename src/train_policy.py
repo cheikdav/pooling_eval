@@ -77,6 +77,32 @@ class WandbCallback(BaseCallback):
         return True
 
 
+def verify_saved_policy(model, model_path, AlgorithmClass, n_samples=5):
+    """Load saved policy and verify weights and outputs match the original."""
+    print("Verifying saved policy...")
+    loaded = AlgorithmClass.load(model_path)
+
+    orig_state = model.policy.state_dict()
+    loaded_state = loaded.policy.state_dict()
+    weights_match = set(orig_state.keys()) == set(loaded_state.keys()) and all(
+        torch.allclose(orig_state[k], loaded_state[k]) for k in orig_state
+    )
+
+    obs = np.array([model.observation_space.sample() for _ in range(n_samples)])
+    with torch.no_grad():
+        orig_actions, _ = model.predict(obs, deterministic=True)
+        loaded_actions, _ = loaded.predict(obs, deterministic=True)
+    outputs_match = np.allclose(orig_actions, loaded_actions)
+
+    if weights_match and outputs_match:
+        print("Policy verification passed: weights and outputs match")
+    else:
+        if not weights_match:
+            print("Policy verification FAILED: weights differ!")
+        if not outputs_match:
+            print(f"Policy verification FAILED: outputs differ!\n  orig={orig_actions}\n  loaded={loaded_actions}")
+
+
 def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = True):
     """Train a policy using Stable Baselines 3.
 
@@ -209,6 +235,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     model_path = output_dir / "policy_final.zip"
     model.save(model_path)
     print(f"\nPolicy saved to {model_path}")
+    verify_saved_policy(model, model_path, AlgorithmClass)
 
     if config.policy.use_vec_normalize:
         vec_normalize_path = output_dir / "vec_normalize.pkl"
