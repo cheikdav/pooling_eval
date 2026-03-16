@@ -4,7 +4,6 @@ import argparse
 import json
 import numpy as np
 from pathlib import Path
-from stable_baselines3 import PPO, A2C, SAC, TD3
 from tqdm import tqdm
 from typing import Dict, List, Tuple
 import gymnasium as gym
@@ -13,15 +12,7 @@ import multiprocessing as mp
 from functools import partial
 
 from src.config import ExperimentConfig
-from src.env_utils import create_vec_env
-
-
-ALGORITHM_MAP = {
-    "PPO": PPO,
-    "A2C": A2C,
-    "SAC": SAC,
-    "TD3": TD3,
-}
+from src.env_utils import ALGORITHM_MAP, create_vec_env
 
 
 def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool = False,

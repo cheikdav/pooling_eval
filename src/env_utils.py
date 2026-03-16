@@ -2,6 +2,7 @@
 
 import gymnasium as gym
 from pathlib import Path
+from stable_baselines3 import PPO, A2C, SAC, TD3
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
 from typing import Tuple, Callable
@@ -12,6 +13,14 @@ from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTD
 
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='gymnasium')
+
+ALGORITHM_MAP = {
+    "PPO": PPO,
+    "A2C": A2C,
+    "SAC": SAC,
+    "TD3": TD3,
+}
+
 # Centralized mapping from method names to estimator classes
 # Handles all method name variations including RBF and NNLS variants
 ESTIMATOR_CLASSES = {

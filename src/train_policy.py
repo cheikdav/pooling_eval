@@ -4,21 +4,12 @@ import argparse
 import json
 import numpy as np
 from pathlib import Path
-from stable_baselines3 import PPO, A2C, SAC, TD3
 from stable_baselines3.common.callbacks import CheckpointCallback, BaseCallback
 import torch
 import wandb
 
 from src.config import ExperimentConfig
-from src.env_utils import create_vec_env
-
-
-ALGORITHM_MAP = {
-    "PPO": PPO,
-    "A2C": A2C,
-    "SAC": SAC,
-    "TD3": TD3,
-}
+from src.env_utils import ALGORITHM_MAP, create_vec_env
 
 ACTIVATION_FN_MAP = {
     "relu": torch.nn.ReLU,

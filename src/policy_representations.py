@@ -3,15 +3,8 @@
 import torch
 import torch.nn as nn
 from pathlib import Path
-from stable_baselines3 import PPO, A2C, SAC, TD3
 
-
-ALGORITHM_MAP = {
-    "PPO": PPO,
-    "A2C": A2C,
-    "SAC": SAC,
-    "TD3": TD3,
-}
+from src.env_utils import ALGORITHM_MAP
 
 
 class PolicyRepresentationExtractor(nn.Module):
