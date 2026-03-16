@@ -56,7 +56,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     stats_dict_single = {}
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods:
-            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant)
+            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
             # Apply data filters
             stats = apply_data_filters(stats, filter_high_variance, filter_extreme_mean)
             stats_dict_single[row['method']] = stats
@@ -67,7 +67,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
 
     # Compute ground truth stats once for all methods (used by ground_truth_error metric)
     ground_truth_stats = None
-    if metric_key == 'ground_truth_error':
+    if metric_key in ('ground_truth_error', 'ground_truth_error_squared', 'mse', 'bias_variance_decomposition'):
         # Get results_dir and gamma from any method's stats
         first_method_stats = next(iter(stats_dict_single.values()))
         if 'results_dir' in first_method_stats.columns:
@@ -94,8 +94,51 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         temporal_p=temporal_p
     )
 
+    # Special handling for bias-variance decomposition
+    if metric_key == 'bias_variance_decomposition':
+        from common import get_method_display_name
+        from metrics import compute_variance, compute_ground_truth_error_squared, compute_mse
+        import plotly.express as px
+
+        sub_metrics = [
+            ('Variance', compute_variance),
+            ('Bias²', compute_ground_truth_error_squared),
+            ('MSE', compute_mse),
+        ]
+
+        col1, col2, col3 = st.columns(3)
+        for col, (name, compute_fn) in zip([col1, col2, col3], sub_metrics):
+            with col:
+                metric_list = []
+                for method in methods:
+                    if method not in stats_dict_single:
+                        continue
+                    metric_df = compute_fn(context, method)
+                    if not metric_df.empty:
+                        metric_df = metric_df.copy()
+                        metric_df['method'] = get_method_display_name(method)
+                        metric_list.append(metric_df)
+
+                if metric_list:
+                    combined = pd.concat(metric_list, ignore_index=True)
+                    fig = px.histogram(
+                        combined, x='metric_value', color='method',
+                        nbins=40, opacity=0.7, barmode='overlay',
+                        title=f"{name} ({selected_n_ep} episodes)",
+                        labels={'metric_value': name}
+                    )
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, width='stretch')
+
+                    summary = combined.groupby('method')['metric_value'].agg(
+                        mean='mean', std='std'
+                    ).reset_index()
+                    st.dataframe(summary, width='stretch', hide_index=True)
+                else:
+                    st.warning(f"No data for {name}")
+
     # Special handling for batch_constants metric
-    if metric_key == 'batch_constants':
+    elif metric_key == 'batch_constants':
         from common import compute_all_batch_constants, get_method_display_name
         import plotly.express as px
 
@@ -123,14 +166,14 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
                 )
 
                 fig.update_layout(height=500)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             with col2:
                 st.markdown("**Statistics**")
                 summary = constants_df.groupby('method_display')['constant'].agg(
                     mean='mean', std='std'
                 ).reset_index()
-                st.dataframe(summary, use_container_width=True, hide_index=True)
+                st.dataframe(summary, width='stretch', hide_index=True)
     else:
         plot_metric_for_single_episodes(context, metric_key)
 
@@ -139,8 +182,20 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     # Section 2: Evolution across training sizes
     st.subheader("Evolution Across Training Sizes")
 
+    # Special handling for bias-variance decomposition evolution
+    if metric_key == 'bias_variance_decomposition':
+        sub_metric_keys = ['variance', 'ground_truth_error_squared', 'mse']
+        sub_metric_names = ['Variance', 'Bias²', 'MSE']
+        col1, col2, col3 = st.columns(3)
+        for col, sub_key, sub_name in zip([col1, col2, col3], sub_metric_keys, sub_metric_names):
+            with col:
+                plot_metric_evolution(
+                    filtered_metadata, sub_key, methods, baseline_method,
+                    n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p, adjust_constant
+                )
+
     # Special handling for batch_constants metric in evolution
-    if metric_key == 'batch_constants':
+    elif metric_key == 'batch_constants':
         from common import compute_all_batch_constants, get_method_display_name
         import plotly.graph_objects as go
 
@@ -187,7 +242,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
 
             fig.add_hline(y=0, line_dash="dash", line_color="red", opacity=0.5)
 
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.warning("No ground truth data available to compute adjustment constants")
     else:

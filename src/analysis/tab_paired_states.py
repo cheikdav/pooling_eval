@@ -7,13 +7,192 @@ import plotly.express as px
 import numpy as np
 from pathlib import Path
 
-from common import get_method_display_name, sort_methods, _get_ground_truth_mean, filter_states_far_from_truncation
+from common import get_method_display_name, sort_methods, compute_batch_constants
 
 
 def sort_predictions(predictions_data):
     """Sort predictions_data dict by METHOD_ORDER, unknown methods go last."""
     ordered = sort_methods(predictions_data.keys())
     return {m: predictions_data[m] for m in ordered}
+
+
+def load_paired_inputs_for_n_episodes(filtered_metadata, methods, n_episodes, adjust_constant=False):
+    """Load paired ground-truth data and paired predictions for one training size."""
+    filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == n_episodes]
+    if filtered_for_n_ep.empty:
+        return None, {}
+
+    first_row = filtered_for_n_ep.iloc[0]
+    results_dir = Path(first_row['predictions_path']).parents[2]
+    paired_states_file = results_dir.parent / "data" / "paired_states.npz"
+
+    if not paired_states_file.exists():
+        return None, {}
+
+    paired_data = np.load(paired_states_file, allow_pickle=True)
+
+    predictions_data = {}
+    for _, row in filtered_for_n_ep.iterrows():
+        if row['method'] not in methods:
+            continue
+
+        method = row['method']
+        predictions_path = Path(row['predictions_path'])
+        paired_predictions_path = predictions_path.parent / "paired_predictions.parquet"
+
+        if not paired_predictions_path.exists():
+            continue
+
+        pred_df = pd.read_parquet(paired_predictions_path)
+
+        if adjust_constant:
+            results_dir_str = str(predictions_path.parent.parent.parent)
+            gamma = row.get('policy_gamma', 0.99)
+            truncation_coefficient = row.get('truncation_coefficient', 10.0)
+
+            regular_df = pd.read_parquet(predictions_path)
+            batch_constants = compute_batch_constants(regular_df, results_dir_str, gamma, truncation_coefficient)
+            print(f"[DEBUG adjust_constant paired] method={method}, batch_constants={'None' if batch_constants is None else f'{len(batch_constants)} batches'}")
+
+            if batch_constants is not None:
+                s1_before = pred_df['s1_predicted'].mean()
+                constants_series = pred_df['batch_name'].map(batch_constants)
+                mask = constants_series.notna()
+                pred_df = pred_df.copy()
+                pred_df.loc[mask, 's1_predicted'] += constants_series[mask]
+                pred_df.loc[mask, 's2_predicted'] += constants_series[mask]
+                print(f"[DEBUG adjust_constant paired] method={method}, s1_mean BEFORE={s1_before:.4f}, AFTER={pred_df['s1_predicted'].mean():.4f}, matched={mask.sum()}/{len(mask)}")
+            else:
+                print(f"[DEBUG adjust_constant paired] SKIPPED: ground truth not found")
+
+        predictions_data[method] = pred_df
+
+    return paired_data, predictions_data
+
+
+def _compute_metric_values_full_mode(pred_df, paired_data, metric_name):
+    """Compute per-state metric values for full mode."""
+    if metric_name == 'MSE':
+        pair_indices = pred_df['pair_idx'].to_numpy(dtype=int)
+        s1_gt = paired_data['s1_mean'][pair_indices]
+        s2_gt = paired_data['s2_mean'][pair_indices]
+
+        s1_sq_err = (pred_df['s1_predicted'].to_numpy() - s1_gt) ** 2
+        s2_sq_err = (pred_df['s2_predicted'].to_numpy() - s2_gt) ** 2
+
+        s1_state_mse = pd.Series(s1_sq_err).groupby(pred_df['pair_idx']).mean().values
+        s2_state_mse = pd.Series(s2_sq_err).groupby(pred_df['pair_idx']).mean().values
+        return np.concatenate([s1_state_mse, s2_state_mse])
+
+    if metric_name == 'Squared Bias':
+        avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
+        s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
+        s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
+        return np.concatenate([s1, s2])
+
+    s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
+    s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
+    return np.concatenate([s1, s2])
+
+
+def _compute_metric_values_difference_mode(pred_df, diff_means, metric_name):
+    """Compute per-pair metric values for difference mode."""
+    if metric_name == 'MSE':
+        pair_indices = pred_df['pair_idx'].to_numpy(dtype=int)
+        diff_gt = diff_means[pair_indices]
+        sq_err = (pred_df['diff_predicted'].to_numpy() - diff_gt) ** 2
+        return pd.Series(sq_err).groupby(pred_df['pair_idx']).mean().values
+
+    if metric_name == 'Squared Bias':
+        avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
+        return (avg_pred - diff_means) ** 2
+
+    return pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).values
+
+
+def plot_paired_log_metric_evolution(filtered_metadata, methods, adjust_constant=False, mode='full', scale_mode='log'):
+    """Plot evolution of mean metrics across training sizes for paired evaluations."""
+    n_episodes_values = sorted(filtered_metadata['n_episodes'].unique())
+    if scale_mode == 'log':
+        metric_specs = [
+            ('MSE', 'Mean log10(MSE)'),
+            ('Squared Bias', 'Mean log10(Bias²)'),
+            ('Variance', 'Mean log10(Variance)'),
+        ]
+    else:
+        metric_specs = [
+            ('MSE', 'Mean MSE'),
+            ('Squared Bias', 'Mean Bias²'),
+            ('Variance', 'Mean Variance'),
+        ]
+
+    records = []
+    for n_ep in n_episodes_values:
+        paired_data, predictions_data = load_paired_inputs_for_n_episodes(
+            filtered_metadata, methods, n_ep, adjust_constant=adjust_constant
+        )
+        if paired_data is None or not predictions_data:
+            continue
+
+        for method, pred_df in sort_predictions(predictions_data).items():
+            for metric_name, _ in metric_specs:
+                if mode == 'full':
+                    values = _compute_metric_values_full_mode(pred_df, paired_data, metric_name)
+                else:
+                    values = _compute_metric_values_difference_mode(pred_df, paired_data['diff_mean'], metric_name)
+
+                if len(values) == 0:
+                    continue
+
+                if scale_mode == 'log':
+                    transformed_values = np.log10(values + 1e-10)
+                else:
+                    transformed_values = values
+
+                records.append({
+                    'Method': get_method_display_name(method),
+                    'n_episodes': n_ep,
+                    'metric': metric_name,
+                    'mean_value': float(np.mean(transformed_values)),
+                    'stderr': float(np.std(transformed_values) / np.sqrt(len(transformed_values)))
+                })
+
+    if not records:
+        st.warning("No paired data available to plot metric evolution across training sizes.")
+        return
+
+    evolution_df = pd.DataFrame(records)
+    cols = st.columns(3)
+
+    for col, (metric_name, y_label) in zip(cols, metric_specs):
+        with col:
+            fig = go.Figure()
+            metric_df = evolution_df[evolution_df['metric'] == metric_name]
+
+            for method in sort_methods(methods):
+                method_display = get_method_display_name(method)
+                method_data = metric_df[metric_df['Method'] == method_display]
+                if method_data.empty:
+                    continue
+
+                fig.add_trace(go.Scatter(
+                    x=method_data['n_episodes'],
+                    y=method_data['mean_value'],
+                    error_y=dict(type='data', array=method_data['stderr']),
+                    mode='lines+markers',
+                    name=method_display,
+                    marker=dict(size=8)
+                ))
+
+            fig.update_layout(
+                title=y_label,
+                xaxis_title="Training Episodes",
+                yaxis_title=f"{y_label} (± stderr)",
+                height=380,
+                hovermode='x unified',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, width='stretch')
 
 
 def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=False):
@@ -38,6 +217,14 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         help="Full: evaluate V(s) for each state independently | Difference: evaluate V(s₁) - V(s₂) for pairs"
     )
 
+    scale_mode = st.radio(
+        "Scale Mode:",
+        options=['log', 'normal'],
+        format_func=lambda x: 'Log Scale' if x == 'log' else 'Normal Scale',
+        horizontal=True,
+        key='paired_scale_mode'
+    )
+
     st.markdown("---")
 
     # Training size selection
@@ -56,79 +243,13 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         st.error(f"No data for {selected_n_ep} episodes")
         return
 
-    # Get results directory from predictions path
-    first_row = filtered_for_n_ep.iloc[0]
-    results_dir = Path(first_row['predictions_path']).parents[2]
+    paired_data, predictions_data = load_paired_inputs_for_n_episodes(
+        filtered_metadata, methods, selected_n_ep, adjust_constant=adjust_constant
+    )
 
-    # Load paired states ground truth
-    paired_states_file = results_dir.parent / "data" / "paired_states.npz"
-
-    if not paired_states_file.exists():
+    if paired_data is None:
         st.warning(f"No paired state data found. Generate it with: `uv run -m src.generate_data --config <config> --generate-paired`")
         return
-
-    paired_data = np.load(paired_states_file, allow_pickle=True)
-
-    # Load paired predictions from each method
-    predictions_data = {}
-    results_dir = None
-    mean_ground_truth = None
-
-    for _, row in filtered_for_n_ep.iterrows():
-        if row['method'] in methods:
-            method = row['method']
-            predictions_path = Path(row['predictions_path'])
-
-            # Try to load paired predictions
-            paired_predictions_path = predictions_path.parent / "paired_predictions.parquet"
-
-            if paired_predictions_path.exists():
-                # Load paired predictions
-                pred_df = pd.read_parquet(paired_predictions_path)
-
-                # Apply constant adjustment if requested
-                if adjust_constant:
-                    # Get ground truth mean (cached, computed once) with truncation filtering
-                    if results_dir is None:
-                        results_dir = str(predictions_path.parent.parent.parent)
-                        # Get gamma from metadata
-                        gamma = row.get('policy_gamma', 0.99)
-                        truncation_coefficient = row.get('truncation_coefficient', 10.0)
-                        mean_ground_truth = _get_ground_truth_mean(results_dir, gamma=gamma,
-                                                                   truncation_coefficient=truncation_coefficient,
-                                                                   filter_truncation=True)
-
-                    if mean_ground_truth is not None:
-                        # Load regular predictions to compute batch constants
-                        regular_predictions_path = predictions_path
-                        regular_df = pd.read_parquet(regular_predictions_path)
-
-                        # Compute constant for each batch (using only states far from truncation)
-                        batch_constants = {}
-                        for batch_name, batch_df in regular_df.groupby('batch_name'):
-                            # Filter to states far from truncation
-                            batch_df_filtered = filter_states_far_from_truncation(batch_df, gamma, truncation_coefficient)
-                            if len(batch_df_filtered) > 0:
-                                mean_batch = batch_df_filtered['predicted_value'].mean()
-                                batch_constants[batch_name] = mean_ground_truth - mean_batch
-
-                        # Apply constants to paired predictions
-                        def adjust_batch(batch_df):
-                            batch_name = batch_df['batch_name'].iloc[0]
-                            if batch_name in batch_constants:
-                                constant = batch_constants[batch_name]
-                                batch_df = batch_df.copy()
-                                batch_df['s1_predicted'] = batch_df['s1_predicted'] + constant
-                                batch_df['s2_predicted'] = batch_df['s2_predicted'] + constant
-                                # diff_predicted remains unchanged (constant cancels out in difference)
-                            return batch_df
-
-                        pred_df = pred_df.groupby('batch_name', group_keys=False).apply(adjust_batch)
-
-                predictions_data[method] = pred_df
-            else:
-                # No paired predictions available for this method
-                pass
 
     if not predictions_data:
         st.warning("No paired prediction data available yet. Run evaluation to generate paired predictions: `uv run -m src.evaluate --config <config>`")
@@ -136,12 +257,12 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         # Still show ground truth statistics even without predictions
 
     if mode == 'full':
-        render_full_dataset_mode(paired_data, predictions_data, methods, selected_n_ep)
+        render_full_dataset_mode(paired_data, predictions_data, methods, selected_n_ep, filtered_metadata, adjust_constant, scale_mode)
     else:
-        render_difference_mode(paired_data, predictions_data, methods, selected_n_ep)
+        render_difference_mode(paired_data, predictions_data, methods, selected_n_ep, filtered_metadata, adjust_constant, scale_mode)
 
 
-def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes):
+def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes, filtered_metadata, adjust_constant, scale_mode):
     """Render full dataset mode: V(s) for each state independently."""
 
     st.subheader("Individual State Evaluation")
@@ -182,7 +303,7 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
         yaxis_title="Count",
         height=400
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # CI width distribution
     ci_widths = all_gt_ci_upper - all_gt_ci_lower
@@ -200,7 +321,7 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
         yaxis_title="Count",
         height=400
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # If we have predictions, show evaluation metrics
     if predictions_data:
@@ -227,66 +348,78 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
         st.dataframe(metrics_df.style.format({
             'MSE': '{:.4f}',
             'MAE': '{:.4f}',
-        }), use_container_width=True)
+        }), width='stretch')
 
-        # Histograms: per-state MSE, squared bias, variance distributions (log scale)
-        for metric_name, title, log_col_name in [
-            ('MSE', 'Per-State MSE Distribution (Log Scale)', 'log10(MSE)'),
-            ('Squared Bias', 'Per-State Squared Bias Distribution (Log Scale)', 'log10(Squared Bias)'),
-            ('Variance', 'Per-State Variance Distribution (Log Scale)', 'log10(Variance)'),
-        ]:
+        # Histograms: per-state MSE, squared bias, variance distributions
+        metric_specs = [
+            ('MSE', 'Per-State MSE Distribution'),
+            ('Squared Bias', 'Per-State Squared Bias Distribution'),
+            ('Variance', 'Per-State Variance Distribution'),
+        ]
+        for metric_name, base_title in metric_specs:
+            scale_suffix = ' (Log Scale)' if scale_mode == 'log' else ' (Normal Scale)'
+            title = f"{base_title}{scale_suffix}"
+            x_col_name = f"log10({metric_name})" if scale_mode == 'log' else metric_name
             st.markdown(f"### {title}")
 
             # Add explanation for MSE
             if metric_name == 'MSE':
-                st.info("**Note:** MSE histogram shows individual squared errors for each (method, batch_idx, state). "
-                       "Unlike Squared Bias and Variance below, this is NOT aggregated across batches.")
+                st.info("**Note:** MSE histogram shows per-state mean squared error, where each point is "
+                        "the batch-average of $(V_i(s) - V_{true}(s))^2$ for a fixed state.")
             hist_rows = []
             for method, pred_df in predictions_data.items():
                 if metric_name == 'MSE':
-                    # MSE: individual squared errors for each (batch_idx, state)
-                    # Merge ground truth with predictions
-                    pred_with_gt = pred_df.copy()
-                    pred_with_gt['s1_gt'] = pred_with_gt['pair_idx'].map(lambda i: paired_data['s1_mean'][i])
-                    pred_with_gt['s2_gt'] = pred_with_gt['pair_idx'].map(lambda i: paired_data['s2_mean'][i])
-
-                    # Compute squared errors for each prediction
-                    s1_errors = (pred_with_gt['s1_predicted'] - pred_with_gt['s1_gt']) ** 2
-                    s2_errors = (pred_with_gt['s2_predicted'] - pred_with_gt['s2_gt']) ** 2
-                    values = np.concatenate([s1_errors.values, s2_errors.values])
+                    values = _compute_metric_values_full_mode(pred_df, paired_data, metric_name)
 
                 elif metric_name == 'Squared Bias':
-                    # Squared Bias: (mean_pred - ground_truth)^2 for each state
-                    avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
-                    s1 = (avg_pred['s1_predicted'].values - paired_data['s1_mean']) ** 2
-                    s2 = (avg_pred['s2_predicted'].values - paired_data['s2_mean']) ** 2
-                    values = np.concatenate([s1, s2])
+                    values = _compute_metric_values_full_mode(pred_df, paired_data, metric_name)
 
                 else:  # Variance
-                    # Variance: variance of predictions across batches for each state
-                    s1 = pred_df.groupby('pair_idx')['s1_predicted'].var().fillna(0).values
-                    s2 = pred_df.groupby('pair_idx')['s2_predicted'].var().fillna(0).values
-                    values = np.concatenate([s1, s2])
+                    values = _compute_metric_values_full_mode(pred_df, paired_data, metric_name)
 
                 for v in values:
-                    # Apply log10 transformation, add small epsilon to avoid log(0)
-                    log_v = np.log10(v + 1e-10)
-                    hist_rows.append({'Method': get_method_display_name(method), log_col_name: log_v})
+                    if scale_mode == 'log':
+                        plotted_value = np.log10(v + 1e-10)
+                    else:
+                        plotted_value = v
+                    hist_rows.append({'Method': get_method_display_name(method), x_col_name: plotted_value})
             hist_df = pd.DataFrame(hist_rows)
             col1, col2 = st.columns([3, 1])
             with col1:
-                fig = px.histogram(hist_df, x=log_col_name, color='Method', nbins=40, opacity=0.7,
+                fig = px.histogram(hist_df, x=x_col_name, color='Method', nbins=40, opacity=0.7,
                                    barmode='overlay', title=f"{title} ({n_episodes} episodes)")
                 fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             with col2:
                 st.markdown("**Statistics**")
-                summary = hist_df.groupby('Method')[log_col_name].agg(mean='mean', std='std').reset_index()
+                summary = hist_df.groupby('Method')[x_col_name].agg(mean='mean', std='std').reset_index()
                 st.dataframe(summary.style.format({'mean': '{:.4f}', 'std': '{:.4f}'}),
-                             use_container_width=True, hide_index=True)
+                             width='stretch', hide_index=True)
+
+        evolution_header = "### Evolution of Mean Log Metrics Across Training Sizes" if scale_mode == 'log' else "### Evolution of Mean Metrics Across Training Sizes"
+        st.markdown(evolution_header)
+        plot_paired_log_metric_evolution(
+            filtered_metadata,
+            methods,
+            adjust_constant=adjust_constant,
+            mode='full',
+            scale_mode=scale_mode
+        )
 
         # Scatter plot: Predictions vs Ground Truth for each method
         st.markdown("### Predictions vs Ground Truth")
+
+        # Compute shared axis range across all methods
+        all_values = [all_gt_means.min(), all_gt_means.max()]
+        for pred_df in predictions_data.values():
+            avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
+            preds = np.concatenate([avg_pred['s1_predicted'].values, avg_pred['s2_predicted'].values])
+            all_values.extend([preds.min(), preds.max()])
+        shared_min = min(all_values)
+        shared_max = max(all_values)
+        padding = (shared_max - shared_min) * 0.02
+        shared_min -= padding
+        shared_max += padding
 
         for method, pred_df in predictions_data.items():
             avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
@@ -304,11 +437,9 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
             ))
 
             # Add diagonal line
-            min_val = min(all_gt_means.min(), all_pred.min())
-            max_val = max(all_gt_means.max(), all_pred.max())
             fig.add_trace(go.Scatter(
-                x=[min_val, max_val],
-                y=[min_val, max_val],
+                x=[shared_min, shared_max],
+                y=[shared_min, shared_max],
                 mode='lines',
                 line=dict(dash='dash', color='gray'),
                 name='Perfect Prediction',
@@ -319,12 +450,14 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes)
                 title=f"{get_method_display_name(method)} - Predictions vs Ground Truth",
                 xaxis_title="Ground Truth Mean",
                 yaxis_title="Predicted Value",
+                xaxis=dict(range=[shared_min, shared_max]),
+                yaxis=dict(range=[shared_min, shared_max]),
                 height=400
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 
-def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
+def render_difference_mode(paired_data, predictions_data, methods, n_episodes, filtered_metadata, adjust_constant, scale_mode):
     """Render difference mode: V(s₁) - V(s₂) for pairs."""
 
     st.subheader("Paired Difference Evaluation")
@@ -374,7 +507,7 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
         yaxis_title="Count",
         height=400
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # Scatter plot: Individual state values
     st.markdown("### Individual State Values (s₁ vs s₂)")
@@ -418,7 +551,7 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
         height=500,
         width=500
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # CI width distribution
     ci_widths = diff_ci_upper - diff_ci_lower
@@ -436,7 +569,7 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
         yaxis_title="Count",
         height=400
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # If we have predictions, show evaluation metrics
     if predictions_data:
@@ -462,57 +595,77 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
         st.dataframe(metrics_df.style.format({
             'MSE': '{:.4f}',
             'MAE': '{:.4f}',
-        }), use_container_width=True)
+        }), width='stretch')
 
-        # Histograms: per-pair MSE, squared bias, variance distributions (log scale)
-        for metric_name, title, log_col_name in [
-            ('MSE', 'Per-Pair MSE Distribution (Log Scale)', 'log10(MSE)'),
-            ('Squared Bias', 'Per-Pair Squared Bias Distribution (Log Scale)', 'log10(Squared Bias)'),
-            ('Variance', 'Per-Pair Variance Distribution (Log Scale)', 'log10(Variance)'),
-        ]:
+        # Histograms: per-pair MSE, squared bias, variance distributions
+        metric_specs = [
+            ('MSE', 'Per-Pair MSE Distribution'),
+            ('Squared Bias', 'Per-Pair Squared Bias Distribution'),
+            ('Variance', 'Per-Pair Variance Distribution'),
+        ]
+        for metric_name, base_title in metric_specs:
+            scale_suffix = ' (Log Scale)' if scale_mode == 'log' else ' (Normal Scale)'
+            title = f"{base_title}{scale_suffix}"
+            x_col_name = f"log10({metric_name})" if scale_mode == 'log' else metric_name
             st.markdown(f"### {title}")
 
             # Add explanation for MSE
             if metric_name == 'MSE':
-                st.info("**Note:** MSE histogram shows individual squared errors for each (method, batch_idx, pair). "
-                       "Unlike Squared Bias and Variance below, this is NOT aggregated across batches.")
+                st.info("**Note:** MSE histogram shows per-pair mean squared error, where each point is "
+                        "the batch-average of $(V_i(s_1)-V_i(s_2) - (V_{true}(s_1)-V_{true}(s_2)))^2$ for a fixed pair.")
             hist_rows = []
             for method, pred_df in predictions_data.items():
                 if metric_name == 'MSE':
-                    # MSE: individual squared errors for each (batch_idx, pair)
-                    pred_with_gt = pred_df.copy()
-                    pred_with_gt['diff_gt'] = pred_with_gt['pair_idx'].map(lambda i: diff_means[i])
-                    errors = (pred_with_gt['diff_predicted'] - pred_with_gt['diff_gt']) ** 2
-                    values = errors.values
+                    values = _compute_metric_values_difference_mode(pred_df, diff_means, metric_name)
 
                 elif metric_name == 'Squared Bias':
-                    # Squared Bias: (mean_pred - ground_truth)^2 for each pair
-                    avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
-                    values = (avg_pred - diff_means) ** 2
+                    values = _compute_metric_values_difference_mode(pred_df, diff_means, metric_name)
 
                 else:  # Variance
-                    # Variance: variance of predictions across batches for each pair
-                    values = pred_df.groupby('pair_idx')['diff_predicted'].var().fillna(0).values
+                    values = _compute_metric_values_difference_mode(pred_df, diff_means, metric_name)
 
                 for v in values:
-                    # Apply log10 transformation, add small epsilon to avoid log(0)
-                    log_v = np.log10(v + 1e-10)
-                    hist_rows.append({'Method': get_method_display_name(method), log_col_name: log_v})
+                    if scale_mode == 'log':
+                        plotted_value = np.log10(v + 1e-10)
+                    else:
+                        plotted_value = v
+                    hist_rows.append({'Method': get_method_display_name(method), x_col_name: plotted_value})
             hist_df = pd.DataFrame(hist_rows)
             col1, col2 = st.columns([3, 1])
             with col1:
-                fig = px.histogram(hist_df, x=log_col_name, color='Method', nbins=40, opacity=0.7,
+                fig = px.histogram(hist_df, x=x_col_name, color='Method', nbins=40, opacity=0.7,
                                    barmode='overlay', title=f"{title} ({n_episodes} episodes)")
                 fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             with col2:
                 st.markdown("**Statistics**")
-                summary = hist_df.groupby('Method')[log_col_name].agg(mean='mean', std='std').reset_index()
+                summary = hist_df.groupby('Method')[x_col_name].agg(mean='mean', std='std').reset_index()
                 st.dataframe(summary.style.format({'mean': '{:.4f}', 'std': '{:.4f}'}),
-                             use_container_width=True, hide_index=True)
+                             width='stretch', hide_index=True)
+
+        evolution_header = "### Evolution of Mean Log Metrics Across Training Sizes" if scale_mode == 'log' else "### Evolution of Mean Metrics Across Training Sizes"
+        st.markdown(evolution_header)
+        plot_paired_log_metric_evolution(
+            filtered_metadata,
+            methods,
+            adjust_constant=adjust_constant,
+            mode='difference',
+            scale_mode=scale_mode
+        )
 
         # Scatter plot: Predicted differences vs Ground Truth for each method
         st.markdown("### Predicted Differences vs Ground Truth")
+
+        # Compute shared axis range across all methods
+        all_values = [diff_means.min(), diff_means.max()]
+        for pred_df in predictions_data.values():
+            avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
+            all_values.extend([avg_pred.min(), avg_pred.max()])
+        shared_min = min(all_values)
+        shared_max = max(all_values)
+        padding = (shared_max - shared_min) * 0.02
+        shared_min -= padding
+        shared_max += padding
 
         for method, pred_df in predictions_data.items():
             avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
@@ -529,11 +682,9 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
             ))
 
             # Add diagonal line
-            min_val = min(diff_means.min(), avg_pred.min())
-            max_val = max(diff_means.max(), avg_pred.max())
             fig.add_trace(go.Scatter(
-                x=[min_val, max_val],
-                y=[min_val, max_val],
+                x=[shared_min, shared_max],
+                y=[shared_min, shared_max],
                 mode='lines',
                 line=dict(dash='dash', color='gray'),
                 name='Perfect Prediction',
@@ -548,6 +699,8 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes):
                 title=f"{get_method_display_name(method)} - V(s₁) - V(s₂) Predictions vs Ground Truth",
                 xaxis_title="Ground Truth Difference Mean",
                 yaxis_title="Predicted Difference",
+                xaxis=dict(range=[shared_min, shared_max]),
+                yaxis=dict(range=[shared_min, shared_max]),
                 height=400
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')

@@ -64,7 +64,7 @@ def plot_metric_for_single_episodes(context: MetricContext, metric_key: str):
                 )
 
             fig.update_layout(height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
         with col2:
             if is_comparison:
@@ -74,7 +74,7 @@ def plot_metric_for_single_episodes(context: MetricContext, metric_key: str):
             summary = combined.groupby('method')['metric_value'].agg(
                 mean='mean', std='std'
             ).reset_index()
-            st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.dataframe(summary, width='stretch', hide_index=True)
 
     elif plot_type == 'bar':
         # Bar chart for decile-based metrics
@@ -92,12 +92,12 @@ def plot_metric_for_single_episodes(context: MetricContext, metric_key: str):
         )
 
         fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
         # Show statistics table
         st.markdown("**Statistics by Bucket**")
         pivot = combined.pivot(index='decile', columns='method', values='metric_value')
-        st.dataframe(pivot, use_container_width=True)
+        st.dataframe(pivot, width='stretch')
 
     elif plot_type == 'line':
         # Line plot for percentile-based metrics
@@ -129,7 +129,7 @@ def plot_metric_for_single_episodes(context: MetricContext, metric_key: str):
             hovermode='x unified'
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 
 def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_episodes_values, epsilon, dataset_type, n_buckets, temporal_p=0.2, adjust_constant=False):
@@ -157,7 +157,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
     for n_ep in n_episodes_values:
         # Compute ground truth stats once per n_episodes (for ground_truth_error metric)
         ground_truth_stats = None
-        if metric_key == 'ground_truth_error':
+        if metric_key in ('ground_truth_error', 'ground_truth_error_squared', 'mse', 'bias_variance_decomposition'):
             # Get results_dir and gamma from any method at this n_episodes
             any_method_row = metadata_df[metadata_df['n_episodes'] == n_ep]
             if not any_method_row.empty:
@@ -179,12 +179,15 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             method_row = metadata_df[(metadata_df['method'] == method) &
                                     (metadata_df['n_episodes'] == n_ep)]
             if not method_row.empty:
+                row = method_row.iloc[0]
                 method_stats_dict[method] = compute_stats_from_predictions(
-                    method_row.iloc[0]['predictions_path'],
+                    row['predictions_path'],
                     n_ep,
                     dataset_type=dataset_type,
                     temporal_p=temporal_p,
-                    adjust_constant=adjust_constant
+                    adjust_constant=adjust_constant,
+                    gamma=row.get('policy_gamma'),
+                    truncation_coefficient=row.get('truncation_coefficient', 10.0)
                 )
 
         if not method_stats_dict:
@@ -218,11 +221,12 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
 
             # Store summary statistics
             if not metric_df.empty:
+                n_states = len(metric_df)
                 summary_records.append({
                     'method': get_method_display_name(method),
                     'n_episodes': n_ep,
                     'mean': metric_df['metric_value'].mean(),
-                    'std': metric_df['metric_value'].std()
+                    'stderr': metric_df['metric_value'].std() / (n_states ** 0.5)
                 })
 
         # Clean up after processing this n_episodes
@@ -247,7 +251,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
             fig.add_trace(go.Scatter(
                 x=method_data['n_episodes'],
                 y=method_data['mean'],
-                error_y=dict(type='data', array=method_data['std']),
+                error_y=dict(type='data', array=method_data['stderr']),
                 mode='lines+markers',
                 name=method_display,
                 marker=dict(size=10)
@@ -267,11 +271,11 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
     fig.update_layout(
         title=title,
         xaxis_title="Training Episodes",
-        yaxis_title=f"Mean {metric_info['name']} (± std)",
+        yaxis_title=f"Mean {metric_info['name']} (± stderr)",
         height=500
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     with st.expander("Show data table"):
-        st.dataframe(summary, use_container_width=True)
+        st.dataframe(summary, width='stretch')

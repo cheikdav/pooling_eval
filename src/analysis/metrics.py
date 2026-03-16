@@ -312,7 +312,103 @@ def compute_ground_truth_error(context: MetricContext, method: str):
     return result
 
 
+@st.cache_data
+def compute_ground_truth_error_squared(context: MetricContext, method: str):
+    """Compute squared prediction error relative to ground truth returns.
+
+    Returns:
+        DataFrame with metric_value column containing (predicted - ground_truth)²
+    """
+    result = compute_ground_truth_error(context, method)
+    if result.empty:
+        return result
+
+    result = result.copy()
+    result['metric_value'] = result['metric_value'] ** 2
+    return result
+
+
+@st.cache_data
+def compute_mse(context: MetricContext, method: str):
+    """Compute MSE at each state: Var(V̂(s)) + (E[V̂(s)] - V*(s))².
+
+    This is the bias-variance decomposition of E[(V̂(s) - V*(s))²].
+    Also verifies equivalence with the direct computation.
+
+    Returns:
+        DataFrame with metric_value column containing per-state MSE
+    """
+    method_stats = context.method_stats.get(method)
+    if method_stats is None:
+        return pd.DataFrame()
+
+    if context.ground_truth_stats is None or context.ground_truth_stats.empty:
+        st.warning("Ground truth data not available")
+        return pd.DataFrame()
+
+    result = method_stats[['state_idx', 'mean', 'variance', 'n_episodes']].copy()
+    result = result.merge(
+        context.ground_truth_stats[['state_idx', 'ground_truth_value']],
+        on='state_idx', how='inner'
+    )
+
+    # Approach 2: bias² + variance
+    bias_squared = (result['mean'] - result['ground_truth_value']) ** 2
+    result['metric_value'] = result['variance'] + bias_squared
+
+    # Sanity check: approach 1 (direct) should give the same result
+    # E[(V̂ - V*)²] = E[V̂²] - 2·V*·E[V̂] + V*²
+    #               = (Var + mean²) - 2·V*·mean + V*²
+    #               = Var + (mean - V*)²  ✓
+    direct = (result['variance'] + result['mean']**2
+              - 2 * result['ground_truth_value'] * result['mean']
+              + result['ground_truth_value']**2)
+    max_diff = (result['metric_value'] - direct).abs().max()
+    if max_diff > 1e-10:
+        print(f"MSE decomposition mismatch (catastrophic cancellation): max diff = {max_diff:.2e}")
+
+    result = result[['state_idx', 'metric_value', 'n_episodes']].copy()
+    return result
+
+
 METRICS = {
+    'log_variance': {
+        'name': 'Log Variance',
+        'description': 'log(Variance + ε)',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_log_variance,
+        'is_comparison': False,
+        'plot_type': 'histogram'
+    },
+    'ground_truth_error_squared': {
+        'name': 'Bias²',
+        'description': 'Squared bias: (E[V̂(s)] - V*(s))²',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_ground_truth_error_squared,
+        'is_comparison': False,
+        'plot_type': 'histogram'
+    },
+    'mse': {
+        'name': 'MSE',
+        'description': 'Per-state MSE: Var(V̂(s)) + (E[V̂(s)] - V*(s))² = E[(V̂(s) - V*(s))²]',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': compute_mse,
+        'is_comparison': False,
+        'plot_type': 'histogram'
+    },
+    'bias_variance_decomposition': {
+        'name': 'Bias-Variance Decomposition',
+        'description': 'Side-by-side: Variance, Bias², and MSE = Variance + Bias²',
+        'reference_line': None,
+        'reference_label': None,
+        'compute_fn': None,
+        'is_comparison': False,
+        'plot_type': 'histogram',
+        'requires_special_handling': True
+    },
     'log_variance_ratio': {
         'name': 'Log Variance Ratio',
         'description': 'log(Method Variance + ε) - log(Baseline Variance + ε)',
@@ -329,15 +425,6 @@ METRICS = {
         'reference_label': 'Equal to Baseline',
         'compute_fn': compute_log_mean_ratio,
         'is_comparison': True,
-        'plot_type': 'histogram'
-    },
-    'log_variance': {
-        'name': 'Log Variance',
-        'description': 'log(Variance + ε)',
-        'reference_line': None,
-        'reference_label': None,
-        'compute_fn': compute_log_variance,
-        'is_comparison': False,
         'plot_type': 'histogram'
     },
     'variance': {
@@ -386,10 +473,10 @@ METRICS = {
         'plot_type': 'line'
     },
     'ground_truth_error': {
-        'name': 'Ground Truth Error',
-        'description': 'Prediction error relative to ground truth (Predicted - Ground Truth)',
+        'name': 'Bias',
+        'description': 'Per-state bias: E[V̂(s)] - V*(s)',
         'reference_line': 0,
-        'reference_label': 'Perfect Prediction',
+        'reference_label': 'Zero Bias',
         'compute_fn': compute_ground_truth_error,
         'is_comparison': False,
         'plot_type': 'histogram'

@@ -56,7 +56,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     stats_dict_single = {}
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods_to_load:
-            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant)
+            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
             # Apply data filters
             stats = apply_data_filters(stats, filter_high_variance, filter_extreme_mean)
             stats_dict_single[row['method']] = stats

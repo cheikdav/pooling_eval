@@ -200,27 +200,31 @@ if filter_high_variance > 0 or filter_extreme_mean > 0 or adjust_constant:
 
 st.markdown("---")
 
-# Create tabs
-tab1, tab2, tab3, tab4 = st.tabs(["Absolute Metrics", "Comparison Metrics", "Episode Trajectories", "Paired States"])
+# Persist active view across reruns (e.g., sidebar toggle changes)
+tab_labels = ["Absolute Metrics", "Comparison Metrics", "Episode Trajectories", "Paired States"]
+selected_tab = st.radio(
+    "View",
+    tab_labels,
+    key="active_main_tab",
+    horizontal=True,
+    label_visibility="collapsed"
+)
 
-with tab1:
+if selected_tab == "Absolute Metrics":
     tab_absolute.render_tab(
         filtered_metadata, methods, baseline_method, epsilon, dataset_type,
         n_buckets, filter_high_variance, filter_extreme_mean, temporal_p, adjust_constant
     )
-
-with tab2:
+elif selected_tab == "Comparison Metrics":
     tab_comparison.render_tab(
         filtered_metadata, methods, baseline_method, epsilon, dataset_type,
         n_buckets, filter_high_variance, filter_extreme_mean, temporal_p, adjust_constant
     )
-
-with tab3:
+elif selected_tab == "Episode Trajectories":
     tab_trajectory.render_tab(
         filtered_metadata, methods, baseline_method, adjust_constant
     )
-
-with tab4:
+else:
     tab_paired_states.render_tab(
         filtered_metadata, methods, baseline_method, adjust_constant
     )

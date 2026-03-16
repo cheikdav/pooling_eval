@@ -437,6 +437,37 @@ def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0
 
 
 @st.cache_data
+def compute_batch_constants(df, results_dir, gamma, truncation_coefficient=10.0):
+    """Compute per-batch adjustment constants for a single predictions DataFrame.
+
+    For each batch, computes: mean_ground_truth - mean_batch_predictions
+    using only states far from truncation boundaries.
+
+    Args:
+        df: DataFrame with columns batch_name, predicted_value, and truncation columns
+        results_dir: Path to results directory (contains ground_truth/)
+        gamma: Discount factor
+        truncation_coefficient: Coefficient for truncation filtering
+
+    Returns:
+        Dict mapping batch_name -> constant, or None if ground truth unavailable
+    """
+    filter_truncation = gamma is not None
+    mean_ground_truth = _get_ground_truth_mean(results_dir, gamma=gamma,
+                                               truncation_coefficient=truncation_coefficient,
+                                               filter_truncation=filter_truncation)
+    if mean_ground_truth is None:
+        return None
+
+    batch_constants = {}
+    for batch_name, batch_df in df.groupby('batch_name'):
+        filtered = filter_states_far_from_truncation(batch_df, gamma, truncation_coefficient) if filter_truncation else batch_df
+        mean_batch = filtered['predicted_value'].mean() if len(filtered) > 0 else batch_df['predicted_value'].mean()
+        batch_constants[batch_name] = mean_ground_truth - mean_batch
+
+    return batch_constants
+
+
 def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
     """Compute per-batch adjustment constants for all selected methods.
 
@@ -451,7 +482,6 @@ def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
     """
     all_constants = []
 
-    # Filter to selected n_episodes
     filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == n_episodes]
 
     for _, row in filtered_for_n_ep.iterrows():
@@ -459,42 +489,27 @@ def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
             continue
 
         predictions_path = row['predictions_path']
-        method_name = row['method']
-
-        # Get ground truth mean with truncation filtering
-        predictions_path_obj = Path(predictions_path)
-        results_dir = str(predictions_path_obj.parent.parent.parent)
+        results_dir = str(Path(predictions_path).parent.parent.parent)
         gamma = row.get('policy_gamma', 0.99)
         truncation_coefficient = row.get('truncation_coefficient', 10.0)
-        mean_ground_truth = _get_ground_truth_mean(results_dir, gamma=gamma,
-                                                   truncation_coefficient=truncation_coefficient,
-                                                   filter_truncation=True)
 
-        if mean_ground_truth is None:
+        df = pd.read_parquet(predictions_path)
+        batch_constants = compute_batch_constants(df, results_dir, gamma, truncation_coefficient)
+        if batch_constants is None:
             continue
 
-        # Load predictions and compute constant for each batch (using filtered predictions)
-        df = pd.read_parquet(predictions_path)
-
-        for batch_name, batch_df in df.groupby('batch_name'):
-            # Filter to states far from truncation
-            batch_df_filtered = filter_states_far_from_truncation(batch_df, gamma, truncation_coefficient)
-            if len(batch_df_filtered) > 0:
-                mean_batch = batch_df_filtered['predicted_value'].mean()
-                constant = mean_ground_truth - mean_batch
-            else:
-                constant = 0.0
+        for batch_name, constant in batch_constants.items():
             all_constants.append({
                 'batch_name': batch_name,
                 'constant': constant,
-                'method': method_name
+                'method': row['method']
             })
 
     return pd.DataFrame(all_constants)
 
 
 @st.cache_data
-def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False):
+def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
     """Load predictions and compute statistics aggregated across batches.
 
     Memory-efficient: loads raw data, computes stats, then frees raw data.
@@ -509,6 +524,8 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
         seed: Random seed for episode partitioning
         temporal_p: Geometric distribution parameter for temporal gaps (used for temporal mode)
         adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
+        gamma: Discount factor (used for truncation filtering when adjust_constant=True)
+        truncation_coefficient: Coefficient for truncation filtering
 
     Returns:
         DataFrame with columns: state_idx, n_episodes, mean, variance, std, count
@@ -525,15 +542,15 @@ def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='f
     # PHASE 1: Transform dataset
     # Apply constant adjustment if requested
     if adjust_constant:
-        mean_ground_truth = _get_ground_truth_mean(results_dir)
-        if mean_ground_truth is not None:
-            def adjust_batch(batch_df):
-                mean_batch_predictions = batch_df['predicted_value'].mean()
-                constant = mean_ground_truth - mean_batch_predictions
-                batch_df = batch_df.copy()
-                batch_df['predicted_value'] = batch_df['predicted_value'] + constant
-                return batch_df
-            df = df.groupby('batch_name', group_keys=False).apply(adjust_batch)
+        batch_constants = compute_batch_constants(df, results_dir, gamma, truncation_coefficient)
+        print(f"[DEBUG adjust_constant stats] predictions_path={predictions_path}, batch_constants={'None' if batch_constants is None else f'{len(batch_constants)} batches'}")
+        if batch_constants is not None:
+            mean_before = df['predicted_value'].mean()
+            df = df.copy()
+            df['predicted_value'] += df['batch_name'].map(batch_constants)
+            print(f"[DEBUG adjust_constant stats] mean BEFORE={mean_before:.4f}, AFTER={df['predicted_value'].mean():.4f}")
+        else:
+            print(f"[DEBUG adjust_constant stats] SKIPPED: ground truth not found")
 
     # Apply dataset-specific transformations
     if dataset_type == 'full':
@@ -602,12 +619,14 @@ def apply_data_filters(stats, filter_high_variance=0, filter_extreme_mean=0):
 
 
 @st.cache_data
-def load_predictions_for_trajectory(predictions_path, adjust_constant=False):
+def load_predictions_for_trajectory(predictions_path, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
     """Load predictions and compute mean across batches for each state.
 
     Args:
         predictions_path: Path to predictions.parquet file
         adjust_constant: If True, apply per-batch constant adjustment before averaging
+        gamma: Discount factor (used for truncation filtering when adjust_constant=True)
+        truncation_coefficient: Coefficient for truncation filtering
 
     Returns:
         DataFrame with episode_idx, state_idx, mean_value, step_in_episode
@@ -618,17 +637,15 @@ def load_predictions_for_trajectory(predictions_path, adjust_constant=False):
     if adjust_constant:
         predictions_path_obj = Path(predictions_path)
         results_dir = str(predictions_path_obj.parent.parent.parent)
-        mean_ground_truth = _get_ground_truth_mean(results_dir)
-
-        if mean_ground_truth is not None:
-            def adjust_batch(batch_df):
-                mean_batch_predictions = batch_df['predicted_value'].mean()
-                constant = mean_ground_truth - mean_batch_predictions
-                batch_df = batch_df.copy()
-                batch_df['predicted_value'] = batch_df['predicted_value'] + constant
-                return batch_df
-
-            df = df.groupby('batch_name', group_keys=False).apply(adjust_batch)
+        batch_constants = compute_batch_constants(df, results_dir, gamma, truncation_coefficient)
+        print(f"[DEBUG adjust_constant trajectory] predictions_path={predictions_path}, batch_constants={'None' if batch_constants is None else f'{len(batch_constants)} batches'}")
+        if batch_constants is not None:
+            mean_before = df['predicted_value'].mean()
+            df = df.copy()
+            df['predicted_value'] += df['batch_name'].map(batch_constants)
+            print(f"[DEBUG adjust_constant trajectory] mean BEFORE={mean_before:.4f}, AFTER={df['predicted_value'].mean():.4f}")
+        else:
+            print(f"[DEBUG adjust_constant trajectory] SKIPPED: ground truth not found")
 
     # Compute mean across batches for each state, preserving episode metadata
     agg_dict = {'predicted_value': 'mean'}
@@ -641,12 +658,8 @@ def load_predictions_for_trajectory(predictions_path, adjust_constant=False):
     mean_df.rename(columns={'predicted_value': 'mean_value'}, inplace=True)
 
     # For each episode, create step_in_episode (0, 1, 2, ...) by sorting by state_idx
-    def add_step_index(group):
-        group = group.sort_values('state_idx')
-        group['step_in_episode'] = range(len(group))
-        return group
-
-    mean_df = mean_df.groupby('episode_idx', group_keys=False).apply(add_step_index)
+    mean_df = mean_df.sort_values(['episode_idx', 'state_idx'])
+    mean_df['step_in_episode'] = mean_df.groupby('episode_idx').cumcount()
 
     return mean_df
 
@@ -670,11 +683,7 @@ def load_ground_truth_returns(results_path):
     df = pd.read_parquet(ground_truth_file)
 
     # For each episode, create step_in_episode (0, 1, 2, ...) by sorting by state_idx
-    def add_step_index(group):
-        group = group.sort_values('state_idx')
-        group['step_in_episode'] = range(len(group))
-        return group
-
-    df = df.groupby('episode_idx', group_keys=False).apply(add_step_index)
+    df = df.sort_values(['episode_idx', 'state_idx'])
+    df['step_in_episode'] = df.groupby('episode_idx').cumcount()
 
     return df
