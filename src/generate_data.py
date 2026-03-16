@@ -28,6 +28,9 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
                               use_vec_normalize: bool = False) -> List[Dict[str, np.ndarray]]:
     """Collect multiple episodes in parallel using vectorized environments.
 
+    Runs n_envs episodes in parallel, waits for all to complete, then repeats.
+    n_envs is capped at n_episodes to avoid bias toward short episodes.
+
     Args:
         env: VecEnv with n_envs parallel environments
         model: Trained SB3 model
@@ -46,74 +49,67 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
     n_envs = env.num_envs
     completed_episodes = []
 
-    episode_data = {
-        i: {
-            'observations': [],
-            'actions': [],
-            'rewards': [],
-            'dones': [],
-            'next_observations': []
-        }
-        for i in range(n_envs)
-    }
-
-    obs = env.reset()
-    if isinstance(obs, tuple):
-        obs = obs[0]
-
     while len(completed_episodes) < n_episodes:
-        if use_vec_normalize:
-            original_obs = env.get_original_obs()
-        else:
-            original_obs = obs
+        # Use at most as many envs as episodes still needed
+        n_active = min(n_envs, n_episodes - len(completed_episodes))
 
-        for i in range(n_envs):
-            episode_data[i]['observations'].append(original_obs[i].copy())
+        episode_data = [
+            {'observations': [], 'actions': [], 'rewards': [], 'dones': [], 'next_observations': []}
+            for _ in range(n_active)
+        ]
+        active = [True] * n_active
 
-        action, _ = model.predict(obs, deterministic=deterministic)
+        obs = env.reset()
+        if isinstance(obs, tuple):
+            obs = obs[0]
 
-        step_result = env.step(action)
-        next_obs = step_result[0]
-        rewards = step_result[1]
-        dones = step_result[2]
-        infos = step_result[3] if len(step_result) > 3 else [{} for _ in range(n_envs)]
+        # Run until all n_active envs have completed one episode
+        while any(active):
+            if use_vec_normalize:
+                original_obs = env.get_original_obs()
+            else:
+                original_obs = obs
 
-        if use_vec_normalize:
-            original_next_obs = env.get_original_obs()
-        else:
-            original_next_obs = next_obs
+            for i in range(n_active):
+                if active[i]:
+                    episode_data[i]['observations'].append(original_obs[i].copy())
 
-        for i in range(n_envs):
-            if episode_data[i]['observations']:
-                episode_data[i]['actions'].append(action[i].copy() if isinstance(action[i], np.ndarray) else action[i])
-                episode_data[i]['rewards'].append(float(rewards[i]))
-                episode_data[i]['dones'].append(bool(dones[i]))
-                episode_data[i]['next_observations'].append(original_next_obs[i].copy())
+            action, _ = model.predict(obs, deterministic=deterministic)
 
-                if dones[i] and len(completed_episodes) < n_episodes:
-                    # Extract truncation info from info dict
-                    info = infos[i] if isinstance(infos, (list, tuple)) else {}
-                    truncated = info.get('TimeLimit.truncated', False)
+            step_result = env.step(action)
+            next_obs = step_result[0]
+            rewards = step_result[1]
+            dones = step_result[2]
+            infos = step_result[3] if len(step_result) > 3 else [{} for _ in range(n_envs)]
 
-                    completed_episodes.append({
-                        'observations': np.array(episode_data[i]['observations']),
-                        'actions': np.array(episode_data[i]['actions']),
-                        'rewards': np.array(episode_data[i]['rewards']),
-                        'dones': np.array(episode_data[i]['dones']),
-                        'next_observations': np.array(episode_data[i]['next_observations']),
-                        'truncated': truncated,
-                    })
+            if use_vec_normalize:
+                original_next_obs = env.get_original_obs()
+            else:
+                original_next_obs = next_obs
 
-                    episode_data[i] = {
-                        'observations': [],
-                        'actions': [],
-                        'rewards': [],
-                        'dones': [],
-                        'next_observations': []
-                    }
+            for i in range(n_active):
+                if active[i]:
+                    episode_data[i]['actions'].append(action[i].copy() if isinstance(action[i], np.ndarray) else action[i])
+                    episode_data[i]['rewards'].append(float(rewards[i]))
+                    episode_data[i]['dones'].append(bool(dones[i]))
+                    episode_data[i]['next_observations'].append(original_next_obs[i].copy())
 
-        obs = next_obs
+                    if dones[i]:
+                        info = infos[i] if isinstance(infos, (list, tuple)) else {}
+                        truncated = info.get('TimeLimit.truncated', False)
+                        completed_episodes.append({
+                            'observations': np.array(episode_data[i]['observations']),
+                            'actions': np.array(episode_data[i]['actions']),
+                            'rewards': np.array(episode_data[i]['rewards']),
+                            'dones': np.array(episode_data[i]['dones']),
+                            'next_observations': np.array(episode_data[i]['next_observations']),
+                            'truncated': truncated,
+                        })
+                        active[i] = False
 
+            obs = next_obs
+
+    np.random.shuffle(completed_episodes)
     return completed_episodes[:n_episodes]
 
 
@@ -566,6 +562,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         print(f"Loaded VecNormalize stats from {vec_normalize_path}")
 
     print(f"\nGenerating data using policy from {policy_path}")
+    print(f"Algorithm: {config.policy.algorithm}")
     print(f"Environment: {config.environment.name}")
     print(f"VecNormalize: {use_vec_normalize}")
     print(f"Deterministic policy: {config.data_generation.deterministic_policy}")
