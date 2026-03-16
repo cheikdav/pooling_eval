@@ -25,8 +25,9 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         return
 
     # Load predictions from first method to get episode info
-    first_predictions_path = filtered_metadata.iloc[0]['predictions_path']
-    first_pred_df = load_predictions_for_trajectory(first_predictions_path, adjust_constant=adjust_constant)
+    first_row = filtered_metadata.iloc[0]
+    first_predictions_path = first_row['predictions_path']
+    first_pred_df = load_predictions_for_trajectory(first_predictions_path, adjust_constant=adjust_constant, gamma=first_row.get('policy_gamma'), truncation_coefficient=first_row.get('truncation_coefficient', 10.0))
     n_eval_episodes = first_pred_df['episode_idx'].nunique()
 
     st.markdown("---")
@@ -110,8 +111,8 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
             continue
 
         # Load predictions using shared function
-        predictions_path = method_row.iloc[0]['predictions_path']
-        pred_df = load_predictions_for_trajectory(predictions_path, adjust_constant=adjust_constant)
+        row = method_row.iloc[0]
+        pred_df = load_predictions_for_trajectory(row['predictions_path'], adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
 
         # Filter to this episode
         episode_preds = pred_df[pred_df['episode_idx'] == selected_episode].copy()
@@ -188,7 +189,7 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         )
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
     # Show episode info after plot
     col1, col2 = st.columns(2)
@@ -215,8 +216,8 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
             if method_row.empty:
                 continue
 
-            predictions_path = method_row.iloc[0]['predictions_path']
-            pred_df = load_predictions_for_trajectory(predictions_path, adjust_constant=adjust_constant)
+            row = method_row.iloc[0]
+            pred_df = load_predictions_for_trajectory(row['predictions_path'], adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
             episode_preds = pred_df[pred_df['episode_idx'] == selected_episode]
 
             if not episode_preds.empty:
@@ -233,4 +234,4 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
 
         if stats_records:
             stats_df = pd.DataFrame(stats_records)
-            st.dataframe(stats_df, use_container_width=True, hide_index=True)
+            st.dataframe(stats_df, width='stretch', hide_index=True)
