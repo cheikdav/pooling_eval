@@ -12,7 +12,41 @@ from concurrent.futures import ProcessPoolExecutor
 from tqdm import tqdm
 
 from src.config import ExperimentConfig
-from src.env_utils import ESTIMATOR_CLASSES
+from src.env_utils import ALGORITHM_MAP, ESTIMATOR_CLASSES
+
+
+N_CRITIC_SAMPLES = 16
+
+
+def compute_critic_values(policy_path: Path, algorithm: str, observations: np.ndarray) -> np.ndarray:
+    """Estimate V(s) from the policy's critic network.
+
+    For on-policy algorithms (PPO/A2C) that learn V(s), calls the value network directly.
+    For off-policy algorithms (SAC/TD3) that learn Q(s,a), samples actions from the policy
+    and averages Q(s, a_i) to approximate V(s).
+
+    Returns array of shape (n_states,) with value estimates, or None if critic unavailable.
+    """
+    AlgorithmClass = ALGORITHM_MAP[algorithm]
+    model = AlgorithmClass.load(policy_path, device="cpu")
+
+    obs_tensor = torch.as_tensor(observations, dtype=torch.float32)
+
+    with torch.no_grad():
+        if algorithm in ("PPO", "A2C"):
+            values = model.policy.predict_values(obs_tensor)
+            return values.squeeze(-1).numpy()
+
+        # SAC/TD3: sample actions and average Q values
+        q_sum = torch.zeros(len(observations))
+        for _ in range(N_CRITIC_SAMPLES):
+            actions, _ = model.predict(observations, deterministic=False)
+            actions_tensor = torch.as_tensor(actions, dtype=torch.float32)
+            # SB3 critic returns a tuple of Q-networks; average across them
+            q_values = model.critic(obs_tensor, actions_tensor)
+            q_mean = torch.stack(q_values).mean(dim=0).squeeze(-1)
+            q_sum += q_mean
+        return (q_sum / N_CRITIC_SAMPLES).numpy()
 
 
 def load_evaluation_batch(data_dir: Path) -> Dict:
@@ -179,7 +213,7 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
         # Load model, generate predictions, then free memory
         estimator = load_estimator_model(model_path, method_name, device)
 
-        # Use predict() method instead of direct value_net call
+        # predict() automatically adds reward_offset for centered models
         values = estimator.predict(eval_obs_flat)
 
         for state_idx in range(n_states):
@@ -312,7 +346,7 @@ def generate_paired_predictions_for_n_episodes(config: ExperimentConfig,
         # Load model, generate predictions, then free memory
         estimator = load_estimator_model(model_path, method_name, device)
 
-        # Predict on all states at once
+        # predict() automatically adds reward_offset for centered models
         values = estimator.predict(all_states)
 
         # Split predictions back into s1 and s2
@@ -523,6 +557,18 @@ def main():
         print("\nComputing ground truth returns...")
         gamma = config.value_estimators.training.gamma
         ground_truth_df = compute_ground_truth_returns(eval_batch, gamma)
+
+        # Compute critic values from the trained policy
+        policy_path = config.get_policy_dir() / "policy_final.zip"
+        if policy_path.exists():
+            print("\nComputing critic values from trained policy...")
+            eval_obs_flat = np.concatenate(eval_batch['observations'], axis=0)
+            critic_values = compute_critic_values(policy_path, config.policy.algorithm, eval_obs_flat)
+            if critic_values is not None:
+                ground_truth_df['critic_value'] = critic_values
+                print(f"  Added critic values (mean={critic_values.mean():.4f})")
+        else:
+            print(f"\nPolicy not found at {policy_path}, skipping critic values")
 
         ground_truth_dir = results_dir / "ground_truth"
         ground_truth_dir.mkdir(parents=True, exist_ok=True)

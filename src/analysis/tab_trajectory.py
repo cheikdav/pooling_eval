@@ -159,6 +159,16 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
                 line=dict(width=3, color='white', dash='dash')
             ))
 
+            # Add critic value from trained policy if available
+            if 'critic_value' in ground_truth_episode.columns:
+                fig.add_trace(go.Scatter(
+                    x=ground_truth_episode['step_in_episode'].values,
+                    y=ground_truth_episode['critic_value'].values,
+                    mode='lines',
+                    name='Policy Critic',
+                    line=dict(width=2, color='yellow', dash='dot')
+                ))
+
     # Add vertical line showing truncation cutoff for truncated episodes
     if is_truncated and episode_length is not None:
         n_discard = int(truncation_coefficient / (1 - gamma))
