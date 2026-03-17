@@ -244,7 +244,9 @@ def train_single_estimator(
     for mini_batch in pre_train_dataloader:
         estimator.pre_training_pass(mini_batch)
 
-    reward_centering = config.value_estimators.training.reward_centering
+    # Per-method reward_centering overrides global setting
+    global_reward_centering = config.value_estimators.training.reward_centering
+    reward_centering = method_config.reward_centering if method_config.reward_centering is not None else global_reward_centering
     estimator.finalize_pre_training(reward_centering)
     if reward_centering:
         print(f"Reward centering enabled: mean_reward={estimator.mean_reward:.6f}, offset={estimator.reward_offset:.6f}")

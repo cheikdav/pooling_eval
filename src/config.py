@@ -148,6 +148,7 @@ class BaseEstimatorConfig:
     max_epochs: Optional[Union[int, Dict]] = None  # Override global max_epochs if set
     feature_extractor: Optional[FeatureExtractorConfig] = None  # Feature extraction config
     network: Optional['NetworkConfig'] = None  # Method-specific network config (overrides global if set)
+    reward_centering: Optional[bool] = None  # Override global reward_centering if set
 
     def resolve_for_episodes(self, num_episodes: int) -> "BaseEstimatorConfig":
         """Create a copy of this config with all parameters resolved for a specific episode count.

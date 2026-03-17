@@ -1,4 +1,8 @@
 name: monte_carlo
 type: monte_carlo
-learning_rate: 0.0007
+learning_rate: 4.0e-3
 batch_size: 64
+feature_extractor:
+  type: identity
+  normalize: post
+reward_centering: true
