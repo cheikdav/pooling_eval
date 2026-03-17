@@ -30,7 +30,8 @@ def compute_critic_values(policy_path: Path, algorithm: str, observations: np.nd
     AlgorithmClass = ALGORITHM_MAP[algorithm]
     model = AlgorithmClass.load(policy_path, device="cpu")
 
-    obs_tensor = torch.as_tensor(observations, dtype=torch.float32)
+    observations = np.array(observations, dtype=np.float32)
+    obs_tensor = torch.as_tensor(observations)
 
     with torch.no_grad():
         if algorithm in ("PPO", "A2C"):
