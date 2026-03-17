@@ -7,7 +7,70 @@ import plotly.express as px
 import numpy as np
 from pathlib import Path
 
-from common import get_method_display_name, sort_methods, compute_batch_constants
+from common import get_method_display_name, sort_methods, compute_batch_constants, _run_bootstrap, _metric_vals
+
+
+@st.cache_data
+def _load_paired_batch_pivots(paired_predictions_path, predictions_path, adjust_constant, gamma, truncation_coefficient):
+    """Load paired predictions and return (s1_pivot, s2_pivot): pair_idx × batch_name.
+
+    Shared intermediate cached by plot_paired_log_metric_evolution and the bootstrap.
+    """
+    df = pd.read_parquet(paired_predictions_path)
+
+    if adjust_constant:
+        results_dir = str(Path(predictions_path).parent.parent.parent)
+        regular_df = pd.read_parquet(predictions_path)
+        batch_constants = compute_batch_constants(regular_df, results_dir, gamma, truncation_coefficient)
+        if batch_constants is not None:
+            df = df.copy()
+            constants = df['batch_name'].map(batch_constants).fillna(0)
+            df['s1_predicted'] += constants
+            df['s2_predicted'] += constants
+
+    s1_pivot = df.pivot_table(index='pair_idx', columns='batch_name', values='s1_predicted', aggfunc='mean').dropna()
+    s2_pivot = df.pivot_table(index='pair_idx', columns='batch_name', values='s2_predicted', aggfunc='mean').dropna()
+    return s1_pivot, s2_pivot
+
+
+@st.cache_data
+def _paired_bootstrap_stderr(s1_pivot, s2_pivot, metric_name, mode, s1_gt, s2_gt, diff_gt, scale_mode,
+                              n_bootstrap=200, subsample=5000, seed=0):
+    """Bootstrap SE for paired evolution plot metrics by resampling batch columns."""
+    EPS = 1e-10
+    METRIC_KEY_MAP = {'Variance': 'variance', 'Squared Bias': 'ground_truth_error_squared', 'MSE': 'mse'}
+    metric_key = METRIC_KEY_MAP[metric_name]
+
+    common_pairs = np.array(sorted(set(s1_pivot.index) & set(s2_pivot.index)))
+    if len(common_pairs) == 0:
+        return 0.0
+
+    if len(common_pairs) > subsample:
+        rng_sub = np.random.default_rng(seed + 1)
+        common_pairs = common_pairs[np.sort(rng_sub.choice(len(common_pairs), size=subsample, replace=False))]
+
+    arrays = {
+        's1': s1_pivot.loc[common_pairs].values,
+        's2': s2_pivot.loc[common_pairs].values,
+    }
+    pair_arr = common_pairs
+
+    def compute_fn(resampled):
+        rs1, rs2 = resampled['s1'], resampled['s2']
+        if mode == 'full':
+            vals = np.concatenate([
+                _metric_vals(rs1, metric_key, s1_gt[pair_arr], EPS),
+                _metric_vals(rs2, metric_key, s2_gt[pair_arr], EPS),
+            ])
+        else:
+            vals = _metric_vals(rs1 - rs2, metric_key, diff_gt[pair_arr], EPS)
+        if scale_mode == 'log':
+            vals = np.log10(vals + EPS)
+        return float(vals.mean())
+
+    k = arrays['s1'].shape[1]
+    bootstrap_samples = _run_bootstrap(arrays, compute_fn, k, n_bootstrap, seed)
+    return float(np.std(bootstrap_samples)) if len(bootstrap_samples) >= 2 else 0.0
 
 
 def sort_predictions(predictions_data):
@@ -134,6 +197,24 @@ def plot_paired_log_metric_evolution(filtered_metadata, methods, adjust_constant
         if paired_data is None or not predictions_data:
             continue
 
+        s1_gt = paired_data['s1_mean']
+        s2_gt = paired_data['s2_mean']
+        diff_gt = paired_data['diff_mean']
+
+        # Load pivots and compute bootstrap stderrs per method
+        filtered_for_n_ep = filtered_metadata[filtered_metadata['n_episodes'] == n_ep]
+        pivots_by_method = {}
+        for _, row in filtered_for_n_ep.iterrows():
+            if row['method'] not in predictions_data:
+                continue
+            paired_path = Path(row['predictions_path']).parent / "paired_predictions.parquet"
+            if paired_path.exists():
+                pivots_by_method[row['method']] = _load_paired_batch_pivots(
+                    str(paired_path), row['predictions_path'],
+                    adjust_constant, row.get('policy_gamma', 0.99),
+                    row.get('truncation_coefficient', 10.0)
+                )
+
         for method, pred_df in sort_predictions(predictions_data).items():
             for metric_name, _ in metric_specs:
                 if mode == 'full':
@@ -149,12 +230,21 @@ def plot_paired_log_metric_evolution(filtered_metadata, methods, adjust_constant
                 else:
                     transformed_values = values
 
+                if method in pivots_by_method:
+                    s1_pivot, s2_pivot = pivots_by_method[method]
+                    stderr = _paired_bootstrap_stderr(
+                        s1_pivot, s2_pivot, metric_name, mode,
+                        s1_gt, s2_gt, diff_gt, scale_mode
+                    )
+                else:
+                    stderr = float(np.std(transformed_values) / np.sqrt(len(transformed_values)))
+
                 records.append({
                     'Method': get_method_display_name(method),
                     'n_episodes': n_ep,
                     'metric': metric_name,
                     'mean_value': float(np.mean(transformed_values)),
-                    'stderr': float(np.std(transformed_values) / np.sqrt(len(transformed_values)))
+                    'stderr': stderr
                 })
 
     if not records:
@@ -409,17 +499,27 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes,
         # Scatter plot: Predictions vs Ground Truth for each method
         st.markdown("### Predictions vs Ground Truth")
 
-        # Compute shared axis range across all methods
-        all_values = [all_gt_means.min(), all_gt_means.max()]
+        # Separate x and y axis ranges
+        x_min, x_max = all_gt_ci_lower.min(), all_gt_ci_upper.max()
+        x_pad = (x_max - x_min) * 0.10
+        x_range = [x_min - x_pad, x_max + x_pad]
+
+        y_min, y_max = x_min, x_max  # start from GT range for y too
         for pred_df in predictions_data.values():
             avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
             preds = np.concatenate([avg_pred['s1_predicted'].values, avg_pred['s2_predicted'].values])
-            all_values.extend([preds.min(), preds.max()])
-        shared_min = min(all_values)
-        shared_max = max(all_values)
-        padding = (shared_max - shared_min) * 0.02
-        shared_min -= padding
-        shared_max += padding
+            y_min = min(y_min, preds.min())
+            y_max = max(y_max, preds.max())
+        y_pad = (y_max - y_min) * 0.10
+        y_range = [y_min - y_pad, y_max + y_pad]
+
+        # Diagonal line spans the overlap of both ranges
+        diag_min = min(x_range[0], y_range[0])
+        diag_max = max(x_range[1], y_range[1])
+
+        # Precompute horizontal error bar arrays (asymmetric: distance from mean to lower/upper)
+        gt_err_lower = all_gt_means - all_gt_ci_lower
+        gt_err_upper = all_gt_ci_upper - all_gt_means
 
         for method, pred_df in predictions_data.items():
             avg_pred = pred_df.groupby('pair_idx')[['s1_predicted', 's2_predicted']].mean()
@@ -427,19 +527,28 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes,
 
             fig = go.Figure()
 
-            # Add scatter plot
+            # Scatter with horizontal 95% CI error bars on ground truth
             fig.add_trace(go.Scatter(
                 x=all_gt_means,
                 y=all_pred,
                 mode='markers',
                 marker=dict(size=5, opacity=0.5),
+                error_x=dict(
+                    type='data',
+                    symmetric=False,
+                    array=gt_err_upper,
+                    arrayminus=gt_err_lower,
+                    thickness=1,
+                    width=0,
+                    color='rgba(100,100,100,0.3)'
+                ),
                 name=get_method_display_name(method)
             ))
 
             # Add diagonal line
             fig.add_trace(go.Scatter(
-                x=[shared_min, shared_max],
-                y=[shared_min, shared_max],
+                x=[diag_min, diag_max],
+                y=[diag_min, diag_max],
                 mode='lines',
                 line=dict(dash='dash', color='gray'),
                 name='Perfect Prediction',
@@ -448,10 +557,10 @@ def render_full_dataset_mode(paired_data, predictions_data, methods, n_episodes,
 
             fig.update_layout(
                 title=f"{get_method_display_name(method)} - Predictions vs Ground Truth",
-                xaxis_title="Ground Truth Mean",
+                xaxis_title="Ground Truth Mean (± 95% CI)",
                 yaxis_title="Predicted Value",
-                xaxis=dict(range=[shared_min, shared_max]),
-                yaxis=dict(range=[shared_min, shared_max]),
+                xaxis=dict(range=x_range),
+                yaxis=dict(range=y_range),
                 height=400
             )
             st.plotly_chart(fig, width='stretch')
@@ -656,35 +765,53 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes, f
         # Scatter plot: Predicted differences vs Ground Truth for each method
         st.markdown("### Predicted Differences vs Ground Truth")
 
-        # Compute shared axis range across all methods
-        all_values = [diff_means.min(), diff_means.max()]
+        # Separate x and y axis ranges
+        x_min, x_max = diff_ci_lower.min(), diff_ci_upper.max()
+        x_pad = (x_max - x_min) * 0.10
+        x_range = [x_min - x_pad, x_max + x_pad]
+
+        y_min, y_max = x_min, x_max
         for pred_df in predictions_data.values():
             avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
-            all_values.extend([avg_pred.min(), avg_pred.max()])
-        shared_min = min(all_values)
-        shared_max = max(all_values)
-        padding = (shared_max - shared_min) * 0.02
-        shared_min -= padding
-        shared_max += padding
+            y_min = min(y_min, avg_pred.min())
+            y_max = max(y_max, avg_pred.max())
+        y_pad = (y_max - y_min) * 0.10
+        y_range = [y_min - y_pad, y_max + y_pad]
+
+        diag_min = min(x_range[0], y_range[0])
+        diag_max = max(x_range[1], y_range[1])
+
+        # Precompute horizontal error bar arrays (asymmetric)
+        diff_err_lower = diff_means - diff_ci_lower
+        diff_err_upper = diff_ci_upper - diff_means
 
         for method, pred_df in predictions_data.items():
             avg_pred = pred_df.groupby('pair_idx')['diff_predicted'].mean().values
 
             fig = go.Figure()
 
-            # Add scatter plot
+            # Scatter with horizontal 95% CI error bars on ground truth
             fig.add_trace(go.Scatter(
                 x=diff_means,
                 y=avg_pred,
                 mode='markers',
                 marker=dict(size=5, opacity=0.5),
+                error_x=dict(
+                    type='data',
+                    symmetric=False,
+                    array=diff_err_upper,
+                    arrayminus=diff_err_lower,
+                    thickness=1,
+                    width=0,
+                    color='rgba(100,100,100,0.3)'
+                ),
                 name=get_method_display_name(method)
             ))
 
             # Add diagonal line
             fig.add_trace(go.Scatter(
-                x=[shared_min, shared_max],
-                y=[shared_min, shared_max],
+                x=[diag_min, diag_max],
+                y=[diag_min, diag_max],
                 mode='lines',
                 line=dict(dash='dash', color='gray'),
                 name='Perfect Prediction',
@@ -697,10 +824,10 @@ def render_difference_mode(paired_data, predictions_data, methods, n_episodes, f
 
             fig.update_layout(
                 title=f"{get_method_display_name(method)} - V(s₁) - V(s₂) Predictions vs Ground Truth",
-                xaxis_title="Ground Truth Difference Mean",
+                xaxis_title="Ground Truth Difference Mean (± 95% CI)",
                 yaxis_title="Predicted Difference",
-                xaxis=dict(range=[shared_min, shared_max]),
-                yaxis=dict(range=[shared_min, shared_max]),
+                xaxis=dict(range=x_range),
+                yaxis=dict(range=y_range),
                 height=400
             )
             st.plotly_chart(fig, width='stretch')

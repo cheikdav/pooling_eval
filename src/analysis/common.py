@@ -509,85 +509,231 @@ def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
 
 
 @st.cache_data
-def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
-    """Load predictions and compute statistics aggregated across batches.
+def load_per_batch_pivot(predictions_path, dataset_type='full', s1_proportion=0.9, seed=42,
+                         temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
+    """Load predictions and return a state_idx × batch_name pivot of prediction values.
 
-    Memory-efficient: loads raw data, computes stats, then frees raw data.
-    Only the aggregated stats (one row per state) are cached.
-
-    Args:
-        predictions_path: Path to predictions.parquet file
-        n_episodes: Number of episodes (for metadata only)
-        dataset_type: 'full' for all data, 'differences' for paired differences,
-                     'temporal' for within-episode temporal differences
-        s1_proportion: Proportion of episodes for S1 partition (used for differences)
-        seed: Random seed for episode partitioning
-        temporal_p: Geometric distribution parameter for temporal gaps (used for temporal mode)
-        adjust_constant: If True, add constant so mean(predictions) = mean(ground_truth)
-        gamma: Discount factor (used for truncation filtering when adjust_constant=True)
-        truncation_coefficient: Coefficient for truncation filtering
+    This is the shared intermediate: parquet loading and dataset transformation happen
+    here once and are cached. Both compute_stats_from_predictions and the bootstrap use it.
 
     Returns:
-        DataFrame with columns: state_idx, n_episodes, mean, variance, std, count
-        where statistics are aggregated across all batches for each state
-        Also includes metadata: predictions_path, results_dir (for ground truth access)
+        DataFrame with index=state_idx, columns=batch_name, values=prediction
     """
-    # Get results_dir once (needed for constant adjustment and splits)
     predictions_path_obj = Path(predictions_path)
     results_dir = str(predictions_path_obj.parent.parent.parent)
-
-    # Load raw predictions
     df = pd.read_parquet(predictions_path)
 
-    # PHASE 1: Transform dataset
-    # Apply constant adjustment if requested
     if adjust_constant:
         batch_constants = compute_batch_constants(df, results_dir, gamma, truncation_coefficient)
-        print(f"[DEBUG adjust_constant stats] predictions_path={predictions_path}, batch_constants={'None' if batch_constants is None else f'{len(batch_constants)} batches'}")
         if batch_constants is not None:
-            mean_before = df['predicted_value'].mean()
             df = df.copy()
             df['predicted_value'] += df['batch_name'].map(batch_constants)
-            print(f"[DEBUG adjust_constant stats] mean BEFORE={mean_before:.4f}, AFTER={df['predicted_value'].mean():.4f}")
-        else:
-            print(f"[DEBUG adjust_constant stats] SKIPPED: ground truth not found")
 
-    # Apply dataset-specific transformations
     if dataset_type == 'full':
-        # No transformation needed
-        transformed_df = df
-        value_column = 'predicted_value'
+        transformed_df = df[['state_idx', 'batch_name', 'predicted_value']].copy()
+        value_col = 'predicted_value'
     elif dataset_type == 'differences':
-        # Transform to paired state differences
         split = get_differences_split(results_dir, seed, s1_proportion)
         transformed_df = _compute_differences(df, split, 'predicted_value')
-        value_column = 'difference_value'
+        value_col = 'difference_value'
     elif dataset_type == 'temporal':
-        # Transform to temporal differences
         split = get_temporal_split(results_dir, seed, temporal_p)
         transformed_df = _compute_temporal_differences(df, split, 'predicted_value')
-        value_column = 'difference_value'
+        value_col = 'difference_value'
     else:
         raise ValueError(f"Unknown dataset_type: {dataset_type}")
 
-    # PHASE 2: Aggregate statistics and add metadata
-    if transformed_df.empty:
+    return transformed_df.pivot_table(
+        index='state_idx', columns='batch_name', values=value_col, aggfunc='mean'
+    )
+
+
+def _metric_vals(arr, metric_key, gt_arr=None, epsilon=1e-10):
+    """Compute per-item metric values from a (n_items, k) resampled array.
+
+    Args:
+        arr: (n_items, k) array of resampled predictions
+        metric_key: 'variance', 'log_variance', 'mean',
+                    'ground_truth_error', 'ground_truth_error_squared', or 'mse'
+        gt_arr: (n_items,) ground truth values (required for error/mse metrics)
+        epsilon: small value for log computations
+
+    Returns:
+        (n_items,) array of per-item metric values
+    """
+    mean_v = arr.mean(axis=1)
+    var_v = arr.var(axis=1, ddof=1)
+    if metric_key == 'variance':
+        return var_v
+    elif metric_key == 'log_variance':
+        return np.log(var_v + epsilon)
+    elif metric_key == 'mean':
+        return mean_v
+    elif metric_key == 'ground_truth_error':
+        return mean_v - gt_arr
+    elif metric_key == 'ground_truth_error_squared':
+        return (mean_v - gt_arr) ** 2
+    elif metric_key == 'mse':
+        return var_v + (mean_v - gt_arr) ** 2
+    else:
+        raise ValueError(f"Unknown metric_key: {metric_key}")
+
+
+def _run_bootstrap(arrays_by_key, compute_fn, k, n_bootstrap=200, seed=0):
+    """Core bootstrap: resample k columns n_bootstrap times, return list of compute_fn results.
+
+    Callers are responsible for any row subsampling before calling this, so that closures
+    inside compute_fn stay consistent with the arrays passed in.
+
+    Args:
+        arrays_by_key: dict of aligned (n_items, k) numpy arrays
+        compute_fn: callable(resampled_by_key) -> value or None (None results are skipped)
+        k: number of columns (batches)
+
+    Returns:
+        List of non-None results from compute_fn across bootstrap replicates
+    """
+    rng = np.random.default_rng(seed)
+    results = []
+    for _ in range(n_bootstrap):
+        col_idx = rng.integers(0, k, size=k)
+        resampled = {key: arr[:, col_idx] for key, arr in arrays_by_key.items()}
+        result = compute_fn(resampled)
+        if result is not None:
+            results.append(result)
+    return results
+
+
+# Metrics that support bootstrap confidence intervals (aggregates of per-batch predictions)
+BOOTSTRAP_SUPPORTED_METRICS = {
+    'variance', 'log_variance', 'mean',
+    'ground_truth_error', 'ground_truth_error_squared', 'mse',
+    'log_variance_ratio', 'log_mean_ratio'
+}
+
+
+@st.cache_data
+def compute_bootstrap_stderr_evolution(
+    method_predictions_paths,  # tuple of (method_name, predictions_path) pairs
+    metric_key,
+    results_dir,
+    dataset_type, s1_proportion, seed, temporal_p,
+    adjust_constant, gamma, truncation_coefficient,
+    epsilon, baseline_method,
+    n_bootstrap=200, subsample_n_states=10000, bootstrap_seed=0
+):
+    """Compute bootstrap SE for evolution plot mean metric values.
+
+    Bootstraps over training batches (the k models), not states. For ratio metrics,
+    the same batch indices are resampled jointly across method and baseline.
+
+    Returns:
+        dict {method_name: bootstrap_stderr}
+    """
+    pivots = {}
+    for method, path in method_predictions_paths:
+        pivot = load_per_batch_pivot(
+            path, dataset_type, s1_proportion, seed, temporal_p,
+            adjust_constant, gamma, truncation_coefficient
+        )
+        pivots[method] = pivot.dropna()  # bootstrap requires consistent k per state
+
+    if not pivots:
+        return {}
+
+    gt_series = None
+    if metric_key in ('ground_truth_error', 'ground_truth_error_squared', 'mse'):
+        gt_df = compute_ground_truth_stats(
+            results_dir, dataset_type=dataset_type, s1_proportion=s1_proportion,
+            seed=seed, temporal_p=temporal_p, gamma=gamma,
+            truncation_coefficient=truncation_coefficient, filter_truncation=True
+        )
+        if not gt_df.empty:
+            gt_series = gt_df.set_index('state_idx')['ground_truth_value']
+
+    # Intersect state indices across all methods (and GT if needed)
+    state_sets = [set(p.index) for p in pivots.values()]
+    if gt_series is not None:
+        state_sets.append(set(gt_series.index))
+    common_states = sorted(set.intersection(*state_sets))
+
+    if len(common_states) == 0:
+        return {m: 0.0 for m, _ in method_predictions_paths}
+
+    if len(common_states) > subsample_n_states:
+        rng_sub = np.random.default_rng(bootstrap_seed + 1)
+        sub_idx = np.sort(rng_sub.choice(len(common_states), size=subsample_n_states, replace=False))
+        common_states = [common_states[i] for i in sub_idx]
+
+    arrays = {m: pivots[m].loc[common_states].values for m in pivots}  # (n_states, k)
+    gt_arr = gt_series.loc[common_states].values if gt_series is not None else None
+    k = next(iter(arrays.values())).shape[1]
+    methods_list = [m for m, _ in method_predictions_paths]
+
+    def compute_fn(resampled_arrays):
+        result = {}
+        for m in methods_list:
+            if m not in resampled_arrays:
+                continue
+            r = resampled_arrays[m]
+            if metric_key in ('log_variance_ratio', 'log_mean_ratio'):
+                if baseline_method not in resampled_arrays:
+                    continue
+                br = resampled_arrays[baseline_method]
+                if metric_key == 'log_variance_ratio':
+                    vals = (_metric_vals(r, 'log_variance', epsilon=epsilon)
+                            - _metric_vals(br, 'log_variance', epsilon=epsilon))
+                else:
+                    vals = (np.log(np.abs(r.mean(axis=1)) + epsilon)
+                            - np.log(np.abs(br.mean(axis=1)) + epsilon))
+            else:
+                if gt_arr is None and metric_key in ('ground_truth_error', 'ground_truth_error_squared', 'mse'):
+                    continue
+                vals = _metric_vals(r, metric_key, gt_arr, epsilon)
+            result[m] = float(vals.mean())
+        return result or None
+
+    bootstrap_samples = _run_bootstrap(arrays, compute_fn, k, n_bootstrap, bootstrap_seed)
+
+    return {
+        m: float(np.std([s[m] for s in bootstrap_samples if m in s])) if bootstrap_samples else 0.0
+        for m in methods_list
+    }
+
+
+@st.cache_data
+def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
+    """Load predictions and compute statistics aggregated across batches.
+
+    Derives from load_per_batch_pivot so parquet loading and transformation are cached
+    and shared with the bootstrap computation.
+
+    Returns:
+        DataFrame with columns: state_idx, n_episodes, mean, variance, std, count
+        Also includes metadata: predictions_path, results_dir
+    """
+    predictions_path_obj = Path(predictions_path)
+    results_dir = str(predictions_path_obj.parent.parent.parent)
+
+    pivot = load_per_batch_pivot(
+        predictions_path, dataset_type, s1_proportion, seed, temporal_p,
+        adjust_constant, gamma, truncation_coefficient
+    )
+
+    if pivot.empty:
         stats = pd.DataFrame(columns=['state_idx', 'n_episodes', 'mean', 'variance', 'std', 'count'])
     else:
-        stats = transformed_df.groupby('state_idx')[value_column].agg(
-            mean='mean',
-            variance='var',
-            std='std',
-            count='count'
-        ).reset_index()
+        stats = pd.DataFrame({
+            'state_idx': pivot.index,
+            'mean': pivot.mean(axis=1).values,
+            'variance': pivot.var(axis=1, ddof=1).values,
+            'std': pivot.std(axis=1, ddof=1).values,
+            'count': pivot.count(axis=1).values,
+        })
 
-    # Add metadata
     stats['n_episodes'] = n_episodes
     stats['predictions_path'] = predictions_path
     stats['results_dir'] = results_dir
-
-    # Clean up
-    del df, transformed_df
     return stats
 
 

@@ -6,7 +6,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from metrics import METRICS
-from common import get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants, compute_ground_truth_stats, MetricContext
+from common import (get_method_display_name, compute_stats_from_predictions, compute_all_batch_constants,
+                    compute_ground_truth_stats, MetricContext,
+                    BOOTSTRAP_SUPPORTED_METRICS, compute_bootstrap_stderr_evolution)
 
 
 def plot_metric_for_single_episodes(context: MetricContext, metric_key: str):
@@ -149,49 +151,63 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
     """
     metric_info = METRICS[metric_key]
     is_comparison = metric_info['is_comparison']
+    use_bootstrap = metric_key in BOOTSTRAP_SUPPORTED_METRICS
 
     # Collect summary statistics for each method
     summary_records = []
 
     # Process one n_episodes at a time
     for n_ep in n_episodes_values:
-        # Compute ground truth stats once per n_episodes (for ground_truth_error metric)
+        # Get metadata rows for this n_episodes
+        rows_at_n_ep = {
+            method: metadata_df[(metadata_df['method'] == method) & (metadata_df['n_episodes'] == n_ep)]
+            for method in methods
+        }
+        available_methods = {m for m, r in rows_at_n_ep.items() if not r.empty}
+        if not available_methods:
+            continue
+
+        any_row = rows_at_n_ep[next(iter(available_methods))].iloc[0]
+        from pathlib import Path
+        results_dir = str(Path(any_row['predictions_path']).parent.parent.parent)
+        gamma = any_row.get('policy_gamma', 0.99)
+        truncation_coefficient = any_row.get('truncation_coefficient', 10.0)
+
+        # Compute ground truth stats once per n_episodes (for error/mse metrics)
         ground_truth_stats = None
         if metric_key in ('ground_truth_error', 'ground_truth_error_squared', 'mse', 'bias_variance_decomposition'):
-            # Get results_dir and gamma from any method at this n_episodes
-            any_method_row = metadata_df[metadata_df['n_episodes'] == n_ep]
-            if not any_method_row.empty:
-                predictions_path = any_method_row.iloc[0]['predictions_path']
-                gamma = any_method_row.iloc[0].get('policy_gamma', 0.99)
-                truncation_coefficient = any_method_row.iloc[0].get('truncation_coefficient', 10.0)
-                from pathlib import Path
-                results_dir = str(Path(predictions_path).parent.parent.parent)
-                ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
-                                                                s1_proportion=0.9, seed=42,
-                                                                temporal_p=temporal_p,
-                                                                gamma=gamma,
-                                                                truncation_coefficient=truncation_coefficient,
-                                                                filter_truncation=True)
+            ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
+                                                            s1_proportion=0.9, seed=42,
+                                                            temporal_p=temporal_p,
+                                                            gamma=gamma,
+                                                            truncation_coefficient=truncation_coefficient,
+                                                            filter_truncation=True)
 
         # Load stats for all methods at this n_episodes
         method_stats_dict = {}
-        for method in methods:
-            method_row = metadata_df[(metadata_df['method'] == method) &
-                                    (metadata_df['n_episodes'] == n_ep)]
-            if not method_row.empty:
-                row = method_row.iloc[0]
-                method_stats_dict[method] = compute_stats_from_predictions(
-                    row['predictions_path'],
-                    n_ep,
-                    dataset_type=dataset_type,
-                    temporal_p=temporal_p,
-                    adjust_constant=adjust_constant,
-                    gamma=row.get('policy_gamma'),
-                    truncation_coefficient=row.get('truncation_coefficient', 10.0)
-                )
+        for method in available_methods:
+            row = rows_at_n_ep[method].iloc[0]
+            method_stats_dict[method] = compute_stats_from_predictions(
+                row['predictions_path'], n_ep,
+                dataset_type=dataset_type, temporal_p=temporal_p,
+                adjust_constant=adjust_constant,
+                gamma=row.get('policy_gamma'),
+                truncation_coefficient=row.get('truncation_coefficient', 10.0)
+            )
 
-        if not method_stats_dict:
-            continue
+        # Compute bootstrap stderrs for all methods at once (shared batch resampling)
+        bootstrap_stderrs = {}
+        if use_bootstrap:
+            method_paths = tuple(
+                (m, rows_at_n_ep[m].iloc[0]['predictions_path'])
+                for m in available_methods
+            )
+            bootstrap_stderrs = compute_bootstrap_stderr_evolution(
+                method_paths, metric_key, results_dir,
+                dataset_type, 0.9, 42, temporal_p,
+                adjust_constant, gamma, truncation_coefficient,
+                epsilon, baseline_method
+            )
 
         # Create MetricContext for this n_episodes
         context = MetricContext(
@@ -208,28 +224,27 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
 
         # Process each method for this n_episodes
         for method in methods:
-            # For comparison metrics, skip the baseline method
             if is_comparison and method == baseline_method:
                 continue
-
             if method not in method_stats_dict:
                 continue
 
-            # Compute metric using context
             compute_fn = metric_info['compute_fn']
             metric_df = compute_fn(context, method)
 
-            # Store summary statistics
             if not metric_df.empty:
                 n_states = len(metric_df)
+                if use_bootstrap and method in bootstrap_stderrs:
+                    stderr = bootstrap_stderrs[method]
+                else:
+                    stderr = metric_df['metric_value'].std() / (n_states ** 0.5)
                 summary_records.append({
                     'method': get_method_display_name(method),
                     'n_episodes': n_ep,
                     'mean': metric_df['metric_value'].mean(),
-                    'stderr': metric_df['metric_value'].std() / (n_states ** 0.5)
+                    'stderr': stderr
                 })
 
-        # Clean up after processing this n_episodes
         del method_stats_dict, context
 
     if not summary_records:
