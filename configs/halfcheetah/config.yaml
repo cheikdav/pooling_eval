@@ -38,7 +38,7 @@ value_estimators:
   training:
     max_epochs: 30000
     batch_size: 256
-    convergence_patience: 60
+    convergence_patience: 100
     convergence_threshold: 0.01
     eval_frequency: 20
     gamma: 0.98
@@ -73,5 +73,5 @@ logging:
 paired_state:
   enabled: true
   n_pairs: 100
-  n_trajectories_per_state: 50
+  n_trajectories_per_state: 800
   seed: 42

@@ -52,14 +52,14 @@ value_estimators:
         - 100
 
   methods:
-  - least_squares_mc
-  - least_squares_td
+  #- least_squares_mc
+  #- least_squares_td
   - least_squares_mc_rbf
   - least_squares_td_rbf
-  - monte_carlo
-  - dqn
-  - nnls_mc
-  - nnls_td
+  #- monte_carlo
+  #- dqn
+  #- nnls_mc
+  #- nnls_td
 network:
   hidden_sizes:
   - 256
