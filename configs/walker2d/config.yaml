@@ -8,7 +8,8 @@ results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Walker2d-v5
   max_episode_steps: 3000
-  reset_noise_scale: 0.02  # Noise scale for initial state (default: 0.01)
+  reset_noise_scale: 0.03  # Noise scale for initial state (default: 0.01)
+  action_noise_std: 0.18  # Standard deviation of Gaussian noise added to actions (default: 0.0)
 policy:
   algorithm: SAC
   total_timesteps: 1000000
@@ -27,13 +28,13 @@ policy:
     - 256
   use_vec_normalize: false
 data_generation:
-  n_batches: 40
-  episodes_per_batch: 100 
+  n_batches: 100
+  episodes_per_batch: 64
   deterministic_policy: false
   n_envs: 100
-  tuning_episodes: 100
+  tuning_episodes: 64
   validation_episodes_per_batch: 30
-  eval_episodes: 100
+  eval_episodes: 64
 value_estimators:
   training:
     max_epochs: 30000
@@ -44,20 +45,20 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
-        - 1
-        - 5
-        - 10
-        - 25
-        - 50
-        - 100
+        - 2
+        - 4
+        - 8
+        - 16
+        - 32
+        - 64
 
   methods:
   #- least_squares_mc
   #- least_squares_td
-  - least_squares_mc_rbf
-  - least_squares_td_rbf
-  #- monte_carlo
-  #- dqn
+  #- least_squares_mc_rbf
+  #- least_squares_td_rbf
+  - monte_carlo
+  - dqn
   #- nnls_mc
   #- nnls_td
 network:

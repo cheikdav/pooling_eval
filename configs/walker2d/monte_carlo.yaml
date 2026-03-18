@@ -5,3 +5,4 @@ batch_size: 512
 feature_extractor:
   type: identity
   normalize: post
+reward_centering: true

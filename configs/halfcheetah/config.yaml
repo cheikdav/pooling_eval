@@ -7,8 +7,9 @@ data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
   name: HalfCheetah-v5
-  max_episode_steps: 4000
+  max_episode_steps: 2500
   reset_noise_scale: 0.2  # Noise scale for initial state (default: 0.01)
+  action_noise_std: 0.1
 policy:
   algorithm: SAC
   total_timesteps: 1000000
@@ -27,13 +28,13 @@ policy:
     - 256
   use_vec_normalize: false
 data_generation:
-  n_batches: 40
-  episodes_per_batch: 100
+  n_batches: 100
+  episodes_per_batch: 25
   deterministic_policy: false
   n_envs: 64
-  tuning_episodes: 100
-  validation_episodes_per_batch: 40
-  eval_episodes: 100
+  tuning_episodes: 25
+  validation_episodes_per_batch: 20
+  eval_episodes: 50
 value_estimators:
   training:
     max_epochs: 30000
@@ -44,11 +45,12 @@ value_estimators:
     gamma: 0.98
     shuffle_frequency: 100
     episode_subsets:
-        - 1
-        - 5
-        - 10
+        - 2
+        - 4
+        - 8
+        - 16
         - 25
-        - 50
+
   methods:
   - monte_carlo
   - dqn
