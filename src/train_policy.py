@@ -270,22 +270,22 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     print(f"Policy metadata saved to {metadata_path}")
 
     try:
-        if hasattr(model.policy, 'value_net'):
-            critic_info = {
-                'hidden_sizes': [layer.out_features for layer in model.policy.value_net
-                            if hasattr(layer, 'out_features')],
-            }
+        # Extract hidden sizes from the critic network
+        # For PPO/A2C: hidden layers are in mlp_extractor.value_net, not value_net (which is just the output head)
+        hidden_sizes = None
+        if hasattr(model.policy, 'mlp_extractor') and hasattr(model.policy.mlp_extractor, 'value_net'):
+            hidden_sizes = [layer.out_features for layer in model.policy.mlp_extractor.value_net
+                            if isinstance(layer, torch.nn.Linear)]
         elif hasattr(model.policy, 'q_net'):
-            critic_info = {
-                'hidden_sizes': [layer.out_features for layer in model.policy.q_net
-                            if hasattr(layer, 'out_features')],
-            }
-        else:
-            critic_info = {'hidden_sizes': config.network.hidden_sizes}
+            hidden_sizes = [layer.out_features for layer in model.policy.q_net
+                            if isinstance(layer, torch.nn.Linear)]
+
+        if not hidden_sizes:
+            hidden_sizes = config.network.hidden_sizes
 
         np.savez(
             output_dir / "critic_architecture.npz",
-            **critic_info
+            hidden_sizes=hidden_sizes
         )
     except Exception as e:
         print(f"Warning: Could not save critic architecture info: {e}")
