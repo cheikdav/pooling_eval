@@ -51,6 +51,7 @@ class EnvironmentConfig:
     name: str
     max_episode_steps: Optional[int] = None
     reset_noise_scale: Optional[float] = None  # Noise scale for MuJoCo environment resets (default: 0.01 in MuJoCo)
+    action_noise_std: Optional[float] = None  # Gaussian noise std added to actions (post-tanh, in action space)
 
 
 @dataclass

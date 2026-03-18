@@ -1,6 +1,7 @@
 """Utilities for environment creation and configuration."""
 
 import gymnasium as gym
+import numpy as np
 from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
@@ -13,6 +14,19 @@ from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTD
 
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='gymnasium')
+
+class ActionNoiseWrapper(gym.Wrapper):
+    """Adds fixed Gaussian noise to actions, clipped to the action space bounds."""
+
+    def __init__(self, env: gym.Env, noise_std: float):
+        super().__init__(env)
+        self.noise_std = noise_std
+
+    def step(self, action):
+        noisy_action = action + self.np_random.normal(0, self.noise_std, size=action.shape)
+        noisy_action = np.clip(noisy_action, self.action_space.low, self.action_space.high)
+        return self.env.step(noisy_action)
+
 
 ALGORITHM_MAP = {
     "PPO": PPO,
@@ -38,7 +52,7 @@ ESTIMATOR_CLASSES = {
 }
 
 
-def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_episode_steps: int = None, reset_noise_scale: float = None) -> Callable:
+def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_episode_steps: int = None, reset_noise_scale: float = None, action_noise_std: float = None) -> Callable:
     """Create a factory function for environment creation.
 
     Args:
@@ -59,6 +73,8 @@ def make_env_fn(env_name: str, use_monitor: bool = True, seed: int = None, max_e
             env_kwargs['reset_noise_scale'] = reset_noise_scale
 
         env = gym.make(env_name, **env_kwargs)
+        if action_noise_std is not None:
+            env = ActionNoiseWrapper(env, action_noise_std)
         if use_monitor:
             env = Monitor(env)
         if seed is not None:
@@ -96,7 +112,8 @@ def create_vec_env(
             use_monitor,
             seed + i,
             config.environment.max_episode_steps,
-            config.environment.reset_noise_scale
+            config.environment.reset_noise_scale,
+            config.environment.action_noise_std,
         )
         for i in range(n_envs)
     ]
