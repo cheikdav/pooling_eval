@@ -58,6 +58,7 @@ class ValueEstimator(ABC):
         self.mean_reward = 0.0
         self._reward_sum = 0.0
         self._reward_count = 0
+        self._n_terminated = 0
 
         if device == "auto":
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -123,15 +124,21 @@ class ValueEstimator(ABC):
         rewards = mini_batch['rewards']
         self._reward_sum += rewards.sum().item()
         self._reward_count += len(rewards)
+        self._n_terminated += mini_batch['dones'].sum().item()
 
     def finalize_pre_training(self, reward_centering: bool = False):
         """Finalize pre-training: compute mean_reward from accumulated stats.
+
+        Corrects for episode terminations: each terminated episode implies an infinite
+        tail of zero rewards, so we add n_terminated/(1-gamma) phantom steps to the
+        denominator to avoid overestimating r_bar.
 
         Args:
             reward_centering: If True, set mean_reward from accumulated reward statistics.
         """
         if reward_centering and self._reward_count > 0:
-            self.mean_reward = self._reward_sum / self._reward_count
+            effective_count = self._reward_count + self._n_terminated / (1 - self.discount_factor)
+            self.mean_reward = self._reward_sum / effective_count
 
     def cache_features_in_dataset(self, dataset, batch_size: int = 1024):
         """Extract and cache features for entire dataset to avoid recomputation.
