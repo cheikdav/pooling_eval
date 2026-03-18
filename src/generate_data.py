@@ -104,34 +104,8 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
     return completed_episodes[:n_episodes]
 
 
-def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
-                  batch_seed: int = None, use_vec_normalize: bool = False) -> Dict[str, List[np.ndarray]]:
-    """Collect a batch of episodes using parallel environments.
-
-    Args:
-        env: VecEnv (SubprocVecEnv, optionally wrapped with VecNormalize)
-        model: Trained SB3 model
-        n_episodes: Number of episodes to collect
-        deterministic: Whether to use deterministic actions
-        batch_seed: Random seed for this batch
-        use_vec_normalize: Whether VecNormalize is used
-
-    Returns:
-        Dictionary containing lists of arrays (one per episode):
-            - observations: List of (T_i, obs_dim) arrays
-            - actions: List of (T_i,) or (T_i, act_dim) arrays
-            - rewards: List of (T_i,) arrays
-            - dones: List of (T_i,) arrays
-            - next_observations: List of (T_i, obs_dim) arrays
-            - truncated: (n_episodes,) boolean array indicating if episode was truncated
-            - episode_lengths: (n_episodes,) array of episode lengths
-            - episode_returns: (n_episodes,) array of total returns
-    """
-    if batch_seed is not None:
-        np.random.seed(batch_seed)
-
-    episodes = collect_episodes_parallel(env, model, n_episodes, deterministic, use_vec_normalize)
-
+def episodes_to_batch(episodes: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray]:
+    """Convert a list of episode dicts into batch dict format."""
     batch_data = {
         'observations': [],
         'actions': [],
@@ -146,7 +120,6 @@ def collect_batch(env, model, n_episodes: int, deterministic: bool = False,
     for episode in episodes:
         for key in episode:
             batch_data[key].append(episode[key])
-
         batch_data['episode_lengths'].append(len(episode['rewards']))
         batch_data['episode_returns'].append(episode['rewards'].sum())
 
@@ -561,53 +534,55 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     all_batch_stats = []
     current_seed = config.seed
+    val_eps = config.data_generation.validation_episodes_per_batch
 
+    def collect_and_save(batch_name, n_train, n_val, seed, skip=False):
+        """Collect train + validation episodes together, split, and save."""
+        if skip or (eval_only and batch_name != "batch_eval"):
+            print(f"  Skipping {batch_name}\n")
+            return n_train + n_val
 
-    batches_to_generate = []
-    if config.data_generation.tuning_episodes > 0:
-        batches_to_generate.append(("batch_tuning", config.data_generation.tuning_episodes))
-        if config.data_generation.validation_episodes_per_batch > 0:
-            batches_to_generate.append(("batch_tuning_validation", config.data_generation.validation_episodes_per_batch))
+        total = n_train + n_val
+        print(f"Collecting {batch_name} ({n_train}+{n_val} val = {total} episodes)")
+        np.random.seed(seed)
+        episodes = collect_episodes_parallel(env, model, total,
+                                             config.data_generation.deterministic_policy,
+                                             use_vec_normalize)
 
-    # Regular batches (each with optional validation set)
-    for i in range(config.data_generation.n_batches):
-        if i < start_batch_idx or (end_batch_idx is not None and i >= end_batch_idx):
-            batches_to_generate.append((f"skip", 0))
-            if config.data_generation.validation_episodes_per_batch > 0:
-                batches_to_generate.append((f"skip", 0))
-            continue
-        batches_to_generate.append((f"batch_{i}", config.data_generation.episodes_per_batch))
-        if config.data_generation.validation_episodes_per_batch > 0:
-            batches_to_generate.append((f"batch_{i}_validation", config.data_generation.validation_episodes_per_batch))
-
-    # Eval batch
-    if config.data_generation.eval_episodes > 0:
-        batches_to_generate.append(("batch_eval", config.data_generation.eval_episodes))
-
-    # Generate all batches
-    for batch_name, n_episodes in batches_to_generate:
-        print(f"Collecting {batch_name} ({n_episodes} episodes)")
-        if batch_name == "skip" or (eval_only and batch_name != "batch_eval"):
-            print(f"  Skipping batch {batch_name}\n")
-            current_seed += 1
-            continue
-        batch_data = collect_batch(
-            env=env,
-            model=model,
-            n_episodes=n_episodes,
-            deterministic=config.data_generation.deterministic_policy,
-            batch_seed=current_seed,
-            use_vec_normalize=use_vec_normalize
-        )
-
-        stats = save_and_log_batch(batch_data, output_dir / f"{batch_name}.npz", batch_name)
-        stats['batch_seed'] = current_seed
+        train_data = episodes_to_batch(episodes[:n_train])
+        stats = save_and_log_batch(train_data, output_dir / f"{batch_name}.npz", batch_name)
+        stats['batch_seed'] = seed
         all_batch_stats.append(stats)
 
+        if n_val > 0:
+            val_name = f"{batch_name}_validation"
+            val_data = episodes_to_batch(episodes[n_train:])
+            val_stats = save_and_log_batch(val_data, output_dir / f"{val_name}.npz", val_name)
+            val_stats['batch_seed'] = seed
+            all_batch_stats.append(val_stats)
+
+        return total
+
+    total_episodes = 0
+
+    # Tuning batch (+ validation)
+    if config.data_generation.tuning_episodes > 0:
+        total_episodes += collect_and_save(
+            "batch_tuning", config.data_generation.tuning_episodes, val_eps, current_seed)
         current_seed += 1
 
-    # Save overall statistics
-    total_episodes = sum(n_eps for _, n_eps in batches_to_generate)
+    # Regular batches (+ validation each)
+    for i in range(config.data_generation.n_batches):
+        skip = i < start_batch_idx or (end_batch_idx is not None and i >= end_batch_idx)
+        total_episodes += collect_and_save(
+            f"batch_{i}", config.data_generation.episodes_per_batch, val_eps, current_seed, skip=skip)
+        current_seed += 1
+
+    # Eval batch (no validation pair)
+    if config.data_generation.eval_episodes > 0:
+        total_episodes += collect_and_save(
+            "batch_eval", config.data_generation.eval_episodes, 0, current_seed)
+        current_seed += 1
 
     stats_file = output_dir / "data_statistics.npz"
     np.savez(
