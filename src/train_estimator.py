@@ -1,13 +1,13 @@
 """Train a single value estimator on a batch of data."""
 
 import argparse
+import copy
 from collections import defaultdict
 import numpy as np
 from pathlib import Path
 import torch
 import wandb
 import json
-import copy
 from dataclasses import asdict
 import sys
 from datetime import datetime
@@ -180,7 +180,7 @@ def train_single_estimator(
     final_mc_loss_train = float('inf')
     final_mc_loss_val = float('inf')
     best_mc_loss = float('inf')
-    best_estimator = None
+    best_checkpoint = None
     use_validation = validation_dataset is not None
     converged = False
     final_epoch = 0
@@ -307,7 +307,7 @@ def train_single_estimator(
         )
         if last_improvement_epoch == epoch:
             best_mc_loss = final_mc_loss
-            best_estimator = copy.deepcopy(estimator)
+            best_checkpoint = copy.deepcopy(estimator._build_checkpoint())
         
         is_last_epoch = (epoch == max_epochs - 1) or converged
         if (log_frequency > 0 and epoch % log_frequency == 0) or is_last_epoch:
@@ -385,7 +385,10 @@ def train_single_estimator(
                         print(f"stderr: {e.stderr}")
                     print(f"You can manually sync later with: wandb sync {run_dir}")
 
-    return best_mc_loss, best_estimator if best_estimator is not None else estimator
+    # Restore best checkpoint weights (deepcopy fails with torch.compile)
+    if best_checkpoint is not None:
+        estimator._load_from_checkpoint_dict(best_checkpoint)
+    return best_mc_loss, estimator
 
 
 def train_episode_count_worker(
