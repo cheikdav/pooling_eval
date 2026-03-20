@@ -2,12 +2,12 @@
 # Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: test_per_episode_hyperparams
-seed: 42
 data_root: .
 environment:
   name: CartPole-v1
 policy:
   algorithm: PPO
+  seed: 42
   total_timesteps: 10000
   learning_rate: 0.0003
   n_steps: 2048
@@ -27,6 +27,7 @@ data_generation:
   n_envs: 64
   tuning_episodes: 1000
   validation_episodes_per_batch: 200
+  seed: 42
 value_estimators:
   training:
     max_epochs: 1000
@@ -41,6 +42,7 @@ value_estimators:
     - 500
     - 1000
     shuffle_frequency: 100
+    seed: 42
   methods:
   - monte_carlo
   - dqn
@@ -64,4 +66,4 @@ evaluation:
   eval_episodes: 400
   paired_states_n_pairs: 100
   paired_states_n_trajectories: 50
-  paired_states_seed: 42
+  seed: 42

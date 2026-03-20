@@ -80,6 +80,7 @@ class PolicyConfig:
     normalize_obs: bool = True
     normalize_reward: bool = True
     vec_normalize_kwargs: Dict[str, Any] = field(default_factory=dict)
+    seed: int = 42
 
 
 @dataclass
@@ -90,6 +91,7 @@ class DataGenerationConfig:
     n_envs: int = 1
     tuning_episodes: int = 0
     validation_episodes_per_batch: int = 0
+    seed: int = 42
 
 
 @dataclass
@@ -104,6 +106,7 @@ class ValueEstimatorTrainingConfig:
     shuffle_frequency: int = 100  # Re-shuffle DataLoader every N epochs (0 = never, 1 = every epoch)
     truncation_coefficient: float = 5.0  # Discard last truncation_coefficient/(1-gamma) states from each episode
     reward_centering: bool = False  # Subtract mean reward from all rewards (for NN methods)
+    seed: int = 42
 
 
 class FeatureExtractorType(str, Enum):
@@ -303,13 +306,12 @@ class EvaluationConfig:
     eval_episodes: int = 0
     paired_states_n_pairs: int = 0  # 0 = no paired states
     paired_states_n_trajectories: int = 50
-    paired_states_seed: int = 42
+    seed: int = 42
 
 
 @dataclass
 class ExperimentConfig:
     experiment_id: str
-    seed: int
     environment: EnvironmentConfig
     policy: PolicyConfig
     data_generation: DataGenerationConfig
@@ -462,7 +464,6 @@ class ExperimentConfig:
 
         return cls(
             experiment_id=config_dict['experiment_id'],
-            seed=config_dict['seed'],
             environment=env_config,
             policy=policy_config,
             data_generation=data_gen_config,

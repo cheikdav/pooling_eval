@@ -98,13 +98,13 @@ def create_vec_env(
         n_envs: Number of parallel environments
         use_monitor: Whether to wrap with Monitor
         vec_normalize_path: Path to load existing VecNormalize stats
-        seed: Random seed (defaults to config.seed)
+        seed: Random seed (required)
 
     Returns:
         Tuple of (environment, use_vec_normalize flag)
     """
     if seed is None:
-        seed = config.seed
+        raise ValueError("seed must be provided to create_vec_env")
 
     env_fns = [
         make_env_fn(

@@ -41,7 +41,8 @@ def estimate_storage(config_path: str, target_gb: float, n_batches: int = 80, sa
         config,
         n_envs=1,
         use_monitor=False,
-        vec_normalize_path=vec_normalize_path
+        vec_normalize_path=vec_normalize_path,
+        seed=config.data_generation.seed
     )
 
     # Generate sample episodes

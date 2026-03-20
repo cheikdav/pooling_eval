@@ -2,7 +2,6 @@
 # Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: hopper_baseline
-seed: 42
 data_root: /scratch/dc3430/pooling_eval
 environment:
   name: Hopper-v5
@@ -10,6 +9,7 @@ environment:
   reset_noise_scale: 0.02  # Noise scale for initial state (default: 0.01)
 policy:
   algorithm: SAC
+  seed: 42
   total_timesteps: 300000
   learning_rate: 0.0003
   batch_size: 256
@@ -32,6 +32,7 @@ data_generation:
   n_envs: 122
   tuning_episodes: 80
   validation_episodes_per_batch: 42
+  seed: 42
 value_estimators:
   training:
     max_epochs: 30000
@@ -41,6 +42,7 @@ value_estimators:
     eval_frequency: 20
     gamma: 0.99
     shuffle_frequency: 100
+    seed: 42
     episode_subsets:
        - 10
        - 15
@@ -73,5 +75,5 @@ evaluation:
   eval_episodes: 80
   paired_states_n_pairs: 100
   paired_states_n_trajectories: 4000
-  paired_states_seed: 42
+  seed: 42
 

@@ -413,6 +413,11 @@ def train_episode_count_worker(
     """
     method_name = method_config.name
 
+    # Seed for reproducibility: base seed + deterministic offset from batch/episode/method
+    train_seed = config.value_estimators.training.seed + hash((method_name, batch_name, n_episodes)) % (2**31)
+    np.random.seed(train_seed)
+    torch.manual_seed(train_seed)
+
     # Load and preprocess validation batch if it exists
     validation_dataset = None
     truncation_coefficient = config.value_estimators.training.truncation_coefficient
@@ -513,7 +518,7 @@ def train_episode_count_worker(
             'batch_path': str(batch_path),
             'gamma': gamma,
             'final_mc_loss': final_mc_loss,
-            'seed': config.seed,
+            'seed': config.value_estimators.training.seed,
             'max_epochs': config.value_estimators.training.max_epochs,
             'convergence_threshold': config.value_estimators.training.convergence_threshold,
             'convergence_patience': config.value_estimators.training.convergence_patience,

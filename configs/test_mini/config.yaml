@@ -1,0 +1,45 @@
+experiment_id: test_mini
+seed: 42
+environment:
+  name: CartPole-v1
+policy:
+  algorithm: PPO
+  total_timesteps: 2000
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_envs: 4
+data_generation:
+  n_batches: 1
+  episodes_per_batch: 10
+  deterministic_policy: false
+  n_envs: 4
+  validation_episodes_per_batch: 5
+value_estimators:
+  training:
+    max_epochs: 200
+    batch_size: 64
+    convergence_patience: 20
+    convergence_threshold: 0.0001
+    eval_frequency: 10
+    gamma: 0.99
+    episode_subsets: [5, 10]
+    shuffle_frequency: 50
+  methods:
+  - monte_carlo
+  - dqn
+network:
+  hidden_sizes: [32, 32]
+  activation: relu
+  device: auto
+logging:
+  use_wandb: false
+  wandb_project: pooling-eval
+  wandb_entity: null
+  log_frequency: 10
+evaluation:
+  eval_episodes: 5
+  paired_states_n_pairs: 0

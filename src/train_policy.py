@@ -118,17 +118,17 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
                 'total_timesteps': config.policy.total_timesteps,
                 'learning_rate': config.policy.learning_rate,
                 'gamma': config.policy.gamma,
-                'seed': config.seed,
+                'seed': config.policy.seed,
                 'experiment_id': config.experiment_id,
                 **config.policy.__dict__,
             },
             tags=['policy_training', config.policy.algorithm, config.environment.name],
         )
 
-    np.random.seed(config.seed)
-    torch.manual_seed(config.seed)
+    np.random.seed(config.policy.seed)
+    torch.manual_seed(config.policy.seed)
 
-    env, _ = create_vec_env(config, n_envs=config.policy.n_envs, use_monitor=True)
+    env, _ = create_vec_env(config, n_envs=config.policy.n_envs, use_monitor=True, seed=config.policy.seed)
 
     if config.policy.algorithm not in ALGORITHM_MAP:
         raise ValueError(f"Unknown algorithm: {config.policy.algorithm}. "
@@ -147,7 +147,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
         "learning_rate": config.policy.learning_rate,
         "gamma": config.policy.gamma,
         "verbose": 2,
-        "seed": config.seed,
+        "seed": config.policy.seed,
     }
 
     if config.policy.algorithm in ["PPO", "A2C"]:
@@ -244,7 +244,7 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
         'total_timesteps': config.policy.total_timesteps,
         'learning_rate': config.policy.learning_rate,
         'gamma': config.policy.gamma,
-        'seed': config.seed,
+        'seed': config.policy.seed,
         'average_reward': avg_reward,
         'n_envs': config.policy.n_envs,
         'use_vec_normalize': config.policy.use_vec_normalize,

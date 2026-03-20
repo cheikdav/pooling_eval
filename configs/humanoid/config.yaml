@@ -2,13 +2,13 @@
 # Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: humanoid_baseline
-seed: 42
 data_root: /scratch/dc3430/pooling_eval
 environment:
   name: Humanoid-v5
   reset_noise_scale: 0.04  # Noise scale for initial state (default: 0.01)
 policy:
   algorithm: PPO
+  seed: 42
   total_timesteps: 20000000
   learning_rate: 3.0e-05
   n_steps: 64
@@ -40,6 +40,7 @@ data_generation:
   n_envs: 128
   tuning_episodes: 80
   validation_episodes_per_batch: 42
+  seed: 42
 value_estimators:
   training:
     max_epochs: 100000
@@ -49,6 +50,7 @@ value_estimators:
     eval_frequency: 20
     gamma: 0.99
     shuffle_frequency: 100
+    seed: 42
     episode_subsets:
     - 10
     - 15
@@ -81,4 +83,4 @@ evaluation:
   eval_episodes: 100
   paired_states_n_pairs: 100
   paired_states_n_trajectories: 4000
-  paired_states_seed: 237
+  seed: 237

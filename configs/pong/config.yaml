@@ -2,12 +2,12 @@
 # Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: pong_test
-seed: 42
 data_root: /scratch/dc3430/pooling_eval
 environment:
   name: ALE/Pong-v5
 policy:
   algorithm: PPO
+  seed: 42
   total_timesteps: 2000000
   learning_rate: 0.00025
   n_steps: 128
@@ -27,6 +27,7 @@ data_generation:
   n_envs: 16
   tuning_episodes: 200
   validation_episodes_per_batch: 50
+  seed: 42
 value_estimators:
   training:
     max_epochs: 80000
@@ -41,6 +42,7 @@ value_estimators:
     - 150
     - 200
     shuffle_frequency: 100
+    seed: 42
   methods:
   - monte_carlo
   - dqn
@@ -63,3 +65,4 @@ logging:
   wandb_mode: offline
 evaluation:
   eval_episodes: 100
+  seed: 42

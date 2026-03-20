@@ -108,7 +108,7 @@ def get_policy_params(config: ExperimentConfig) -> dict:
         'use_vec_normalize': p.use_vec_normalize,
         'normalize_obs': p.normalize_obs,
         'normalize_reward': p.normalize_reward,
-        'seed': config.seed,
+        'seed': p.seed,
         'network': {
             'hidden_sizes': config.network.hidden_sizes,
             'activation': config.network.activation,
@@ -132,6 +132,7 @@ def get_data_params(config: ExperimentConfig) -> dict:
         'n_envs': dg.n_envs,
         'tuning_episodes': dg.tuning_episodes,
         'validation_episodes_per_batch': dg.validation_episodes_per_batch,
+        'seed': dg.seed,
         'code_version': config.code_versions.data,
     }
 
@@ -153,6 +154,7 @@ def get_estimator_params(config: ExperimentConfig, method_config: BaseEstimatorC
         'shuffle_frequency': t.shuffle_frequency,
         'truncation_coefficient': t.truncation_coefficient,
         'reward_centering': t.reward_centering,
+        'seed': t.seed,
     }
 
     method = method_config.to_dict()
@@ -175,7 +177,7 @@ def get_eval_params(config: ExperimentConfig) -> dict:
         'eval_episodes': ev.eval_episodes,
         'paired_states_n_pairs': ev.paired_states_n_pairs,
         'paired_states_n_trajectories': ev.paired_states_n_trajectories,
-        'paired_states_seed': ev.paired_states_seed,
+        'seed': ev.seed,
         'gamma': config.value_estimators.training.gamma,
         'code_version': config.code_versions.evaluation,
     }

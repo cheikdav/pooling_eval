@@ -391,7 +391,7 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
 
     # Sample state pairs
     env = gym.make(config.environment.name, max_episode_steps=config.environment.max_episode_steps)
-    env.reset(seed=config.evaluation.paired_states_seed)
+    env.reset(seed=config.evaluation.seed)
 
     print("Sampling state pairs by resetting environment...")
     state_pairs = sample_state_pairs(env, config)
@@ -533,7 +533,8 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         config,
         n_envs=config.data_generation.n_envs,
         use_monitor=False,
-        vec_normalize_path=vec_normalize_path
+        vec_normalize_path=vec_normalize_path,
+        seed=config.data_generation.seed
     )
 
     if use_vec_normalize:
@@ -547,7 +548,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     print(f"Output directory: {output_dir}\n")
 
     all_batch_stats = []
-    current_seed = config.seed
+    current_seed = config.data_generation.seed
     val_eps = config.data_generation.validation_episodes_per_batch
 
     def collect_and_save(batch_name, n_train, n_val, seed, skip=False):
@@ -604,7 +605,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     np.savez(
         stats_file,
         batch_stats=all_batch_stats,
-        config_seed=config.seed,
+        config_seed=config.data_generation.seed,
         total_episodes=total_episodes,
     )
 
@@ -618,7 +619,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         'tuning_episodes': config.data_generation.tuning_episodes,
         'validation_episodes_per_batch': config.data_generation.validation_episodes_per_batch,
         'eval_episodes': config.evaluation.eval_episodes,
-        'seed': config.seed,
+        'seed': config.data_generation.seed,
         'policy_metadata': policy_metadata,
     }
 

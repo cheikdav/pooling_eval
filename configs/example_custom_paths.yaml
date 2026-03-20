@@ -7,7 +7,6 @@
 # Logs go under: {logs_root}/experiments/logs/...
 
 experiment_id: "custom_paths_example"
-seed: 42
 
 # Root directories (both default to "." if not specified)
 data_root: "/scratch/data"  # All experiment outputs

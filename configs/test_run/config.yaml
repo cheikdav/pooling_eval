@@ -2,7 +2,6 @@
 # Uses CartPole with minimal data generation and 1 init per estimator
 
 experiment_id: "test_run"
-seed: 42
 
 # Environment configuration
 environment:
@@ -11,6 +10,7 @@ environment:
 # Policy training (Stable Baselines 3)
 policy:
   algorithm: "PPO"
+  seed: 42
   total_timesteps: 5000
   learning_rate: 0.0003
   n_steps: 512
@@ -28,6 +28,7 @@ data_generation:
   n_envs: 8
   tuning_episodes: 50
   validation_episodes_per_batch: 25
+  seed: 42
 
 # Value estimator training
 value_estimators:
@@ -41,6 +42,7 @@ value_estimators:
     gamma: 0.99
     episode_subsets: [25, 50]
     shuffle_frequency: 50
+    seed: 42
 
   methods:
   - monte_carlo
@@ -69,4 +71,4 @@ evaluation:
   eval_episodes: 50
   paired_states_n_pairs: 100
   paired_states_n_trajectories: 50
-  paired_states_seed: 42
+  seed: 42
