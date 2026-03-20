@@ -83,7 +83,7 @@ def load_predictions_data(experiments_dir):
     return pd.DataFrame(all_preds)
 
 
-def filter_states_far_from_truncation(df: pd.DataFrame, gamma: float, truncation_coefficient: float = 10.0) -> pd.DataFrame:
+def filter_states_far_from_truncation(df: pd.DataFrame, gamma: float, truncation_coefficient: float = 5.0) -> pd.DataFrame:
     """Filter states that are at least C/(1-gamma) steps away from episode end for truncated episodes.
 
     For truncated episodes, only keep states where (episode_length - timestep_in_episode - 1) >= C/(1-gamma).
@@ -111,7 +111,7 @@ def filter_states_far_from_truncation(df: pd.DataFrame, gamma: float, truncation
 
 
 @st.cache_data
-def _get_ground_truth_mean(results_dir, gamma=None, truncation_coefficient=10.0, filter_truncation=True):
+def _get_ground_truth_mean(results_dir, gamma=None, truncation_coefficient=5.0, filter_truncation=True):
     """Load ground truth and return mean value (cached).
 
     Args:
@@ -383,7 +383,7 @@ def _compute_temporal_differences(df, split, value_column):
 
 @st.cache_data
 def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2,
-                                gamma=None, truncation_coefficient=10.0, filter_truncation=True):
+                                gamma=None, truncation_coefficient=5.0, filter_truncation=True):
     """Load ground truth and compute statistics matching the dataset type.
 
     Args:
@@ -437,7 +437,7 @@ def compute_ground_truth_stats(results_dir, dataset_type='full', s1_proportion=0
 
 
 @st.cache_data
-def compute_batch_constants(df, results_dir, gamma, truncation_coefficient=10.0):
+def compute_batch_constants(df, results_dir, gamma, truncation_coefficient=5.0):
     """Compute per-batch adjustment constants for a single predictions DataFrame.
 
     For each batch, computes: mean_ground_truth - mean_batch_predictions
@@ -491,7 +491,7 @@ def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
         predictions_path = row['predictions_path']
         results_dir = str(Path(predictions_path).parent.parent.parent)
         gamma = row.get('policy_gamma', 0.99)
-        truncation_coefficient = row.get('truncation_coefficient', 10.0)
+        truncation_coefficient = row.get('truncation_coefficient', 5.0)
 
         df = pd.read_parquet(predictions_path)
         batch_constants = compute_batch_constants(df, results_dir, gamma, truncation_coefficient)
@@ -510,7 +510,7 @@ def compute_all_batch_constants(filtered_metadata, methods, n_episodes):
 
 @st.cache_data
 def load_per_batch_pivot(predictions_path, dataset_type='full', s1_proportion=0.9, seed=42,
-                         temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
+                         temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=5.0):
     """Load predictions and return a state_idx × batch_name pivot of prediction values.
 
     This is the shared intermediate: parquet loading and dataset transformation happen
@@ -702,7 +702,7 @@ def compute_bootstrap_stderr_evolution(
 
 
 @st.cache_data
-def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
+def compute_stats_from_predictions(predictions_path, n_episodes, dataset_type='full', s1_proportion=0.9, seed=42, temporal_p=0.2, adjust_constant=False, gamma=None, truncation_coefficient=5.0):
     """Load predictions and compute statistics aggregated across batches.
 
     Derives from load_per_batch_pivot so parquet loading and transformation are cached
@@ -765,7 +765,7 @@ def apply_data_filters(stats, filter_high_variance=0, filter_extreme_mean=0):
 
 
 @st.cache_data
-def load_predictions_for_trajectory(predictions_path, adjust_constant=False, gamma=None, truncation_coefficient=10.0):
+def load_predictions_for_trajectory(predictions_path, adjust_constant=False, gamma=None, truncation_coefficient=5.0):
     """Load predictions and compute mean across batches for each state.
 
     Args:

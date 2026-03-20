@@ -56,7 +56,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
     stats_dict_single = {}
     for _, row in filtered_for_n_ep.iterrows():
         if row['method'] in methods:
-            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
+            stats = compute_stats_from_predictions(row['predictions_path'], row['n_episodes'], dataset_type=dataset_type, temporal_p=temporal_p, adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 5.0))
             # Apply data filters
             stats = apply_data_filters(stats, filter_high_variance, filter_extreme_mean)
             stats_dict_single[row['method']] = stats
@@ -73,7 +73,7 @@ def render_tab(filtered_metadata, methods, baseline_method, epsilon, dataset_typ
         if 'results_dir' in first_method_stats.columns:
             results_dir = first_method_stats['results_dir'].iloc[0]
             gamma = first_method_stats.get('policy_gamma', pd.Series([0.99])).iloc[0]
-            truncation_coefficient = first_method_stats.get('truncation_coefficient', pd.Series([10.0])).iloc[0]
+            truncation_coefficient = first_method_stats.get('truncation_coefficient', pd.Series([5.0])).iloc[0]
             ground_truth_stats = compute_ground_truth_stats(results_dir, dataset_type=dataset_type,
                                                             s1_proportion=0.9, seed=42,
                                                             temporal_p=temporal_p,

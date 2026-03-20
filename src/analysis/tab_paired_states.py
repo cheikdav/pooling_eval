@@ -111,7 +111,7 @@ def load_paired_inputs_for_n_episodes(filtered_metadata, methods, n_episodes, ad
         if adjust_constant:
             results_dir_str = str(predictions_path.parent.parent.parent)
             gamma = row.get('policy_gamma', 0.99)
-            truncation_coefficient = row.get('truncation_coefficient', 10.0)
+            truncation_coefficient = row.get('truncation_coefficient', 5.0)
 
             regular_df = pd.read_parquet(predictions_path)
             batch_constants = compute_batch_constants(regular_df, results_dir_str, gamma, truncation_coefficient)
@@ -212,7 +212,7 @@ def plot_paired_log_metric_evolution(filtered_metadata, methods, adjust_constant
                 pivots_by_method[row['method']] = _load_paired_batch_pivots(
                     str(paired_path), row['predictions_path'],
                     adjust_constant, row.get('policy_gamma', 0.99),
-                    row.get('truncation_coefficient', 10.0)
+                    row.get('truncation_coefficient', 5.0)
                 )
 
         for method, pred_df in sort_predictions(predictions_data).items():

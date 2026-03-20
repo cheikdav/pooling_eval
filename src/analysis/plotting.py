@@ -171,7 +171,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
         from pathlib import Path
         results_dir = str(Path(any_row['predictions_path']).parent.parent.parent)
         gamma = any_row.get('policy_gamma', 0.99)
-        truncation_coefficient = any_row.get('truncation_coefficient', 10.0)
+        truncation_coefficient = any_row.get('truncation_coefficient', 5.0)
 
         # Compute ground truth stats once per n_episodes (for error/mse metrics)
         ground_truth_stats = None
@@ -192,7 +192,7 @@ def plot_metric_evolution(metadata_df, metric_key, methods, baseline_method, n_e
                 dataset_type=dataset_type, temporal_p=temporal_p,
                 adjust_constant=adjust_constant,
                 gamma=row.get('policy_gamma'),
-                truncation_coefficient=row.get('truncation_coefficient', 10.0)
+                truncation_coefficient=row.get('truncation_coefficient', 5.0)
             )
 
         # Compute bootstrap stderrs for all methods at once (shared batch resampling)

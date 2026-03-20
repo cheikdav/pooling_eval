@@ -27,7 +27,7 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
     # Load predictions from first method to get episode info
     first_row = filtered_metadata.iloc[0]
     first_predictions_path = first_row['predictions_path']
-    first_pred_df = load_predictions_for_trajectory(first_predictions_path, adjust_constant=adjust_constant, gamma=first_row.get('policy_gamma'), truncation_coefficient=first_row.get('truncation_coefficient', 10.0))
+    first_pred_df = load_predictions_for_trajectory(first_predictions_path, adjust_constant=adjust_constant, gamma=first_row.get('policy_gamma'), truncation_coefficient=first_row.get('truncation_coefficient', 5.0))
     n_eval_episodes = first_pred_df['episode_idx'].nunique()
 
     st.markdown("---")
@@ -93,7 +93,7 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
         (filtered_metadata['n_episodes'] == selected_n_ep)
     ].iloc[0]
     gamma = first_method_row.get('policy_gamma', 0.99)
-    truncation_coefficient = first_method_row.get('truncation_coefficient', 10.0)
+    truncation_coefficient = first_method_row.get('truncation_coefficient', 5.0)
 
     # Load predictions for each method
     fig = go.Figure()
@@ -112,7 +112,7 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
 
         # Load predictions using shared function
         row = method_row.iloc[0]
-        pred_df = load_predictions_for_trajectory(row['predictions_path'], adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
+        pred_df = load_predictions_for_trajectory(row['predictions_path'], adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 5.0))
 
         # Filter to this episode
         episode_preds = pred_df[pred_df['episode_idx'] == selected_episode].copy()
@@ -227,7 +227,7 @@ def render_tab(filtered_metadata, methods, baseline_method, adjust_constant=Fals
                 continue
 
             row = method_row.iloc[0]
-            pred_df = load_predictions_for_trajectory(row['predictions_path'], adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 10.0))
+            pred_df = load_predictions_for_trajectory(row['predictions_path'], adjust_constant=adjust_constant, gamma=row.get('policy_gamma'), truncation_coefficient=row.get('truncation_coefficient', 5.0))
             episode_preds = pred_df[pred_df['episode_idx'] == selected_episode]
 
             if not episode_preds.empty:

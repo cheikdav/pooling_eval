@@ -27,7 +27,7 @@ def compute_monte_carlo_returns(rewards: np.ndarray, gamma: float) -> np.ndarray
     return returns
 
 
-def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float, truncation_coefficient: float = 10.0) -> Dict[str, np.ndarray]:
+def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float, truncation_coefficient: float = 5.0) -> Dict[str, np.ndarray]:
     """Preprocess episode-based batch into transition-based format with MC returns.
 
     Takes episode data (lists of variable-length arrays) and flattens into individual
