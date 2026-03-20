@@ -36,12 +36,12 @@ policy:
   normalize_reward: false
 data_generation:
   n_batches: 100
-  episodes_per_batch: 64
+  episodes_per_batch: 80
   deterministic_policy: false
   n_envs: 128
-  tuning_episodes: 64
-  validation_episodes_per_batch: 30
-  eval_episodes: 64
+  tuning_episodes: 80
+  validation_episodes_per_batch: 42
+  eval_episodes: 100
 value_estimators:
   training:
     max_epochs: 100000
@@ -52,21 +52,20 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
-    - 2
-    - 4
-    - 8
-    - 16
-    - 32
-    - 64
+    - 10
+    - 15
+    - 20
+    - 40
+    - 80
   methods:
   - monte_carlo
   - dqn
-  - least_squares_mc
-  - least_squares_td
-  - least_squares_mc_rbf
-  - least_squares_td_rbf
-  - nnls_mc
-  - nnls_td
+  #- least_squares_mc
+  #- least_squares_td
+  #- least_squares_mc_rbf
+  #- least_squares_td_rbf
+  #- nnls_mc
+  #- nnls_td
 network:
   hidden_sizes:
   - 256
@@ -83,5 +82,5 @@ logging:
 paired_state:
   enabled: true
   n_pairs: 100
-  n_trajectories_per_state: 50
-  seed: 42
+  n_trajectories_per_state: 4000
+  seed: 237

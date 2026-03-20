@@ -7,8 +7,8 @@ data_root: /scratch/dc3430/pooling_eval
 results_root: /scratch/dc3430/pooling_eval
 environment:
   name: Ant-v5
-  max_episode_steps: 3000
-  reset_noise_scale: 0.03
+  max_episode_steps: 1500
+  reset_noise_scale: 0.1
   action_noise_std: 0.03
 policy:
   algorithm: SAC
@@ -29,11 +29,11 @@ policy:
   use_vec_normalize: false
 data_generation:
   n_batches: 100
-  episodes_per_batch: 50
+  episodes_per_batch: 80
   deterministic_policy: false
   n_envs: 128
-  tuning_episodes: 50
-  validation_episodes_per_batch: 40
+  tuning_episodes: 80
+  validation_episodes_per_batch: 45
   eval_episodes: 100
 value_estimators:
   training:
@@ -45,12 +45,10 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
-        - 2
-        - 4
-        - 8
-        - 16
-        - 25
-        - 50
+        - 10
+        - 20
+        - 40
+        - 80
 
   methods:
   - monte_carlo
@@ -76,5 +74,5 @@ logging:
 paired_state:
   enabled: true
   n_pairs: 100
-  n_trajectories_per_state: 800
-  seed: 43
+  n_trajectories_per_state: 4000
+  seed: 237

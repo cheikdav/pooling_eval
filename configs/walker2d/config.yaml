@@ -29,11 +29,11 @@ policy:
   use_vec_normalize: false
 data_generation:
   n_batches: 100
-  episodes_per_batch: 64
+  episodes_per_batch: 80
   deterministic_policy: false
-  n_envs: 100
-  tuning_episodes: 64
-  validation_episodes_per_batch: 30
+  n_envs: 122
+  tuning_episodes: 80
+  validation_episodes_per_batch: 42
   eval_episodes: 64
 value_estimators:
   training:
@@ -45,12 +45,11 @@ value_estimators:
     gamma: 0.99
     shuffle_frequency: 100
     episode_subsets:
-        - 2
-        - 4
-        - 8
-        - 16
-        - 32
-        - 64
+        - 10
+        - 15
+        - 20
+        - 40
+        - 80
 
   methods:
   #- least_squares_mc
@@ -76,5 +75,5 @@ logging:
 paired_state:
   enabled: true
   n_pairs: 100
-  n_trajectories_per_state: 50
+  n_trajectories_per_state: 4000
   seed: 42

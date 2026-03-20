@@ -1,7 +1,7 @@
 name: monte_carlo
 type: monte_carlo
-learning_rate: 6.0e-4
-batch_size: 256
+learning_rate: 4.5e-4
+batch_size: 512
 feature_extractor:
   type: identity
   normalize: post
