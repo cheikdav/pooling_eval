@@ -4,7 +4,6 @@
 experiment_id: cartpole_test
 seed: 42
 data_root: /scratch/dc3430/pooling_eval
-results_root: /scratch/dc3430/pooling_eval
 environment:
   name: CartPole-v1
   max_episode_steps: 2000

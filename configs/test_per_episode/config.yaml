@@ -4,7 +4,6 @@
 experiment_id: test_per_episode_hyperparams
 seed: 42
 data_root: .
-results_root: .
 environment:
   name: CartPole-v1
 policy:

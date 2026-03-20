@@ -318,11 +318,8 @@ class ExperimentConfig:
     logging: LoggingConfig
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     code_versions: CodeVersions = field(default_factory=CodeVersions)
-    policy_root: str = "."  # Root directory for policy storage (default: current directory)
-    data_root: str = "."  # Root directory for data batches (default: current directory)
-    estimators_root: str = "."  # Root directory for estimators (default: current directory)
-    results_root: str = "."  # Root directory for results (default: current directory)
-    logs_root: str = "."  # Root directory for logs and wandb (default: current directory)
+    data_root: str = "."  # Root directory for all experiment outputs
+    logs_root: str = "."  # Root directory for logs and wandb
 
     def _get_env_root(self) -> Path:
         """Get the environment-level root: {data_root}/experiments/{env_name}/"""
@@ -474,10 +471,8 @@ class ExperimentConfig:
             logging=logging_config,
             evaluation=evaluation_config,
             code_versions=config_dict.get('code_versions', CodeVersions()),
-            policy_root=config_dict.get('policy_root', '.'),
             data_root=config_dict.get('data_root', '.'),
-            estimators_root=config_dict.get('estimators_root', '.'),
-            results_root=config_dict.get('results_root', '.')
+            logs_root=config_dict.get('logs_root', config_dict.get('data_root', '.'))
         )
 
     def to_dict(self) -> Dict[str, Any]:

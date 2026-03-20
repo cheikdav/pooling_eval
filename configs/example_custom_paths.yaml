@@ -1,19 +1,17 @@
 # Example configuration showing how to customize storage paths
-# By default, all paths are "." which creates the standard structure:
-#   ./experiments/<experiment_id>/policy/
-#   ./experiments/<experiment_id>/data/
-#   ./experiments/<experiment_id>/estimators/
-#   ./experiments/<experiment_id>/results/
+#
+# All experiment outputs go under: {data_root}/experiments/{env_name}/...
+# The directory hierarchy is parameter-based:
+#   {env_name}/policy_NNN/data_NNN/{method}_estimator_NNN/eval_NNN/
+#
+# Logs go under: {logs_root}/experiments/logs/...
 
 experiment_id: "custom_paths_example"
 seed: 42
 
-# Optional: Customize root directories for each component
-# Each defaults to "." if not specified
-policy_root: "."           # Policy models stored in ./experiments/<experiment_id>/policy/
-data_root: "/scratch/data" # Data batches stored in /scratch/data/experiments/<experiment_id>/data/
-estimators_root: "."       # Estimators stored in ./experiments/<experiment_id>/estimators/
-results_root: "."          # Results stored in ./experiments/<experiment_id>/results/
+# Root directories (both default to "." if not specified)
+data_root: "/scratch/data"  # All experiment outputs
+logs_root: "/scratch/data"  # Training logs and wandb
 
 # Environment configuration
 environment:
@@ -37,9 +35,7 @@ data_generation:
   episodes_per_batch: 100
   deterministic_policy: false
   n_envs: 8
-  tuning_episodes: 100
   validation_episodes_per_batch: 50
-  eval_episodes: 100
 
 # Value estimator training
 value_estimators:
@@ -57,12 +53,10 @@ value_estimators:
     - name: "monte_carlo"
       type: "monte_carlo"
       learning_rate: 0.001
-      n_initializations: 3
 
     - name: "dqn"
       type: "dqn"
       learning_rate: 0.001
-      n_initializations: 3
       target_update_rate: 1.0e-3
 
 # Network architecture
@@ -77,3 +71,7 @@ logging:
   wandb_project: "pooling-eval"
   wandb_entity: null
   log_frequency: 10
+
+# Evaluation
+evaluation:
+  eval_episodes: 100

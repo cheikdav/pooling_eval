@@ -4,7 +4,6 @@
 experiment_id: pong_test
 seed: 42
 data_root: /scratch/dc3430/pooling_eval
-results_root: /scratch/dc3430/pooling_eval
 environment:
   name: ALE/Pong-v5
 policy:

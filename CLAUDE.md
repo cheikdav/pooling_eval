@@ -105,7 +105,7 @@ uv run -m src.run_all_estimators --config configs/example_config.yaml --mode seq
 ```bash
 # Generate predictions from trained models
 uv run -m src.evaluate --config configs/example_config.yaml
-# Generates: experiments/<exp_id>/results/predictions.csv
+# Saves to each method's eval dir: .../eval_NNN/results/
 
 # Launch interactive dashboard for analysis
 uv run streamlit run src/analysis/app.py
@@ -150,7 +150,7 @@ wandb agent <sweep-id>
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
 - **Optimizes mean validation MC loss across all episode counts** (`final/mean_val_mc_loss`)
 - **W&B mode**: Set `wandb-mode: offline` in sweep config to avoid rate limits
-- Results saved to `experiments/<exp_id>/sweeps/<method>/<run_id>/<N>ep/`
+- Results saved under the method's estimator directory: `.../{method}_estimator_NNN/sweeps/<run_id>/<N>ep/`
 
 **Customizing sweeps:**
 - Edit `configs/sweeps/sweep_*.yaml` to change search range or method (bayes/grid/random)
@@ -165,7 +165,8 @@ wandb agent <sweep-id>
 The codebase is organized into two main parts:
 
 **Training Pipeline** (`src/`):
-- `config.py`: Configuration system
+- `config.py`: Configuration system (dataclasses, YAML parsing)
+- `registry.py`: Parameter-based directory resolution (find-or-create numbered dirs)
 - `train_policy.py`: Policy training with SB3
 - `generate_data.py`: Episode data generation
 - `train_estimator.py`: Value estimator training
@@ -202,6 +203,20 @@ configs/
   - **ValueEstimatorsConfig**: Shared training parameters + list of methods to load
   - **NetworkConfig**: Neural network architecture (hidden sizes, activation)
   - **LoggingConfig**: Weights & Biases settings
+  - **EvaluationConfig**: Eval batch size + paired state settings
+  - `data_root`: Root directory for all experiment outputs (default: ".")
+  - `logs_root`: Root directory for logs (defaults to data_root)
+
+**Code Versions (`code_versions.yaml` at project root):**
+- Standalone file tracking code version numbers per pipeline stage
+- Loaded automatically when parsing any config
+- Bump the relevant version when code changes affect results
+```yaml
+policy: 1      # policy training code
+data: 1        # data generation code
+estimator: 1   # estimator training code
+evaluation: 1  # evaluation code
+```
 
 **Method Config Files (e.g., monte_carlo.yaml):**
 - **Type**: Estimator type (monte_carlo, dqn, least_squares_mc, least_squares_td)
@@ -234,13 +249,13 @@ Data generation creates multiple types of batches for different purposes:
    - Created only if `validation_episodes_per_batch > 0`
 
 4. **Evaluation batch** (`batch_eval.npz`):
-   - Number of episodes controlled by `data_generation.eval_episodes`
+   - Number of episodes controlled by `evaluation.eval_episodes`
    - For final held-out evaluation
    - Created only if `eval_episodes > 0`
 
 All batches use different random seeds (sequential from base seed) to ensure independence.
 
-**Episode Data Format** (NPZ files in `experiments/<exp_id>/data/`):
+**Episode Data Format** (NPZ files in `.../data_NNN/data/`):
 ```python
 batch = np.load('batch_0.npz', allow_pickle=True)
 batch['observations']       # List of arrays, one per episode: [(T_i, obs_dim), ...]
@@ -294,31 +309,57 @@ All estimators inherit from **ValueEstimator** (base.py):
 
 ### Experiment Directory Structure
 
+Experiments are organized by parameter identity in a 5-level hierarchy. Each numbered directory contains a `params.json` recording the parameters that produced it. When running a pipeline step, the system scans existing directories for a parameter match; if found it reuses that directory, otherwise it creates the next sequential number.
+
 ```
-experiments/<experiment_id>/
-├── config.yaml                    # Copy of configuration
-├── policy/
-│   ├── policy_final.zip          # Trained SB3 policy
-│   └── policy_checkpoint_*.zip   # Intermediate checkpoints
-├── data/
-│   ├── batch_0.npz               # Episode data batches
-│   ├── batch_1.npz
-│   └── ...
-├── estimators/
-│   ├── monte_carlo/
-│   │   ├── <n_episodes>/
-│   │   │   ├── batch_0/
-│   │   │   │   ├── estimator.pt           # Trained model
-│   │   │   │   └── training_stats.json    # Summary statistics
-│   │   │   ├── batch_1/
-│   │   │   └── ...
-│   └── dqn/
-│       └── <n_episodes>/
-│           └── batch_0/
-└── results/
-    ├── evaluation_results.json
-    └── *.png plots
+experiments/{env_name}/                                    # e.g. Hopper-v5
+├── policy_001/                                            # policy params + policy code version
+│   ├── params.json
+│   ├── policy/
+│   │   ├── policy_final.zip
+│   │   ├── policy_metadata.json
+│   │   └── config.yaml
+│   ├── data_001/                                          # data gen params + data code version
+│   │   ├── params.json
+│   │   ├── data/
+│   │   │   ├── batch_0.npz, batch_1.npz, ...
+│   │   │   ├── batch_eval.npz
+│   │   │   └── paired_states.npz
+│   │   ├── monte_carlo_estimator_001/                     # method config + estimator code version
+│   │   │   ├── params.json
+│   │   │   ├── 10/batch_0/estimator.pt                    # episode count subfolders
+│   │   │   ├── 20/batch_0/estimator.pt
+│   │   │   └── eval_001/                                  # eval params + eval code version
+│   │   │       ├── params.json
+│   │   │       └── results/
+│   │   │           ├── ground_truth/ground_truth_returns.parquet
+│   │   │           └── monte_carlo/{n_episodes}/predictions.parquet
+│   │   └── dqn_estimator_001/                             # independent from MC
+│   │       └── ...
+│   └── data_002/                                          # different data gen params
+│       └── ...
+└── policy_002/                                            # different policy params
+    └── ...
 ```
+
+**Parameter identity per level:**
+
+| Level | What defines identity | What it stores |
+|-------|----------------------|----------------|
+| **Policy** | algorithm, hyperparams, gamma, network, seed, `policy` code version | trained policy |
+| **Data** | n_batches, episodes_per_batch, validation/tuning episodes, `data` code version | episode batches |
+| **Estimator** | method config (lr, batch_size, etc.), shared training params, `estimator` code version. **Excludes** `episode_subsets` | trained models (per episode count) |
+| **Eval** | eval_episodes, paired state config, `evaluation` code version | predictions + ground truth |
+
+**Key properties:**
+- Changing a method's learning rate creates a new estimator dir without affecting other methods
+- Adding a new episode count to `episode_subsets` reuses the existing estimator dir (just adds a subfolder)
+- Changing data params creates a new data dir, forcing new estimator training
+- `code_versions.yaml` versions are included in each level's identity
+
+**Registry module (`src/registry.py`):**
+- `resolve_dir(parent, prefix, params)` — find-or-create numbered directory
+- `get_policy_params(config)`, `get_data_params(config)`, `get_estimator_params(config, method)`, `get_eval_params(config)` — extract identity params from config
 
 ### Reproducibility
 
@@ -327,8 +368,13 @@ experiments/<experiment_id>/
 - Each data batch uses `seed + batch_idx` for diversity
 - All NumPy and PyTorch seeds set consistently in each script
 
+**Code Versioning:**
+- `code_versions.yaml` tracks version numbers for each pipeline stage
+- Included in `params.json` at each directory level
+- To reproduce: check out the commit that corresponds to the code version, use the same config
+
 **To reproduce experiments exactly:**
-1. Use identical config file
+1. Use identical config file and `code_versions.yaml`
 2. Same environment versions (Gymnasium, SB3, PyTorch)
 3. Same seed value
 
@@ -411,45 +457,29 @@ Benefits:
 - Each run syncs automatically at completion
 - Works well with cluster jobs (each task syncs independently)
 
-Offline runs are stored in `experiments/<exp_id>/wandb_offline/` and automatically synced via `wandb sync` at the end of each training. If sync fails, you can manually sync later with:
-```bash
-wandb sync experiments/<exp_id>/wandb_offline/<run-directory>
-```
+Offline runs are stored in `wandb_offline/` under the relevant estimator directory and automatically synced via `wandb sync` at the end of each training.
 
 ## Common Patterns
 
 ### Creating a New Experiment
 
-**Using new directory structure (recommended):**
 1. Create a new directory: `mkdir configs/my_experiment`
 2. Copy and edit main config: `cp configs/cartpole/config.yaml configs/my_experiment/config.yaml`
 3. Copy method configs: `cp configs/cartpole/*.yaml configs/my_experiment/` (excluding config.yaml)
 4. Edit `configs/my_experiment/config.yaml`:
-   - Change `experiment_id` to avoid overwriting previous results
    - Adjust environment, policy algorithm, timesteps, etc.
    - Update `value_estimators.methods` list to add/remove methods
+   - Set `data_root` if storing outputs on a different filesystem
 5. Edit method configs (e.g., `monte_carlo.yaml`) to adjust method-specific parameters
 6. Run pipeline: `uv run -m src.train_policy --config configs/my_experiment/config.yaml`
 
-**Using legacy single-file format:**
-1. Copy an existing config: `cp configs/test_config.yaml configs/my_experiment.yaml`
-2. Edit the file with all parameters in one place
-3. Keep `method_configs` list for method definitions
-
-**Referencing configs:**
-- Directory format: `--config configs/cartpole/config.yaml`
-- Legacy format: `--config configs/test_config.yaml`
+**No need to change `experiment_id` to avoid overwriting** — the parameter-based directory structure automatically separates experiments with different parameters. The `experiment_id` is only used for W&B grouping and log paths.
 
 ### Debugging Training Issues
 
-Check training stats:
+Check training stats (find the relevant estimator directory first):
 ```bash
-cat experiments/<exp_id>/estimators/monte_carlo/batch_0/training_stats.json | jq '.[-1]'
-```
-
-Monitor convergence:
-```bash
-uv run python -c "import json; stats = json.load(open('training_stats.json')); print([s['eval_loss'] for s in stats])"
+cat experiments/{env}/policy_NNN/data_NNN/{method}_estimator_NNN/{n_episodes}/batch_0/training_stats.json | jq '.'
 ```
 
 ### Resuming Interrupted Experiments
