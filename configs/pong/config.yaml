@@ -28,7 +28,6 @@ data_generation:
   n_envs: 16
   tuning_episodes: 200
   validation_episodes_per_batch: 50
-  eval_episodes: 100
 value_estimators:
   training:
     max_epochs: 80000
@@ -63,3 +62,5 @@ logging:
   wandb_entity: null
   log_frequency: 100
   wandb_mode: offline
+evaluation:
+  eval_episodes: 100

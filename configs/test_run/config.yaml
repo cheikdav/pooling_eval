@@ -28,7 +28,6 @@ data_generation:
   n_envs: 8
   tuning_episodes: 50
   validation_episodes_per_batch: 25
-  eval_episodes: 50
 
 # Value estimator training
 value_estimators:
@@ -66,9 +65,8 @@ logging:
   wandb_entity: null
   log_frequency: 1
 
-# Paired state evaluation
-paired_state:
-  enabled: true
-  n_pairs: 100
-  n_trajectories_per_state: 50
-  seed: 42
+evaluation:
+  eval_episodes: 50
+  paired_states_n_pairs: 100
+  paired_states_n_trajectories: 50
+  paired_states_seed: 42

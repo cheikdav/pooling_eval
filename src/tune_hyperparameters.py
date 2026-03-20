@@ -164,7 +164,7 @@ def main():
 
     # Setup paths
     batch_path = config.get_data_dir() / "batch_tuning.npz"
-    output_dir = config.get_estimators_dir() / "sweeps" / args.method / wandb.run.id
+    output_dir = config.get_estimator_dir(method_config) / "sweeps" / wandb.run.id
 
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")

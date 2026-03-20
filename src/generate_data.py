@@ -269,7 +269,7 @@ def sample_state_pairs(env, config: ExperimentConfig):
     """
     pairs = []
 
-    for _ in range(config.paired_state.n_pairs):
+    for _ in range(config.evaluation.paired_states_n_pairs):
         # Reset twice to get two different initial states
         reset_result = env.reset()
         obs1 = reset_result[0] if isinstance(reset_result, tuple) else reset_result
@@ -381,12 +381,12 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
 
     print(f"\nGenerating paired state evaluations")
     print(f"Environment: {config.environment.name}")
-    print(f"Number of pairs: {config.paired_state.n_pairs}")
-    print(f"Trajectories per state: {config.paired_state.n_trajectories_per_state}")
+    print(f"Number of pairs: {config.evaluation.paired_states_n_pairs}")
+    print(f"Trajectories per state: {config.evaluation.paired_states_n_trajectories}")
 
     # Sample state pairs
     env = gym.make(config.environment.name, max_episode_steps=config.environment.max_episode_steps)
-    env.reset(seed=config.paired_state.seed)
+    env.reset(seed=config.evaluation.paired_states_seed)
 
     print("Sampling state pairs by resetting environment...")
     state_pairs = sample_state_pairs(env, config)
@@ -403,14 +403,14 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
             pair_idx, 0, obs1, state1, config.environment.name,
             str(policy_path),
             config.policy.algorithm, config.environment.max_episode_steps,
-            config.paired_state.n_trajectories_per_state, gamma,
+            config.evaluation.paired_states_n_trajectories, gamma,
             str(vec_normalize_path) if vec_normalize_path else None
         ))
         all_states.append((
             pair_idx, 1, obs2, state2, config.environment.name,
             str(policy_path),
             config.policy.algorithm, config.environment.max_episode_steps,
-            config.paired_state.n_trajectories_per_state, gamma,
+            config.evaluation.paired_states_n_trajectories, gamma,
             str(vec_normalize_path) if vec_normalize_path else None
         ))
 
@@ -447,7 +447,7 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
     undiscounted_returns = []
 
     # Group results by pair
-    for pair_idx in range(config.paired_state.n_pairs):
+    for pair_idx in range(config.evaluation.paired_states_n_pairs):
         s1_result = state_results[pair_idx * 2]
         s2_result = state_results[pair_idx * 2 + 1]
 
@@ -588,9 +588,9 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         current_seed += 1
 
     # Eval batch (no validation pair)
-    if config.data_generation.eval_episodes > 0:
+    if config.evaluation.eval_episodes > 0:
         total_episodes += collect_and_save(
-            "batch_eval", config.data_generation.eval_episodes, 0, current_seed)
+            "batch_eval", config.evaluation.eval_episodes, 0, current_seed)
         current_seed += 1
 
     stats_file = output_dir / "data_statistics.npz"
@@ -610,7 +610,7 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         'episodes_per_batch': config.data_generation.episodes_per_batch,
         'tuning_episodes': config.data_generation.tuning_episodes,
         'validation_episodes_per_batch': config.data_generation.validation_episodes_per_batch,
-        'eval_episodes': config.data_generation.eval_episodes,
+        'eval_episodes': config.evaluation.eval_episodes,
         'seed': config.seed,
         'policy_metadata': policy_metadata,
     }
@@ -661,7 +661,7 @@ def main():
     elif args.no_generate_paired:
         generate_paired = False
     else:
-        generate_paired = config.paired_state.enabled
+        generate_paired = config.evaluation.paired_states_n_pairs > 0
 
     # Set default paths
     if args.policy_path is None:

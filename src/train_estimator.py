@@ -164,7 +164,7 @@ def train_single_estimator(
             name=run_name,
             group=config.experiment_id,
             mode=config.logging.wandb_mode,
-            dir=str(config.get_estimators_dir() / "wandb_offline") if config.logging.wandb_mode == "offline" else None,
+            dir=str(config.get_estimator_dir(method_config) / "wandb_offline") if config.logging.wandb_mode == "offline" else None,
             config={
                 'method': method_name,
                 'batch_name': batch_name,
@@ -709,9 +709,9 @@ def main():
     # Set paths
     batch_name = str(batch_idx)
     batch_path = config.get_data_dir() / f"batch_{batch_name}.npz"
-    output_dir = config.get_estimators_dir() / args.method
+    output_dir = config.get_estimator_dir(method_config)
 
-    # Save config to method directory
+    # Save config to estimator directory
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 

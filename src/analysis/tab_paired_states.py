@@ -86,8 +86,8 @@ def load_paired_inputs_for_n_episodes(filtered_metadata, methods, n_episodes, ad
         return None, {}
 
     first_row = filtered_for_n_ep.iloc[0]
-    results_dir = Path(first_row['predictions_path']).parents[2]
-    paired_states_file = results_dir.parent / "data" / "paired_states.npz"
+    data_dir = Path(first_row['data_dir']) if 'data_dir' in first_row else Path(first_row['predictions_path']).parents[2].parent / "data"
+    paired_states_file = data_dir / "paired_states.npz"
 
     if not paired_states_file.exists():
         return None, {}

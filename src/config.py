@@ -90,7 +90,6 @@ class DataGenerationConfig:
     n_envs: int = 1
     tuning_episodes: int = 0
     validation_episodes_per_batch: int = 0
-    eval_episodes: int = 0
 
 
 @dataclass
@@ -272,12 +271,39 @@ class LoggingConfig:
 
 
 @dataclass
-class PairedStateConfig:
-    """Configuration for paired state evaluation (generating ground truth CIs)."""
-    enabled: bool = False  # Whether to generate paired states
-    n_pairs: int = 100  # Number of state pairs to sample
-    n_trajectories_per_state: int = 50  # Rollouts per state for CI
-    seed: int = 42
+class CodeVersions:
+    """Code version numbers for reproducibility tracking."""
+    policy: int = 1
+    data: int = 1
+    estimator: int = 1
+    evaluation: int = 1
+
+    @classmethod
+    def load(cls, search_dir: Path = None) -> "CodeVersions":
+        """Load code_versions.yaml, searching from search_dir up to the repo root."""
+        if search_dir is None:
+            search_dir = Path.cwd()
+        current = Path(search_dir).resolve()
+        while True:
+            candidate = current / "code_versions.yaml"
+            if candidate.exists():
+                with open(candidate, 'r') as f:
+                    data = yaml.safe_load(f) or {}
+                return cls(**data)
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return cls()
+
+
+@dataclass
+class EvaluationConfig:
+    """Configuration for evaluation (eval batch + paired states)."""
+    eval_episodes: int = 0
+    paired_states_n_pairs: int = 0  # 0 = no paired states
+    paired_states_n_trajectories: int = 50
+    paired_states_seed: int = 42
 
 
 @dataclass
@@ -290,44 +316,50 @@ class ExperimentConfig:
     value_estimators: ValueEstimatorsConfig
     network: NetworkConfig
     logging: LoggingConfig
-    paired_state: PairedStateConfig = field(default_factory=PairedStateConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    code_versions: CodeVersions = field(default_factory=CodeVersions)
     policy_root: str = "."  # Root directory for policy storage (default: current directory)
     data_root: str = "."  # Root directory for data batches (default: current directory)
     estimators_root: str = "."  # Root directory for estimators (default: current directory)
     results_root: str = "."  # Root directory for results (default: current directory)
     logs_root: str = "."  # Root directory for logs and wandb (default: current directory)
 
-    def get_policy_dir(self) -> Path:
-        """Get the policy directory path.
+    def _get_env_root(self) -> Path:
+        """Get the environment-level root: {data_root}/experiments/{env_name}/"""
+        return Path(self.data_root) / "experiments" / self.environment.name
 
-        Returns:
-            Path to {policy_root}/experiments/{experiment_id}/policy
-        """
-        return Path(self.policy_root) / "experiments" / self.experiment_id / "policy"
+    def get_policy_dir(self) -> Path:
+        """Resolve policy directory: {env_root}/policy_NNN/policy/"""
+        from src.registry import resolve_dir, get_policy_params
+        policy_parent = resolve_dir(self._get_env_root(), "policy", get_policy_params(self))
+        return policy_parent / "policy"
 
     def get_data_dir(self) -> Path:
-        """Get the data directory path.
+        """Resolve data directory: {env_root}/policy_NNN/data_NNN/data/"""
+        from src.registry import resolve_dir, get_policy_params, get_data_params
+        policy_parent = resolve_dir(self._get_env_root(), "policy", get_policy_params(self))
+        data_parent = resolve_dir(policy_parent, "data", get_data_params(self))
+        return data_parent / "data"
 
-        Returns:
-            Path to {data_root}/experiments/{experiment_id}/data
+    def get_estimator_dir(self, method_config: 'BaseEstimatorConfig') -> Path:
+        """Resolve estimator directory for a specific method.
+
+        Returns: {env_root}/policy_NNN/data_NNN/{method}_estimator_NNN/
         """
-        return Path(self.data_root) / "experiments" / self.experiment_id / "data"
+        from src.registry import resolve_dir, get_policy_params, get_data_params, get_estimator_params
+        policy_parent = resolve_dir(self._get_env_root(), "policy", get_policy_params(self))
+        data_parent = resolve_dir(policy_parent, "data", get_data_params(self))
+        prefix = f"{method_config.name}_estimator"
+        return resolve_dir(data_parent, prefix, get_estimator_params(self, method_config))
 
-    def get_estimators_dir(self) -> Path:
-        """Get the estimators directory path.
+    def get_eval_dir(self, method_config: 'BaseEstimatorConfig') -> Path:
+        """Resolve evaluation directory for a specific method.
 
-        Returns:
-            Path to {estimators_root}/experiments/{experiment_id}/estimators
+        Returns: {env_root}/policy_NNN/data_NNN/{method}_estimator_NNN/eval_NNN/
         """
-        return Path(self.estimators_root) / "experiments" / self.experiment_id / "estimators"
-
-    def get_results_dir(self) -> Path:
-        """Get the results directory path.
-
-        Returns:
-            Path to {results_root}/experiments/{experiment_id}/results
-        """
-        return Path(self.results_root) / "experiments" / self.experiment_id / "results"
+        from src.registry import resolve_dir, get_eval_params
+        estimator_dir = self.get_estimator_dir(method_config)
+        return resolve_dir(estimator_dir, "eval", get_eval_params(self))
 
     def get_logs_dir(self) -> Path:
         return Path(self.logs_root) / "experiments" / "logs"
@@ -376,6 +408,10 @@ class ExperimentConfig:
                 ve_dict['method_configs'] = method_configs
                 del ve_dict['methods']
 
+        # Load code versions from standalone file (search from config file's directory)
+        code_versions = CodeVersions.load(search_dir=path.parent)
+        config_dict['code_versions'] = code_versions
+
         return cls.from_dict(config_dict)
 
     @classmethod
@@ -387,7 +423,7 @@ class ExperimentConfig:
         data_gen_config = DataGenerationConfig(**config_dict['data_generation'])
         network_config = NetworkConfig(**config_dict['network'])
         logging_config = LoggingConfig(**config_dict['logging'])
-        paired_state_config = PairedStateConfig(**config_dict.get('paired_state', {}))
+        evaluation_config = EvaluationConfig(**config_dict.get('evaluation', {}))
 
         # Parse value estimators config
         ve_dict = config_dict['value_estimators']
@@ -436,7 +472,8 @@ class ExperimentConfig:
             value_estimators=value_estimators_config,
             network=network_config,
             logging=logging_config,
-            paired_state=paired_state_config,
+            evaluation=evaluation_config,
+            code_versions=config_dict.get('code_versions', CodeVersions()),
             policy_root=config_dict.get('policy_root', '.'),
             data_root=config_dict.get('data_root', '.'),
             estimators_root=config_dict.get('estimators_root', '.'),

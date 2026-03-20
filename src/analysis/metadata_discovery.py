@@ -19,7 +19,9 @@ def _is_hidden_path(path: Path, base_path: Path) -> bool:
 
 
 def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Dict[str, Any]]:
-    """Discover all predictions with metadata in the experiments/results directories.
+    """Discover all predictions with metadata under the experiments directory.
+
+    Recursively searches for predictions_metadata.json files in any subdirectory.
 
     Returns:
         List of dictionaries containing all metadata for each predictions file.
@@ -28,54 +30,49 @@ def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Di
     """
     predictions_list = []
 
-    for exp_dir in experiments_dir.iterdir():
-        if not exp_dir.is_dir():
+    for metadata_path in experiments_dir.rglob("predictions_metadata.json"):
+        if _is_hidden_path(metadata_path, experiments_dir):
             continue
 
-        results_dir = exp_dir / "results"
-        if not results_dir.exists():
-            continue
+        print(f"Discovered: {metadata_path}")
+        try:
+            with open(metadata_path, 'r') as f:
+                pred_metadata = json.load(f)
 
-        for metadata_path in results_dir.rglob("predictions_metadata.json"):
-            # Skip hidden directories (those starting with '.')
-            if _is_hidden_path(metadata_path, results_dir):
+            predictions_file = metadata_path.parent / "predictions.parquet"
+            if not predictions_file.exists():
+                print(f"Warning: Metadata found but predictions file missing: {predictions_file}")
                 continue
 
-            print(f"Discovered: {metadata_path}")
-            try:
-                with open(metadata_path, 'r') as f:
-                    pred_metadata = json.load(f)
+            prediction_record = {
+                'predictions_path': str(predictions_file),
+                'metadata_path': str(metadata_path),
+            }
 
-                predictions_file = metadata_path.parent / "predictions.parquet"
-                if not predictions_file.exists():
-                    print(f"Warning: Metadata found but predictions file missing: {predictions_file}")
+            # Flatten metadata structure
+            for k, v in pred_metadata.items():
+                if k in ['estimator_config', 'network_config']:
                     continue
+                prediction_record[k] = v
 
-                prediction_record = {
-                    'predictions_path': str(predictions_file),
-                    'metadata_path': str(metadata_path),
-                }
+            # Derive results_dir from path if not in metadata
+            if 'results_dir' not in prediction_record:
+                prediction_record['results_dir'] = str(predictions_file.parent.parent.parent)
 
-                # Flatten metadata structure
-                for k, v in pred_metadata.items():
-                    if k in ['estimator_config', 'network_config']:
-                        continue
-                    prediction_record[k] = v
+            # Flatten estimator_config
+            if 'estimator_config' in pred_metadata:
+                for k, v in pred_metadata['estimator_config'].items():
+                    prediction_record[f'estimator_{k}'] = v
 
-                # Flatten estimator_config
-                if 'estimator_config' in pred_metadata:
-                    for k, v in pred_metadata['estimator_config'].items():
-                        prediction_record[f'estimator_{k}'] = v
+            # Flatten network_config
+            if 'network_config' in pred_metadata:
+                for k, v in pred_metadata['network_config'].items():
+                    prediction_record[f'network_{k}'] = v
 
-                # Flatten network_config
-                if 'network_config' in pred_metadata:
-                    for k, v in pred_metadata['network_config'].items():
-                        prediction_record[f'network_{k}'] = v
+            predictions_list.append(prediction_record)
 
-                predictions_list.append(prediction_record)
-
-            except Exception as e:
-                print(f"Warning: Could not load predictions metadata from {metadata_path}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not load predictions metadata from {metadata_path}: {e}")
 
     _add_policy_display_names(predictions_list)
 
@@ -83,7 +80,7 @@ def discover_predictions(experiments_dir: Path = Path("experiments")) -> List[Di
 
 
 def discover_estimators(experiments_dir: Path = Path("experiments")) -> List[Dict[str, Any]]:
-    """Discover all estimators with metadata in the experiments directory.
+    """Discover all estimators with metadata under the experiments directory.
 
     DEPRECATED: Use discover_predictions() instead for analysis workflows.
 
@@ -94,56 +91,46 @@ def discover_estimators(experiments_dir: Path = Path("experiments")) -> List[Dic
     """
     estimators = []
 
-    for exp_dir in experiments_dir.iterdir():
-        if not exp_dir.is_dir():
+    for metadata_path in experiments_dir.rglob("estimator_metadata.json"):
+        if _is_hidden_path(metadata_path, experiments_dir):
             continue
 
-        estimators_dir = exp_dir / "estimators"
-        if not estimators_dir.exists():
-            continue
+        print(f"Discovered estimator: {metadata_path}")
+        try:
+            with open(metadata_path, 'r') as f:
+                estimator_metadata = json.load(f)
 
-        for metadata_path in estimators_dir.rglob("estimator_metadata.json"):
-            # Skip hidden directories (those starting with '.')
-            if _is_hidden_path(metadata_path, estimators_dir):
-                continue
+            data_metadata = estimator_metadata.get('data_metadata', {})
+            policy_metadata = data_metadata.get('policy_metadata', {})
 
-            print(f"Discovered estimator: {metadata_path}")
-            try:
-                with open(metadata_path, 'r') as f:
-                    estimator_metadata = json.load(f)
+            estimator = {
+                'estimator_path': str(metadata_path.parent / "estimator.pt"),
+                'metadata_path': str(metadata_path),
+            }
 
-                data_metadata = estimator_metadata.get('data_metadata', {})
-                policy_metadata = data_metadata.get('policy_metadata', {})
+            for k, v in estimator_metadata.items():
+                if k not in ['data_metadata', 'estimator_config', 'network_config']:
+                    estimator[k] = v
 
-                estimator = {
-                    'experiment_id': exp_dir.name,
-                    'estimator_path': str(metadata_path.parent / "estimator.pt"),
-                    'metadata_path': str(metadata_path),
-                }
+            if 'estimator_config' in estimator_metadata:
+                for k, v in estimator_metadata['estimator_config'].items():
+                    estimator[f'estimator_{k}'] = v
 
-                for k, v in estimator_metadata.items():
-                    if k not in ['data_metadata', 'estimator_config', 'network_config']:
-                        estimator[k] = v
+            if 'network_config' in estimator_metadata:
+                for k, v in estimator_metadata['network_config'].items():
+                    estimator[f'network_{k}'] = v
 
-                if 'estimator_config' in estimator_metadata:
-                    for k, v in estimator_metadata['estimator_config'].items():
-                        estimator[f'estimator_{k}'] = v
+            for k, v in data_metadata.items():
+                if k != 'policy_metadata':
+                    estimator[f'data_{k}'] = v
 
-                if 'network_config' in estimator_metadata:
-                    for k, v in estimator_metadata['network_config'].items():
-                        estimator[f'network_{k}'] = v
+            for k, v in policy_metadata.items():
+                estimator[f'policy_{k}'] = v
 
-                for k, v in data_metadata.items():
-                    if k != 'policy_metadata':
-                        estimator[f'data_{k}'] = v
+            estimators.append(estimator)
 
-                for k, v in policy_metadata.items():
-                    estimator[f'policy_{k}'] = v
-
-                estimators.append(estimator)
-
-            except Exception as e:
-                print(f"Warning: Could not load estimator metadata from {metadata_path}: {e}")
+        except Exception as e:
+            print(f"Warning: Could not load estimator metadata from {metadata_path}: {e}")
 
     _add_policy_display_names(estimators)
 

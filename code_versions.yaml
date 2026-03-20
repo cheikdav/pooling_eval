@@ -1,0 +1,6 @@
+# Bump these when the corresponding code changes in a way that affects results.
+# Used to separate experiment outputs produced by different code versions.
+policy: 1
+data: 1
+estimator: 1
+evaluation: 1

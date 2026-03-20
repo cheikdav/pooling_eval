@@ -273,6 +273,10 @@ def generate_predictions_for_n_episodes(config: ExperimentConfig,
 
         # Data metadata
         'data_seed': data_metadata.get('seed'),
+
+        # Directory paths for dashboard navigation
+        'data_dir': str(config.get_data_dir()),
+        'results_dir': str(results_dir),
     }
 
     predictions_metadata['policy_display_name'] = None
@@ -408,6 +412,10 @@ def generate_paired_predictions_for_n_episodes(config: ExperimentConfig,
 
         # Data metadata
         'data_seed': data_metadata.get('seed'),
+
+        # Directory paths for dashboard navigation
+        'data_dir': str(config.get_data_dir()),
+        'results_dir': str(results_dir),
     }
 
     predictions_metadata['policy_display_name'] = None
@@ -436,23 +444,24 @@ def _predictions_worker(task):
     )
 
 
-def generate_predictions(estimators_dir: Path, config: ExperimentConfig,
-                        eval_batch: Dict, results_dir: Path, device: str = "cpu",
-                        n_jobs: int = 1):
+def generate_predictions(config: ExperimentConfig, eval_batch: Dict,
+                        device: str = "cpu", n_jobs: int = 1):
     """Generate predictions from all trained models with metadata."""
     eval_obs_list = eval_batch['observations']
     n_states = len(np.concatenate(eval_obs_list, axis=0))
 
-    # Build task list
+    # Build task list across all methods
     tasks = []
     for method_config in config.value_estimators.method_configs:
         method_name = method_config.name
-        estimators_method_dir = estimators_dir / method_name
-        if not estimators_method_dir.exists():
-            print(f"  Method directory not found: {estimators_method_dir}, skipping")
+        estimator_dir = config.get_estimator_dir(method_config)
+        results_dir = config.get_eval_dir(method_config) / "results"
+
+        if not estimator_dir.exists():
+            print(f"  Estimator directory not found: {estimator_dir}, skipping")
             continue
         n_episodes_dirs = sorted(
-            [d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+            [d for d in estimator_dir.iterdir() if d.is_dir() and d.name.isdigit()],
             key=lambda d: int(d.name)
         )
         for n_ep_dir in n_episodes_dirs:
@@ -481,22 +490,24 @@ def _paired_predictions_worker(task):
     )
 
 
-def generate_paired_predictions(estimators_dir: Path, config: ExperimentConfig,
-                                paired_data: Dict, results_dir: Path, device: str = "cpu",
+def generate_paired_predictions(config: ExperimentConfig,
+                                paired_data: Dict, device: str = "cpu",
                                 n_jobs: int = 1):
     """Generate predictions for paired states from all trained models."""
     n_pairs = len(paired_data['pair_indices'])
 
-    # Build task list
+    # Build task list across all methods
     tasks = []
     for method_config in config.value_estimators.method_configs:
         method_name = method_config.name
-        estimators_method_dir = estimators_dir / method_name
-        if not estimators_method_dir.exists():
-            print(f"  Method directory not found: {estimators_method_dir}, skipping")
+        estimator_dir = config.get_estimator_dir(method_config)
+        results_dir = config.get_eval_dir(method_config) / "results"
+
+        if not estimator_dir.exists():
+            print(f"  Estimator directory not found: {estimator_dir}, skipping")
             continue
         n_episodes_dirs = sorted(
-            [d for d in estimators_method_dir.iterdir() if d.is_dir() and d.name.isdigit()],
+            [d for d in estimator_dir.iterdir() if d.is_dir() and d.name.isdigit()],
             key=lambda d: int(d.name)
         )
         for n_ep_dir in n_episodes_dirs:
@@ -535,14 +546,9 @@ def main():
     config = ExperimentConfig.from_yaml(args.config)
 
     data_dir = config.get_data_dir()
-    estimators_dir = config.get_estimators_dir()
-    results_dir = config.get_results_dir()
-    results_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nEvaluating experiment: {config.experiment_id}")
     print(f"Data directory: {data_dir}")
-    print(f"Estimators directory: {estimators_dir}")
-    print(f"Results directory: {results_dir}")
     print(f"Methods: {[mc.name for mc in config.value_estimators.method_configs]}")
     print(f"Batches: {config.data_generation.n_batches}\n")
 
@@ -571,14 +577,16 @@ def main():
         else:
             print(f"\nPolicy not found at {policy_path}, skipping critic values")
 
-        ground_truth_dir = results_dir / "ground_truth"
-        ground_truth_dir.mkdir(parents=True, exist_ok=True)
-        ground_truth_file = ground_truth_dir / "ground_truth_returns.parquet"
-        ground_truth_df.to_parquet(ground_truth_file, index=False)
-        print(f"Saved ground truth returns to: {ground_truth_file}")
-        print(f"  States: {len(ground_truth_df)}, Episodes: {ground_truth_df['episode_idx'].nunique()}, Gamma: {gamma}")
+        # Save ground truth to each method's eval dir
+        for method_config in config.value_estimators.method_configs:
+            results_dir = config.get_eval_dir(method_config) / "results"
+            ground_truth_dir = results_dir / "ground_truth"
+            ground_truth_dir.mkdir(parents=True, exist_ok=True)
+            ground_truth_df.to_parquet(ground_truth_dir / "ground_truth_returns.parquet", index=False)
 
-        prediction_files = generate_predictions(estimators_dir, config, eval_batch, results_dir, device, n_jobs=args.n_jobs)
+        print(f"Saved ground truth returns ({len(ground_truth_df)} states, {ground_truth_df['episode_idx'].nunique()} episodes, gamma={gamma})")
+
+        prediction_files = generate_predictions(config, eval_batch, device, n_jobs=args.n_jobs)
 
     paired_prediction_files = []
     if run_paired:
@@ -588,25 +596,26 @@ def main():
 
         if paired_data is not None:
             print(f"Found paired states data with {len(paired_data['pair_indices'])} pairs")
-            paired_prediction_files = generate_paired_predictions(estimators_dir, config, paired_data, results_dir, device, n_jobs=args.n_jobs)
+            paired_prediction_files = generate_paired_predictions(config, paired_data, device, n_jobs=args.n_jobs)
             print(f"\nGenerated {len(paired_prediction_files)} paired prediction files")
         else:
             print("No paired states data found. Skipping paired state evaluation.")
             print("To generate paired states data, run: uv run -m src.generate_data --config <config> --generate-paired")
 
-    summary = {
-        'experiment_id': config.experiment_id,
-        'prediction_files': prediction_files,
-        'n_files': len(prediction_files),
-        'paired_prediction_files': paired_prediction_files,
-        'n_paired_files': len(paired_prediction_files),
-        'created_at': datetime.now().isoformat()
-    }
-
-    summary_file = results_dir / "evaluation_summary.json"
-    with open(summary_file, 'w') as f:
-        json.dump(summary, f, indent=2)
-    print(f"\nSummary saved to {summary_file}")
+    # Save summary to each method's eval dir
+    for method_config in config.value_estimators.method_configs:
+        results_dir = config.get_eval_dir(method_config) / "results"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            'experiment_id': config.experiment_id,
+            'prediction_files': prediction_files,
+            'n_files': len(prediction_files),
+            'paired_prediction_files': paired_prediction_files,
+            'n_paired_files': len(paired_prediction_files),
+            'created_at': datetime.now().isoformat()
+        }
+        with open(results_dir / "evaluation_summary.json", 'w') as f:
+            json.dump(summary, f, indent=2)
 
     print("\nEvaluation complete!")
 
