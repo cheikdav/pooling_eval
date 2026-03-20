@@ -150,6 +150,7 @@ def train_single_estimator(
     Returns:
         Tuple of (final MC loss, trained estimator)
     """
+    print("[train_single_estimator] v2 - with best checkpoint restoration")
     # Create estimator
     gamma = config.value_estimators.training.gamma
     obs_dim = train_batch['observations'].shape[-1]
