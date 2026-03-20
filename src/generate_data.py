@@ -219,8 +219,15 @@ def get_obs_from_env(env) -> np.ndarray:
         raise ValueError(f"Cannot get observation from {type(env)}")
 
 
-def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None) -> float:
-    """Generate a single trajectory from an initial state and return discounted return."""
+def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None, max_steps: int = None) -> float:
+    """Generate a single trajectory from an initial state and return discounted return.
+
+    Trajectories are capped at max_steps (default: 10/(1-gamma)) since further
+    steps contribute < e^{-10} ≈ 0.005% to the discounted return.
+    """
+    if max_steps is None:
+        max_steps = int(10 / (1 - gamma))
+
     env.reset()  # reset TimeLimit counter and all wrapper state
     restore_full_state(env, full_state)
 
@@ -234,8 +241,9 @@ def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, 
     episode_return = 0.0
     undiscounted_return = 0.0
     discount = 1.0
+    step = 0
 
-    while not (done or truncated):
+    while not (done or truncated) and step < max_steps:
         action, _ = model.predict(obs, deterministic=deterministic)
         obs, reward, done, truncated, _ = env.step(action)
         if vec_normalize is not None:
@@ -243,6 +251,7 @@ def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, 
         episode_return += discount * reward
         undiscounted_return += reward
         discount *= gamma
+        step += 1
 
     return episode_return, undiscounted_return
 
