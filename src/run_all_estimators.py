@@ -67,7 +67,7 @@ def run_parallel(config: ExperimentConfig, config_path: Path, overwrite: bool):
     ], check=True)
 
 
-def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, memory: str = "8g", ncpus: int = 1, max_concurrent: int = None):
+def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, memory: str = "8g", ncpus: int = 1, n_jobs: int = None, max_concurrent: int = None):
     """Run all training jobs on cluster using SGE array jobs.
 
     Submits one array job per method, where each array task trains one batch.
@@ -79,6 +79,7 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
         overwrite: If True, overwrite existing models; if False, skip training if model exists
         memory: Memory per job (e.g., "8g", "16g")
         ncpus: Number of CPUs per job (default: 1)
+        n_jobs: Number of parallel subprocesses for episode counts within each job
         max_concurrent: Maximum number of jobs to run concurrently per method (optional)
     """
     method_configs = config.value_estimators.method_configs
@@ -89,6 +90,7 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
     print(f"Batches per method: {n_batches}")
     print(f"Memory per job: {memory}")
     print(f"CPUs per job: {ncpus}")
+    print(f"Parallel episode counts per job: {n_jobs or 1}")
     print(f"Overwrite: {overwrite}")
     if max_concurrent:
         print(f"Max concurrent per method: {max_concurrent}")
@@ -117,12 +119,13 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
             f"--grid_array={array_spec}",
             f"--grid_mem={memory}",
             f"--grid_ncpus={ncpus}",
-            "--grid_quiet",
+            #"--grid_quiet",
             "uv run", "-m", "src.train_estimator",
             "--config", str(config_path.absolute()),
             "--method", method_config.name,
             overwrite_flag,
-            "--timestamp", timestamp
+            "--timestamp", timestamp,
+            *(["--n-jobs", str(n_jobs)] if n_jobs and n_jobs > 1 else [])
         ], check=True, capture_output=True, text=True)
 
         # Try to extract job ID from output
@@ -160,21 +163,24 @@ def main():
                        help="Skip training if model already exists")
     parser.add_argument("--grid-mem", type=str, default="8g",
                        help="Memory per job for cluster mode (e.g., '8g', '16g')")
-    parser.add_argument("--grid-ncpus", type=int, default=1,
-                       help="Number of CPUs per job for cluster mode (default: 1)")
+    parser.add_argument("--grid-ncpus", type=int, default=None,
+                       help="Number of CPUs per job for cluster mode (default: number of episode subsets)")
     parser.add_argument("--max-concurrent", type=int, default=None,
                        help="Maximum number of concurrent jobs for cluster mode")
     args = parser.parse_args()
 
     config = ExperimentConfig.from_yaml(args.config)
 
+    n_episode_subsets = len(config.value_estimators.training.episode_subsets or [])
+
     if args.mode == 'sequential':
         run_sequential(config, args.config, args.overwrite)
     elif args.mode == 'parallel':
         run_parallel(config, args.config, args.overwrite)
     elif args.mode == 'cluster':
+        ncpus = args.grid_ncpus if args.grid_ncpus is not None else max(n_episode_subsets, 1)
         run_cluster(config, args.config, args.overwrite, memory=args.grid_mem,
-                   ncpus=args.grid_ncpus, max_concurrent=args.max_concurrent)
+                   ncpus=ncpus, n_jobs=ncpus, max_concurrent=args.max_concurrent)
 
 
 if __name__ == "__main__":
