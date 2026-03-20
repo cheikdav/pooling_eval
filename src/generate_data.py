@@ -16,7 +16,7 @@ from src.env_utils import ALGORITHM_MAP, create_vec_env
 
 
 def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool = False,
-                              use_vec_normalize: bool = False) -> List[Dict[str, np.ndarray]]:
+                              use_vec_normalize: bool = False, seed: int = None) -> List[Dict[str, np.ndarray]]:
     """Collect multiple episodes in parallel using vectorized environments.
 
     Runs n_envs episodes in parallel, waits for all to complete, then repeats.
@@ -28,6 +28,7 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
         n_episodes: Total number of episodes to collect
         deterministic: Whether to use deterministic actions
         use_vec_normalize: Whether VecNormalize is used
+        seed: If set, seed the environment on the first reset for reproducibility
 
     Returns:
         List of episode dictionaries, each containing:
@@ -39,6 +40,7 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
     """
     n_envs = env.num_envs
     completed_episodes = []
+    first_reset = True
 
     while len(completed_episodes) < n_episodes:
         # Use at most as many envs as episodes still needed
@@ -50,6 +52,9 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
         ]
         active = [True] * n_active
 
+        if first_reset and seed is not None:
+            env.seed(seed)
+            first_reset = False
         obs = env.reset()
         if isinstance(obs, tuple):
             obs = obs[0]
@@ -554,9 +559,11 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         total = n_train + n_val
         print(f"Collecting {batch_name} ({n_train}+{n_val} val = {total} episodes)")
         np.random.seed(seed)
+        import torch
+        torch.manual_seed(seed)
         episodes = collect_episodes_parallel(env, model, total,
                                              config.data_generation.deterministic_policy,
-                                             use_vec_normalize)
+                                             use_vec_normalize, seed=seed)
 
         train_data = episodes_to_batch(episodes[:n_train])
         stats = save_and_log_batch(train_data, output_dir / f"{batch_name}.npz", batch_name)
