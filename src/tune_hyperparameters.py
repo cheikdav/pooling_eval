@@ -5,12 +5,14 @@ Uses batch_tuning.npz for all hyperparameter search.
 """
 
 import argparse
+import csv
 from pathlib import Path
 import sys
 import wandb
 from io import StringIO
 import os
 from datetime import datetime
+import filelock
 
 from src.config import ExperimentConfig
 from src.train_estimator import train_estimator
@@ -21,6 +23,67 @@ def none_or_int(value):
     if value is None or str(value).lower() in ('none', 'null'):
         return None
     return int(value)
+
+
+# Hyperparameters to record in the summary CSV (order matters for columns)
+HYPERPARAM_KEYS = [
+    'learning_rate', 'batch_size', 'target_update_rate',
+    'ridge_lambda', 'n_components', 'rbf_n_components', 'rbf_gamma',
+]
+
+
+def write_sweep_summary_row(summary_path: Path, run_id: str, method_config,
+                            training_config, episode_results: list):
+    """Append one row to the sweep summary CSV.
+
+    Each row contains: run_id, hyperparams, mean_val_mc_loss, and
+    best_mc_loss for each episode count.
+    """
+    episode_results_sorted = sorted(episode_results, key=lambda r: r['num_episodes'])
+
+    # Build the row dict
+    row = {'run_id': run_id}
+
+    # Hyperparams from method config (fall back to training config for batch_size)
+    for key in HYPERPARAM_KEYS:
+        if key == 'batch_size':
+            val = getattr(method_config, 'batch_size', None)
+            if val is None and training_config is not None:
+                val = training_config.batch_size
+            if val is not None:
+                row[key] = val
+        elif key == 'rbf_n_components':
+            if method_config.feature_extractor is not None:
+                row[key] = method_config.feature_extractor.n_components
+        elif key == 'rbf_gamma':
+            if method_config.feature_extractor is not None:
+                row[key] = method_config.feature_extractor.gamma
+        elif hasattr(method_config, key):
+            row[key] = getattr(method_config, key)
+
+    # Per-episode-count losses
+    import numpy as np
+    losses = []
+    for r in episode_results_sorted:
+        col = f"best_mc_loss_{r['num_episodes']}ep"
+        row[col] = r['best_mc_loss']
+        losses.append(r['best_mc_loss'])
+    row['mean_val_mc_loss'] = np.mean(losses)
+
+    # Column order: run_id, hyperparams, per-episode losses, mean
+    ep_cols = [f"best_mc_loss_{r['num_episodes']}ep" for r in episode_results_sorted]
+    fieldnames = ['run_id'] + HYPERPARAM_KEYS + ep_cols + ['mean_val_mc_loss']
+
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = summary_path.with_suffix('.csv.lock')
+
+    with filelock.FileLock(lock_path):
+        file_exists = summary_path.exists() and summary_path.stat().st_size > 0
+        with open(summary_path, 'a', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
 
 
 def main():
@@ -218,6 +281,12 @@ def main():
         print(f"  Std validation MC loss:  {aggregate_log['final/std_val_mc_loss']:.6f}")
         print(f"  Min validation MC loss:  {aggregate_log['final/min_val_mc_loss']:.6f}")
         print(f"  Max validation MC loss:  {aggregate_log['final/max_val_mc_loss']:.6f}")
+
+        # Write summary row to local CSV for automated hyperparam selection
+        summary_path = config.get_estimator_dir(method_config) / "sweeps" / "sweep_results.csv"
+        write_sweep_summary_row(summary_path, wandb.run.id, method_config,
+                                config.value_estimators.training, episode_results)
+        print(f"  Sweep summary appended to {summary_path}")
 
     sys.stdout.flush()
     sys.stderr.flush()
