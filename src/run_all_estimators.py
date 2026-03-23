@@ -1,10 +1,13 @@
 """Orchestrate training of all value estimators across all batches."""
 
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
 from src.config import ExperimentConfig
+
+QSUB = "/opt/n1ge/bin/lx24-amd64/qsub"
 
 
 def run_sequential(config: ExperimentConfig, config_path: Path, overwrite: bool):
@@ -68,19 +71,10 @@ def run_parallel(config: ExperimentConfig, config_path: Path, overwrite: bool):
 
 
 def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, memory: str = "8g", ncpus: int = 1, n_jobs: int = None, max_concurrent: int = None):
-    """Run all training jobs on cluster using SGE array jobs.
+    """Run all training jobs on cluster using SGE array jobs via qsub.
 
     Submits one array job per method, where each array task trains one batch.
     SGE_TASK_ID is used directly as the batch index (1-indexed, converted to 0-indexed in train_estimator).
-
-    Args:
-        config: Experiment configuration
-        config_path: Path to config YAML file
-        overwrite: If True, overwrite existing models; if False, skip training if model exists
-        memory: Memory per job (e.g., "8g", "16g")
-        ncpus: Number of CPUs per job (default: 1)
-        n_jobs: Number of parallel subprocesses for episode counts within each job
-        max_concurrent: Maximum number of jobs to run concurrently per method (optional)
     """
     method_configs = config.value_estimators.method_configs
     n_batches = config.data_generation.n_batches
@@ -95,53 +89,70 @@ def run_cluster(config: ExperimentConfig, config_path: Path, overwrite: bool, me
     if max_concurrent:
         print(f"Max concurrent per method: {max_concurrent}")
 
-    # Generate timestamp for this training session
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"Training session timestamp: {timestamp}")
     print()
 
-    # Build array specification
-    if max_concurrent:
-        array_spec = f"1-{n_batches}/{max_concurrent}"
-    else:
-        array_spec = f"1-{n_batches}"
+    array_spec = f"1-{n_batches}"
 
-    # Submit one array job per method
+    # mem per slot (qsub multiplies h_vmem by ncpus)
+    if ncpus > 1:
+        mem_match = re.match(r'^([0-9.]+)(\D*)$', memory)
+        if mem_match:
+            per_slot = float(mem_match.group(1)) / ncpus
+            mem_per_slot = f"{per_slot:.1f}{mem_match.group(2) or 'g'}"
+        else:
+            mem_per_slot = memory
+    else:
+        mem_per_slot = memory
+
     job_ids = []
     overwrite_flag = "--overwrite" if overwrite else "--no-overwrite"
     for method_config in method_configs:
         print(f"Submitting array job for {method_config.name} with array={array_spec}")
 
-        result = subprocess.run([
-            "grid_run",
-            "--grid_submit=batch",
-            f"--grid_array={array_spec}",
-            f"--grid_mem={memory}",
-            f"--grid_ncpus={ncpus}",
-            #"--grid_quiet",
-            "uv run", "-m", "src.train_estimator",
+        qsub_args = [
+            QSUB, "-V", "-cwd", "-b", "y",
+            "-q", "debian.q",
+            "-N", f"est_{method_config.name}",
+            "-pe", "threaded", str(ncpus),
+            "-binding", f"linear:{ncpus}",
+            "-l", f"h_vmem={mem_per_slot}",
+            "-t", array_spec,
+        ]
+        if max_concurrent:
+            qsub_args.extend(["-tc", str(max_concurrent)])
+
+        qsub_args.extend([
+            "uv", "run", "-m", "src.train_estimator",
             "--config", str(config_path.absolute()),
             "--method", method_config.name,
             overwrite_flag,
             "--timestamp", timestamp,
             *(["--n-jobs", str(n_jobs)] if n_jobs and n_jobs > 1 else [])
-        ], check=True, capture_output=True, text=True)
+        ])
 
-        # Try to extract job ID from output
+        result = subprocess.run(qsub_args, check=True, capture_output=True, text=True)
         output = result.stdout + result.stderr
-        print(f"  Submitted: {method_config.name}")
-        if "job" in output.lower():
-            # Print relevant lines containing job info
+
+        # Parse job ID
+        match = re.search(r'Your job(?:-array)? (\d+)', output)
+        if match:
+            job_id = match.group(1)
+            job_ids.append(job_id)
+            print(f"  Submitted: {method_config.name} (job {job_id})")
+        else:
+            print(f"  Submitted: {method_config.name}")
             for line in output.split('\n'):
-                if 'job' in line.lower():
+                if line.strip():
                     print(f"  {line.strip()}")
-                    job_ids.append(line.strip())
 
     print(f"\n{len(method_configs)} array jobs submitted successfully!")
     print(f"Total tasks: {len(method_configs) * n_batches}")
+    print(f"Job IDs: {', '.join(job_ids)}")
     print(f"\nMonitor with: qstat")
-    print(f"View logs: *.o* and *.e* files for each job")
+    return job_ids
 
 
 def main():
