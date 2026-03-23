@@ -5,7 +5,7 @@ experiment_id: humanoid_baseline
 data_root: /scratch/dc3430/pooling_eval
 environment:
   name: Humanoid-v5
-  reset_noise_scale: 0.04  # Noise scale for initial state (default: 0.01)
+  reset_noise_scale: 0.04
 policy:
   algorithm: PPO
   seed: 42

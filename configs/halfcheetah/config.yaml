@@ -6,7 +6,7 @@ data_root: /scratch/dc3430/pooling_eval
 environment:
   name: HalfCheetah-v5
   max_episode_steps: 1250
-  reset_noise_scale: 0.2  # Noise scale for initial state (default: 0.01)
+  reset_noise_scale: 0.2
   action_noise_std: 0.1
 policy:
   algorithm: SAC

@@ -29,12 +29,12 @@ from src.generate_data import collect_episodes_parallel
 
 def collect_episodes(config, policy, reset_noise_scale, action_noise_std, n_episodes, n_envs, use_vec_normalize):
     """Collect full episodes using collect_episodes_parallel (unbiased)."""
-    patched = replace(config.environment,
-                      reset_noise_scale=reset_noise_scale,
-                      action_noise_std=action_noise_std if action_noise_std > 0 else None)
-    patched_config = replace(config, environment=patched)
-
-    env, _ = create_vec_env(patched_config, n_envs=n_envs, use_monitor=False, seed=config.data_generation.seed)
+    env, _ = create_vec_env(
+        config, n_envs=n_envs, use_monitor=False, seed=config.data_generation.seed,
+        max_episode_steps=config.environment.max_episode_steps,
+        reset_noise_scale=reset_noise_scale,
+        action_noise_std=action_noise_std if action_noise_std > 0 else None,
+    )
     episodes = collect_episodes_parallel(env, policy, n_episodes,
                                          deterministic=False,
                                          use_vec_normalize=use_vec_normalize)

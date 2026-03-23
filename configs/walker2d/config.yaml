@@ -6,8 +6,8 @@ data_root: /scratch/dc3430/pooling_eval
 environment:
   name: Walker2d-v5
   max_episode_steps: 3000
-  reset_noise_scale: 0.03  # Noise scale for initial state (default: 0.01)
-  action_noise_std: 0.18  # Standard deviation of Gaussian noise added to actions (default: 0.0)
+  reset_noise_scale: 0.03
+  action_noise_std: 0.18
 policy:
   algorithm: SAC
   seed: 42

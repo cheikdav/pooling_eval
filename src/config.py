@@ -46,12 +46,16 @@ def resolve_param_for_episodes(param_value: Union[Any, Dict], num_episodes: int)
     return param_value['default']
 
 
+# Sentinel for "not set, use environment default"
+_UNSET = "__UNSET__"
+
+
 @dataclass
 class EnvironmentConfig:
     name: str
     max_episode_steps: Optional[int] = None
-    reset_noise_scale: Optional[float] = None  # Noise scale for MuJoCo environment resets (default: 0.01 in MuJoCo)
-    action_noise_std: Optional[float] = None  # Gaussian noise std added to actions (post-tanh, in action space)
+    reset_noise_scale: Optional[float] = None
+    action_noise_std: Optional[float] = None
 
 
 @dataclass
@@ -80,7 +84,11 @@ class PolicyConfig:
     normalize_obs: bool = True
     normalize_reward: bool = True
     vec_normalize_kwargs: Dict[str, Any] = field(default_factory=dict)
-    seed: int = 42
+    seed: Optional[int] = None
+    # Per-stage overrides (None = use environment default)
+    max_episode_steps: Optional[Union[int, str]] = _UNSET
+    reset_noise_scale: Optional[Union[float, str]] = _UNSET
+    action_noise_std: Optional[Union[float, str]] = _UNSET
 
 
 @dataclass
@@ -91,7 +99,11 @@ class DataGenerationConfig:
     n_envs: int = 1
     tuning_episodes: int = 0
     validation_episodes_per_batch: int = 0
-    seed: int = 42
+    seed: Optional[int] = None
+    # Per-stage overrides (None = use environment default)
+    max_episode_steps: Optional[Union[int, str]] = _UNSET
+    reset_noise_scale: Optional[Union[float, str]] = _UNSET
+    action_noise_std: Optional[Union[float, str]] = _UNSET
 
 
 @dataclass
@@ -106,7 +118,7 @@ class ValueEstimatorTrainingConfig:
     shuffle_frequency: int = 100  # Re-shuffle DataLoader every N epochs (0 = never, 1 = every epoch)
     truncation_coefficient: float = 5.0  # Discard last truncation_coefficient/(1-gamma) states from each episode
     reward_centering: bool = False  # Subtract mean reward from all rewards (for NN methods)
-    seed: int = 42
+    seed: Optional[int] = None
 
 
 class FeatureExtractorType(str, Enum):
@@ -306,7 +318,7 @@ class EvaluationConfig:
     eval_episodes: int = 0
     paired_states_n_pairs: int = 0  # 0 = no paired states
     paired_states_n_trajectories: int = 50
-    seed: int = 42
+    seed: Optional[int] = None
 
 
 @dataclass
@@ -322,6 +334,32 @@ class ExperimentConfig:
     code_versions: CodeVersions = field(default_factory=CodeVersions)
     data_root: str = "."  # Root directory for all experiment outputs
     logs_root: str = "."  # Root directory for logs and wandb
+
+    def _resolve_env_param(self, stage_value, env_value):
+        """Resolve a per-stage override: _UNSET means use env default."""
+        if stage_value is _UNSET:
+            return env_value
+        return stage_value
+
+    def get_policy_env_params(self):
+        """Get resolved (max_episode_steps, reset_noise_scale, action_noise_std) for policy training."""
+        p = self.policy
+        e = self.environment
+        return {
+            'max_episode_steps': self._resolve_env_param(p.max_episode_steps, e.max_episode_steps),
+            'reset_noise_scale': self._resolve_env_param(p.reset_noise_scale, e.reset_noise_scale),
+            'action_noise_std': self._resolve_env_param(p.action_noise_std, e.action_noise_std),
+        }
+
+    def get_data_env_params(self):
+        """Get resolved (max_episode_steps, reset_noise_scale, action_noise_std) for data generation."""
+        dg = self.data_generation
+        e = self.environment
+        return {
+            'max_episode_steps': self._resolve_env_param(dg.max_episode_steps, e.max_episode_steps),
+            'reset_noise_scale': self._resolve_env_param(dg.reset_noise_scale, e.reset_noise_scale),
+            'action_noise_std': self._resolve_env_param(dg.action_noise_std, e.action_noise_std),
+        }
 
     def _get_env_root(self) -> Path:
         """Get the environment-level root: {data_root}/experiments/{env_name}/"""
@@ -462,7 +500,7 @@ class ExperimentConfig:
             method_configs=method_configs
         )
 
-        return cls(
+        config = cls(
             experiment_id=config_dict['experiment_id'],
             environment=env_config,
             policy=policy_config,
@@ -475,17 +513,34 @@ class ExperimentConfig:
             data_root=config_dict.get('data_root', '.'),
             logs_root=config_dict.get('logs_root', config_dict.get('data_root', '.'))
         )
+        config._validate_seeds()
+        return config
+
+    def _validate_seeds(self):
+        """Ensure all seeds are explicitly provided (no implicit defaults)."""
+        missing = []
+        if self.policy.seed is None:
+            missing.append('policy.seed')
+        if self.data_generation.seed is None:
+            missing.append('data_generation.seed')
+        if self.value_estimators.training.seed is None:
+            missing.append('value_estimators.training.seed')
+        if self.evaluation.seed is None:
+            missing.append('evaluation.seed')
+        if missing:
+            raise ValueError(
+                f"Seeds must be explicitly provided in config. Missing: {', '.join(missing)}"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
         def dataclass_to_dict(obj):
             if hasattr(obj, '__dataclass_fields__'):
-                # Filter out None values
-                return {k: dataclass_to_dict(v) for k, v in obj.__dict__.items() if v is not None}
+                return {k: dataclass_to_dict(v) for k, v in obj.__dict__.items()
+                        if v is not None and v is not _UNSET}
             elif isinstance(obj, list):
                 return [dataclass_to_dict(item) for item in obj]
             elif isinstance(obj, Enum):
-                # Convert enum to its value
                 return obj.value
             else:
                 return obj

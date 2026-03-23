@@ -37,12 +37,14 @@ def estimate_storage(config_path: str, target_gb: float, n_batches: int = 80, sa
 
     # Create environment
     vec_normalize_path = policy_path.parent / "vec_normalize.pkl"
+    env_params = config.get_data_env_params()
     env, use_vec_normalize = create_vec_env(
         config,
         n_envs=1,
         use_monitor=False,
         vec_normalize_path=vec_normalize_path,
-        seed=config.data_generation.seed
+        seed=config.data_generation.seed,
+        **env_params,
     )
 
     # Generate sample episodes

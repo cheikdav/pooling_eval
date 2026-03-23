@@ -1,9 +1,9 @@
 experiment_id: test_mini
-seed: 42
 environment:
   name: CartPole-v1
 policy:
   algorithm: PPO
+  seed: 42
   total_timesteps: 2000
   learning_rate: 0.0003
   n_steps: 512
@@ -18,6 +18,7 @@ data_generation:
   deterministic_policy: false
   n_envs: 4
   validation_episodes_per_batch: 5
+  seed: 42
 value_estimators:
   training:
     max_epochs: 200
@@ -28,6 +29,7 @@ value_estimators:
     gamma: 0.99
     episode_subsets: [5, 10]
     shuffle_frequency: 50
+    seed: 42
   methods:
   - monte_carlo
   - dqn
@@ -43,3 +45,4 @@ logging:
 evaluation:
   eval_episodes: 5
   paired_states_n_pairs: 0
+  seed: 42

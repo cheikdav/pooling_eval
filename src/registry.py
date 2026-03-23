@@ -83,8 +83,12 @@ def resolve_dir(parent_dir: Path, prefix: str, params: dict) -> Path:
 # --- Parameter extraction for each hierarchy level ---
 
 def get_policy_params(config: ExperimentConfig) -> dict:
-    """Extract parameters that define the policy level identity."""
+    """Extract parameters that define the policy level identity.
+
+    Uses resolved env params (environment defaults + policy overrides).
+    """
     p = config.policy
+    env_params = config.get_policy_env_params()
     return {
         'algorithm': p.algorithm,
         'total_timesteps': p.total_timesteps,
@@ -113,18 +117,18 @@ def get_policy_params(config: ExperimentConfig) -> dict:
             'hidden_sizes': config.network.hidden_sizes,
             'activation': config.network.activation,
         },
-        'environment': {
-            'max_episode_steps': config.environment.max_episode_steps,
-            'reset_noise_scale': config.environment.reset_noise_scale,
-            'action_noise_std': config.environment.action_noise_std,
-        },
+        'environment': env_params,
         'code_version': config.code_versions.policy,
     }
 
 
 def get_data_params(config: ExperimentConfig) -> dict:
-    """Extract parameters that define the data level identity."""
+    """Extract parameters that define the data level identity.
+
+    Uses resolved env params (environment defaults + data_generation overrides).
+    """
     dg = config.data_generation
+    env_params = config.get_data_env_params()
     return {
         'n_batches': dg.n_batches,
         'episodes_per_batch': dg.episodes_per_batch,
@@ -132,6 +136,7 @@ def get_data_params(config: ExperimentConfig) -> dict:
         'n_envs': dg.n_envs,
         'tuning_episodes': dg.tuning_episodes,
         'validation_episodes_per_batch': dg.validation_episodes_per_batch,
+        'environment': env_params,
         'seed': dg.seed,
         'code_version': config.code_versions.data,
     }

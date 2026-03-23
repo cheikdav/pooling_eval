@@ -6,7 +6,7 @@ from pathlib import Path
 from stable_baselines3 import PPO, A2C, SAC, TD3
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
-from typing import Tuple, Callable
+from typing import Optional, Tuple, Callable
 
 from src.config import ExperimentConfig
 from src.estimators.neural_net import MonteCarloEstimator, DQNEstimator
@@ -90,15 +90,14 @@ def create_vec_env(
     use_monitor: bool = True,
     vec_normalize_path: Path = None,
     seed: int = None,
+    max_episode_steps: Optional[int] = None,
+    reset_noise_scale: Optional[float] = None,
+    action_noise_std: Optional[float] = None,
 ) -> Tuple[SubprocVecEnv, bool]:
     """Create a vectorized environment with optional normalization.
 
-    Args:
-        config: Experiment configuration
-        n_envs: Number of parallel environments
-        use_monitor: Whether to wrap with Monitor
-        vec_normalize_path: Path to load existing VecNormalize stats
-        seed: Random seed (required)
+    Caller is responsible for resolving env params (via config.get_policy_env_params()
+    or config.get_data_env_params()) and passing them explicitly.
 
     Returns:
         Tuple of (environment, use_vec_normalize flag)
@@ -111,9 +110,9 @@ def create_vec_env(
             config.environment.name,
             use_monitor,
             seed + i,
-            config.environment.max_episode_steps,
-            config.environment.reset_noise_scale,
-            config.environment.action_noise_std,
+            max_episode_steps,
+            reset_noise_scale,
+            action_noise_std,
         )
         for i in range(n_envs)
     ]

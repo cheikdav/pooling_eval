@@ -128,7 +128,11 @@ def train_policy(config: ExperimentConfig, output_dir: Path, use_wandb: bool = T
     np.random.seed(config.policy.seed)
     torch.manual_seed(config.policy.seed)
 
-    env, _ = create_vec_env(config, n_envs=config.policy.n_envs, use_monitor=True, seed=config.policy.seed)
+    env_params = config.get_policy_env_params()
+    env, _ = create_vec_env(
+        config, n_envs=config.policy.n_envs, use_monitor=True, seed=config.policy.seed,
+        **env_params,
+    )
 
     if config.policy.algorithm not in ALGORITHM_MAP:
         raise ValueError(f"Unknown algorithm: {config.policy.algorithm}. "
