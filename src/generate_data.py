@@ -501,19 +501,63 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
     print(f"  Average CI width for differences: {np.mean(results['diff_ci_upper'] - results['diff_ci_lower']):.2f}")
 
 
-def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path, start_batch_idx: int = 0, end_batch_idx: int = None, generate_paired: bool = False, eval_only: bool = False, n_workers: int = None):
-    """Generate n batches of k episodes using trained policy.
+def _compute_batch_seeds(config: ExperimentConfig):
+    """Compute deterministic seed assignments for all batch types.
+
+    Seed layout (always the same regardless of which phase runs):
+      tuning:    base_seed
+      batch_0:   base_seed + 1
+      batch_1:   base_seed + 2
+      ...
+      batch_N-1: base_seed + N
+      eval:      base_seed + N + 1  (or base_seed + N if no tuning)
+
+    Returns dict with keys 'tuning', 'training' (list), 'eval'.
+    """
+    base = config.data_generation.seed
+    seeds = {}
+    idx = 0
+
+    if config.data_generation.tuning_episodes > 0:
+        seeds['tuning'] = base + idx
+        idx += 1
+
+    seeds['training'] = []
+    for i in range(config.data_generation.n_batches):
+        seeds['training'].append(base + idx)
+        idx += 1
+
+    if config.evaluation.eval_episodes > 0:
+        seeds['eval'] = base + idx
+        idx += 1
+
+    return seeds
+
+
+def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
+                  phase: str = "all",
+                  start_batch_idx: int = 0, end_batch_idx: int = None,
+                  generate_paired: bool = False, n_workers: int = None):
+    """Generate episode batches using trained policy.
 
     Args:
         config: Experiment configuration
         policy_path: Path to trained policy (.zip file)
         output_dir: Directory to save generated data
-        start_batch_idx: Skip batches before this index (for resuming interrupted runs)
-        end_batch_idx: Stop after this index (exclusive, None = generate all batches)
+        phase: Which batches to generate:
+            "all" — tuning + training + eval + paired (default, backward compat)
+            "tuning" — only batch_tuning (+ validation)
+            "training" — only regular batches (respects start/end_batch_idx)
+            "eval" — only batch_eval + paired states
+        start_batch_idx: Skip training batches before this index
+        end_batch_idx: Stop after this training batch index (exclusive)
         generate_paired: Whether to generate paired state evaluations
-        eval_only: If True, only generate the eval batch (skips all other batches)
-        n_workers: Number of parallel workers for paired state generation (None = use all CPUs)
+        n_workers: Number of parallel workers for paired state generation
     """
+    valid_phases = ("all", "tuning", "training", "eval")
+    if phase not in valid_phases:
+        raise ValueError(f"Invalid phase '{phase}'. Must be one of {valid_phases}")
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     policy_metadata = {}
@@ -529,12 +573,14 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     model = AlgorithmClass.load(policy_path)
 
     vec_normalize_path = policy_path.parent / "vec_normalize.pkl" if config.policy.use_vec_normalize else None
+    env_params = config.get_data_env_params()
     env, use_vec_normalize = create_vec_env(
         config,
         n_envs=config.data_generation.n_envs,
         use_monitor=False,
         vec_normalize_path=vec_normalize_path,
-        seed=config.data_generation.seed
+        seed=config.data_generation.seed,
+        **env_params,
     )
 
     if use_vec_normalize:
@@ -543,20 +589,17 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     print(f"\nGenerating data using policy from {policy_path}")
     print(f"Algorithm: {config.policy.algorithm}")
     print(f"Environment: {config.environment.name}")
+    print(f"Phase: {phase}")
     print(f"VecNormalize: {use_vec_normalize}")
     print(f"Deterministic policy: {config.data_generation.deterministic_policy}")
     print(f"Output directory: {output_dir}\n")
 
+    batch_seeds = _compute_batch_seeds(config)
     all_batch_stats = []
-    current_seed = config.data_generation.seed
     val_eps = config.data_generation.validation_episodes_per_batch
 
-    def collect_and_save(batch_name, n_train, n_val, seed, skip=False):
+    def collect_and_save(batch_name, n_train, n_val, seed):
         """Collect train + validation episodes together, split, and save."""
-        if skip or (eval_only and batch_name != "batch_eval"):
-            print(f"  Skipping {batch_name}\n")
-            return n_train + n_val
-
         total = n_train + n_val
         print(f"Collecting {batch_name} ({n_train}+{n_val} val = {total} episodes)")
         np.random.seed(seed)
@@ -582,25 +625,28 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     total_episodes = 0
 
-    # Tuning batch (+ validation)
-    if config.data_generation.tuning_episodes > 0:
+    # Tuning batch
+    if phase in ("all", "tuning") and 'tuning' in batch_seeds:
         total_episodes += collect_and_save(
-            "batch_tuning", config.data_generation.tuning_episodes, val_eps, current_seed)
-        current_seed += 1
+            "batch_tuning", config.data_generation.tuning_episodes,
+            val_eps, batch_seeds['tuning'])
 
-    # Regular batches (+ validation each)
-    for i in range(config.data_generation.n_batches):
-        skip = i < start_batch_idx or (end_batch_idx is not None and i >= end_batch_idx)
+    # Regular training batches
+    if phase in ("all", "training"):
+        for i in range(config.data_generation.n_batches):
+            if i < start_batch_idx or (end_batch_idx is not None and i >= end_batch_idx):
+                continue
+            total_episodes += collect_and_save(
+                f"batch_{i}", config.data_generation.episodes_per_batch,
+                val_eps, batch_seeds['training'][i])
+
+    # Eval batch
+    if phase in ("all", "eval") and 'eval' in batch_seeds:
         total_episodes += collect_and_save(
-            f"batch_{i}", config.data_generation.episodes_per_batch, val_eps, current_seed, skip=skip)
-        current_seed += 1
+            "batch_eval", config.evaluation.eval_episodes,
+            0, batch_seeds['eval'])
 
-    # Eval batch (no validation pair)
-    if config.evaluation.eval_episodes > 0:
-        total_episodes += collect_and_save(
-            "batch_eval", config.evaluation.eval_episodes, 0, current_seed)
-        current_seed += 1
-
+    # Save statistics and metadata
     stats_file = output_dir / "data_statistics.npz"
     np.savez(
         stats_file,
@@ -609,7 +655,6 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         total_episodes=total_episodes,
     )
 
-    # Save data generation metadata
     data_metadata = {
         'policy_path': str(policy_path),
         'deterministic_policy': config.data_generation.deterministic_policy,
@@ -633,9 +678,11 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     env.close()
 
-    # Generate paired state evaluations if requested
-    if generate_paired:
-        generate_paired_states(config, output_dir, gamma=config.value_estimators.training.gamma, vec_normalize_path=vec_normalize_path, policy_path=policy_path, n_workers=n_workers)
+    # Generate paired state evaluations (only in eval or all phase)
+    if generate_paired and phase in ("all", "eval"):
+        generate_paired_states(config, output_dir, gamma=config.value_estimators.training.gamma,
+                               vec_normalize_path=vec_normalize_path, policy_path=policy_path,
+                               n_workers=n_workers)
 
 
 def main():
@@ -645,25 +692,31 @@ def main():
                        help="Path to trained policy (default: experiments/<experiment_id>/policy/policy_final.zip)")
     parser.add_argument("--output-dir", type=Path, default=None,
                        help="Output directory (default: experiments/<experiment_id>/data)")
+    parser.add_argument("--phase", type=str, default="all", choices=["all", "tuning", "training", "eval"],
+                       help="Which data to generate (default: all)")
     parser.add_argument("--start-batch-idx", type=int, default=0,
-                       help="Skip batches before this index (for resuming interrupted runs)")
+                       help="Skip training batches before this index (for resuming)")
     parser.add_argument("--end-batch-idx", type=int, default=None,
-                       help="Stop after this batch index (exclusive, default: generate all batches)")
+                       help="Stop after this training batch index (exclusive)")
     parser.add_argument("--generate-paired", action="store_true",
-                       help="Generate paired state evaluations with ground truth CIs (overrides config)")
+                       help="Generate paired state evaluations (overrides config)")
     parser.add_argument("--no-generate-paired", action="store_true",
                        help="Skip paired state generation (overrides config)")
     parser.add_argument("--eval-only", action="store_true",
-                       help="Only generate the eval batch (skips tuning, regular, and validation batches)")
+                       help="Deprecated: use --phase eval instead")
     parser.add_argument("--n-workers", type=int, default=None,
                        help="Number of parallel workers for paired state generation (default: use all CPUs)")
     args = parser.parse_args()
 
-    # Load configuration
     config = ExperimentConfig.from_yaml(args.config)
 
+    # Handle deprecated --eval-only
+    phase = args.phase
+    if args.eval_only:
+        print("Warning: --eval-only is deprecated, use --phase eval instead")
+        phase = "eval"
+
     # Determine whether to generate paired states
-    # Command-line flags override config setting
     if args.generate_paired:
         generate_paired = True
     elif args.no_generate_paired:
@@ -672,26 +725,18 @@ def main():
         generate_paired = config.evaluation.paired_states_n_pairs > 0
 
     # Set default paths
-    if args.policy_path is None:
-        policy_path = config.get_policy_dir() / "policy_final.zip"
-    else:
-        policy_path = args.policy_path
-
-    if args.output_dir is None:
-        output_dir = config.get_data_dir()
-    else:
-        output_dir = args.output_dir
+    policy_path = args.policy_path or config.get_policy_dir() / "policy_final.zip"
+    output_dir = args.output_dir or config.get_data_dir()
 
     # Save config to output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 
-    # Generate data
     generate_data(config, policy_path, output_dir,
+                 phase=phase,
                  start_batch_idx=args.start_batch_idx,
                  end_batch_idx=args.end_batch_idx,
                  generate_paired=generate_paired,
-                 eval_only=args.eval_only,
                  n_workers=args.n_workers)
 
 
