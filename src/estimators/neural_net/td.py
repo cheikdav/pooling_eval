@@ -1,4 +1,4 @@
-"""DQN-style value estimator with target network."""
+"""TD-style value estimator with target network."""
 
 import torch
 from typing import Dict, Any
@@ -8,8 +8,8 @@ from .base import NeuralNetEstimator
 from ..feature_extractors import FeatureExtractor
 
 
-class DQNEstimator(NeuralNetEstimator):
-    """DQN estimator with target network and Polyak averaging."""
+class TDEstimator(NeuralNetEstimator):
+    """TD(0) value estimator with target network and Polyak averaging."""
 
     def __init__(
         self,
@@ -73,7 +73,7 @@ class DQNEstimator(NeuralNetEstimator):
         return metrics
 
     def _build_checkpoint(self) -> Dict[str, Any]:
-        """Build checkpoint with DQN specific fields."""
+        """Build checkpoint with TD specific fields."""
         checkpoint = super()._build_checkpoint()
         checkpoint.update({
             'target_net_state_dict': self.target_net.state_dict(),
@@ -83,7 +83,7 @@ class DQNEstimator(NeuralNetEstimator):
         return checkpoint
 
     def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
-        """Load DQN specific fields."""
+        """Load TD specific fields."""
         super()._load_from_checkpoint_dict(checkpoint)
         self.target_net.load_state_dict(checkpoint['target_net_state_dict'])
         self.steps_since_target_update = checkpoint['steps_since_target_update']
@@ -123,6 +123,6 @@ class DQNEstimator(NeuralNetEstimator):
         config.update({
             'discount_factor': self.discount_factor,
             'target_update_rate': self.target_update_rate,
-            'estimator_type': 'dqn',
+            'estimator_type': 'td',
         })
         return config

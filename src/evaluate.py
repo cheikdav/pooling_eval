@@ -134,7 +134,7 @@ def load_estimator_model(model_path: Path, method_name: str, device: str = "cpu"
 
     Args:
         model_path: Path to model file
-        method_name: Name of the estimation method (e.g., 'monte_carlo', 'dqn')
+        method_name: Name of the estimation method (e.g., 'monte_carlo', 'td')
         device: Device to load model on
 
     Returns:

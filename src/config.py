@@ -131,7 +131,7 @@ class FeatureExtractorType(str, Enum):
 class EstimatorType(str, Enum):
     """Enum for estimator types."""
     MONTE_CARLO = "monte_carlo"
-    DQN = "dqn"
+    TD = "td"
     LEAST_SQUARES_MC = "least_squares_mc"
     LEAST_SQUARES_TD = "least_squares_td"
 
@@ -217,8 +217,8 @@ class MonteCarloConfig(BaseEstimatorConfig):
 
 
 @dataclass
-class DQNConfig(BaseEstimatorConfig):
-    """DQN estimator configuration."""
+class TDConfig(BaseEstimatorConfig):
+    """TD(0) estimator configuration (neural net with target network)."""
     target_update_rate: Union[float, Dict] = 1.0e-5
 
 
@@ -239,7 +239,7 @@ class LeastSquaresTDConfig(BaseEstimatorConfig):
 # Registry mapping EstimatorType to config class
 ESTIMATOR_CONFIG_REGISTRY: Dict[EstimatorType, Type[BaseEstimatorConfig]] = {
     EstimatorType.MONTE_CARLO: MonteCarloConfig,
-    EstimatorType.DQN: DQNConfig,
+    EstimatorType.TD: TDConfig,
     EstimatorType.LEAST_SQUARES_MC: LeastSquaresMCConfig,
     EstimatorType.LEAST_SQUARES_TD: LeastSquaresTDConfig,
 }

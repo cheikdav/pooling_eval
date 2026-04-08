@@ -9,7 +9,7 @@ from stable_baselines3.common.monitor import Monitor
 from typing import Optional, Tuple, Callable
 
 from src.config import ExperimentConfig
-from src.estimators.neural_net import MonteCarloEstimator, DQNEstimator
+from src.estimators.neural_net import MonteCarloEstimator, TDEstimator
 from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTDEstimator
 
 import warnings
@@ -40,7 +40,7 @@ ALGORITHM_MAP = {
 ESTIMATOR_CLASSES = {
     # Base methods
     'monte_carlo': MonteCarloEstimator,
-    'dqn': DQNEstimator,
+    'td': TDEstimator,
     'least_squares_mc': LeastSquaresMCEstimator,
     'least_squares_td': LeastSquaresTDEstimator,
     # RBF feature extractor variants (same underlying classes)
@@ -48,7 +48,7 @@ ESTIMATOR_CLASSES = {
     'least_squares_td_rbf': LeastSquaresTDEstimator,
     # NNLS (Non-negative least squares) variants with policy representation features
     'nnls_mc': MonteCarloEstimator,
-    'nnls_td': DQNEstimator,
+    'nnls_td': TDEstimator,
 }
 
 

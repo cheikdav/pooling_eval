@@ -32,7 +32,7 @@ value_estimators:
     seed: 42
   methods:
   - monte_carlo
-  - dqn
+  - td
 network:
   hidden_sizes: [32, 32]
   activation: relu

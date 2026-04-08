@@ -1,5 +1,5 @@
 # Hopper-v5 experiment configuration
-# Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
+# Method-specific parameters are in separate files (monte_carlo.yaml, td.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: hopper_baseline
 data_root: /scratch/dc3430/pooling_eval
@@ -56,7 +56,7 @@ value_estimators:
   - least_squares_mc_rbf
   - least_squares_td_rbf
   #- monte_carlo
-  #- dqn
+  #- td
   #- nnls_mc
   #- nnls_td
 network:

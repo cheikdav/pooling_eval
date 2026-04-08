@@ -1,5 +1,5 @@
 name: nnls_td
-type: dqn
+type: td
 learning_rate: 0.001
 target_update_rate: 0.1
 feature_extractor:

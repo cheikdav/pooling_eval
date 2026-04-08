@@ -124,7 +124,7 @@ def main():
     parser.add_argument("--config", type=Path, required=True,
                        help="Experiment config file")
     parser.add_argument("--method", type=str, required=True,
-                       help="Method name (monte_carlo, dqn, etc.)")
+                       help="Method name (monte_carlo, td, etc.)")
     parser.add_argument("--sweep-config", type=Path, default=None,
                        help="Base sweep config file (default: configs/sweeps/sweep_<method>.yaml)")
     parser.add_argument("--dry-run", action='store_true',

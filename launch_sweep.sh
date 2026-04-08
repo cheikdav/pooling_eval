@@ -6,7 +6,7 @@ set -e
 # Check if method argument is provided
 if [ -z "$1" ]; then
     echo "Usage: ./launch_sweep.sh <method> [num_agents]"
-    echo "Methods: monte_carlo, dqn"
+    echo "Methods: monte_carlo, td"
     echo "Example: ./launch_sweep.sh monte_carlo 4"
     exit 1
 fi

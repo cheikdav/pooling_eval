@@ -180,7 +180,7 @@ def main():
     if learning_rate is not None:
         method_config.learning_rate = learning_rate
 
-    # Override target_update_rate for DQN from wandb sweep or CLI
+    # Override target_update_rate for TD from wandb sweep or CLI
     target_update_rate = wandb.config.get('target_update_rate', args.target_update_rate)
     if target_update_rate is not None and hasattr(method_config, 'target_update_rate'):
         method_config.target_update_rate = target_update_rate

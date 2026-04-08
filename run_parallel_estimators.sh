@@ -3,13 +3,13 @@ set -e
 
 # Run all estimator training jobs in parallel across GPUs
 # Usage: ./run_parallel_estimators.sh <config_file> <methods> <n_batches> <overwrite> <timestamp>
-#   methods: comma-separated list (e.g., "monte_carlo,dqn")
+#   methods: comma-separated list (e.g., "monte_carlo,td")
 #   overwrite: "true" or "false"
 #   timestamp: training session timestamp
 
 if [ $# -lt 5 ]; then
     echo "Usage: $0 <config_file> <methods> <n_batches> <overwrite> <timestamp>"
-    echo "Example: $0 configs/example.yaml monte_carlo,dqn 10 false 20240101_120000"
+    echo "Example: $0 configs/example.yaml monte_carlo,td 10 false 20240101_120000"
     exit 1
 fi
 

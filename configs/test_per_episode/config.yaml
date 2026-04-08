@@ -1,5 +1,5 @@
 # CartPole-v1 experiment configuration
-# Method-specific parameters are in separate files (monte_carlo.yaml, dqn.yaml, least_squares_mc.yaml, least_squares_td.yaml)
+# Method-specific parameters are in separate files (monte_carlo.yaml, td.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: test_per_episode_hyperparams
 data_root: .
@@ -45,7 +45,7 @@ value_estimators:
     seed: 42
   methods:
   - monte_carlo
-  - dqn
+  - td
   - least_squares_mc
   - least_squares_td
   - nnls_mc

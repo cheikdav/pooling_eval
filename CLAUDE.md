@@ -17,7 +17,7 @@ This is a research framework for evaluating value function estimation methods in
 
 1. Train a policy using Stable Baselines 3 (PPO/A2C/SAC/TD3)
 2. Generate batches of episodes using the trained policy
-3. Train multiple value estimators (Monte Carlo, DQN) on the same data
+3. Train multiple value estimators (Monte Carlo, TD) on the same data
 4. Compare estimation performance across methods
 
 All experiments are reproducible via configuration files and logged with Weights & Biases.
@@ -81,7 +81,7 @@ uv run -m src.run_all_estimators --config configs/example_config.yaml --mode clu
 uv run -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --overwrite
 
 # Or call the bash script directly for parallel mode
-./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,dqn 10 false
+./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,td 10 false
 ```
 
 **Overwrite Behavior:**
@@ -145,7 +145,7 @@ wandb agent <sweep-id>
 
 **How it works:**
 - Sweep configs in `configs/sweeps/sweep_*.yaml` define hyperparameter search space
-- **Monte Carlo / DQN**: Tunes learning rate, batch size
+- **Monte Carlo / TD**: Tunes learning rate, batch size
 - **Least Squares (MC/TD)**: Tunes ridge_lambda
 - **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
 - **Optimizes mean validation MC loss across all episode counts** (`final/mean_val_mc_loss`)
@@ -173,7 +173,7 @@ The codebase is organized into two main parts:
 - `run_all_estimators.py`: Batch training orchestration
 - `tune_hyperparameters.py`: W&B hyperparameter sweeps
 - `evaluate.py`: Model evaluation and prediction generation
-- `estimators/`: Value estimator implementations (Monte Carlo, DQN, etc.)
+- `estimators/`: Value estimator implementations (Monte Carlo, TD, etc.)
 
 **Result Analysis** (`src/analysis/`):
 - `app.py`: Streamlit dashboard for interactive visualization
@@ -190,7 +190,7 @@ configs/
   <environment_name>/
     config.yaml              # Main config (shared parameters)
     monte_carlo.yaml         # Method-specific parameters
-    dqn.yaml
+    td.yaml
     least_squares_mc.yaml
     least_squares_td.yaml
 ```
@@ -219,7 +219,7 @@ evaluation: 1  # evaluation code
 ```
 
 **Method Config Files (e.g., monte_carlo.yaml):**
-- **Type**: Estimator type (monte_carlo, dqn, least_squares_mc, least_squares_td)
+- **Type**: Estimator type (monte_carlo, td, least_squares_mc, least_squares_td)
 - **Method-specific parameters**: Learning rate, target_update_rate, etc.
 
 **Legacy Format Support:**
@@ -285,10 +285,9 @@ All estimators inherit from **ValueEstimator** (base.py):
    - Computes full discounted returns: G_t = Σ γ^k * r_{t+k}
    - Simple, unbiased, but high variance
 
-2. **DQNEstimator** (dqn.py)
-   - Maintains separate target network (frozen, updated periodically)
-   - Computes targets: r + γ * V_target(s')
-   - Optional Double DQN: averages online and target network
+2. **TDEstimator** (td.py)
+   - Maintains a Polyak-averaged target network
+   - Computes TD(0) targets: r + γ * V_target(s')
 
 **Key Design Pattern**: The `compute_targets()` method returns torch tensors that serve as regression targets for training the value network. This allows different estimation strategies while sharing the same training loop.
 
@@ -334,7 +333,7 @@ experiments/{env_name}/                                    # e.g. Hopper-v5
 │   │   │       └── results/
 │   │   │           ├── ground_truth/ground_truth_returns.parquet
 │   │   │           └── monte_carlo/{n_episodes}/predictions.parquet
-│   │   └── dqn_estimator_001/                             # independent from MC
+│   │   └── td_estimator_001/                              # independent from MC
 │   │       └── ...
 │   └── data_002/                                          # different data gen params
 │       └── ...

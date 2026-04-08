@@ -1,6 +1,6 @@
-# W&B Sweep configuration for DQN estimator
+# W&B Sweep configuration for TD estimator
 # Usage:
-#   python launch_episode_sweeps.py --config configs/config_humanoid.yaml --method dqn
+#   python launch_episode_sweeps.py --config configs/config_humanoid.yaml --method td
 program: uv
 command:
   - ${env}
@@ -17,7 +17,7 @@ metric:
 run_cap: 40  # Maximum number of runs before sweep terminates
 parameters:
   method:
-    value: dqn
+    value: td
   log-frequency:
     value: 100
   n-jobs:

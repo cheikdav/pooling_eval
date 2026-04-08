@@ -1,5 +1,5 @@
-name: dqn
-type: dqn
+name: td
+type: td
 learning_rate: 0.001
 target_update_rate: 0.01
 batch_size: 64

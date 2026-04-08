@@ -24,14 +24,14 @@ def get_method_abbreviation(method_name: str) -> str:
     """Convert method name to abbreviation for wandb display.
 
     Args:
-        method_name: Full method name (e.g., 'monte_carlo', 'dqn')
+        method_name: Full method name (e.g., 'monte_carlo', 'td')
 
     Returns:
         Abbreviated method name (e.g., 'MC', 'TD')
     """
     abbreviations = {
         'monte_carlo': 'MC',
-        'dqn': 'TD',
+        'td': 'TD',
         'least_squares_mc': 'LSMC',
         'least_squares_td': 'LSTD',
     }
