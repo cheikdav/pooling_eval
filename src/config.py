@@ -164,6 +164,10 @@ class BaseEstimatorConfig:
     feature_extractor: Optional[FeatureExtractorConfig] = None  # Feature extraction config
     network: Optional['NetworkConfig'] = None  # Method-specific network config (overrides global if set)
     reward_centering: Optional[bool] = None  # Override global reward_centering if set
+    # If set, the method opts into the hyperparameter sweep path. Methods
+    # without `tuning` skip the sweep stage and train with fixed hyperparams.
+    # The dict can be empty (marker only) or carry sweep-specific settings.
+    tuning: Optional[Dict[str, Any]] = None
 
     def resolve_for_episodes(self, num_episodes: int) -> "BaseEstimatorConfig":
         """Create a copy of this config with all parameters resolved for a specific episode count.
@@ -270,17 +274,15 @@ class LoggingConfig:
         """Get environment-specific W&B project name.
 
         Args:
-            env_name: Full environment name (e.g., "CartPole-v1", "Hopper-v5")
+            env_name: Full environment name (e.g., "Hopper-v5")
 
         Returns:
             Project name in format: {base_project}-{simplified_env_name}
-            Example: "pooling-eval-cartpole"
+            Example: "pooling-eval-hopper"
         """
         simplified = env_name.lower()
         if '-v' in simplified:
             simplified = simplified.rsplit('-v', 1)[0]
-        if simplified.startswith('ale/'):
-            simplified = simplified[4:]
         simplified = simplified.replace('/', '-').replace('_', '-')
         return f"{self.wandb_project}-{simplified}"
 
@@ -449,7 +451,11 @@ class ExperimentConfig:
         code_versions = CodeVersions.load(search_dir=path.parent)
         config_dict['code_versions'] = code_versions
 
-        return cls.from_dict(config_dict)
+        config = cls.from_dict(config_dict)
+        # Stash the absolute source path so downstream stages (e.g. Snakemake
+        # shell rules) can reference the original config file.
+        config._config_path = path.resolve()
+        return config
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "ExperimentConfig":
@@ -537,7 +543,7 @@ class ExperimentConfig:
         def dataclass_to_dict(obj):
             if hasattr(obj, '__dataclass_fields__'):
                 return {k: dataclass_to_dict(v) for k, v in obj.__dict__.items()
-                        if v is not None and v is not _UNSET}
+                        if v is not None and v is not _UNSET and not k.startswith('_')}
             elif isinstance(obj, list):
                 return [dataclass_to_dict(item) for item in obj]
             elif isinstance(obj, Enum):

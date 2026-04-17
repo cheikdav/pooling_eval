@@ -165,63 +165,20 @@ def save_and_log_batch(batch_data: dict, output_path: Path, batch_name: str) -> 
     }
 
 
-def is_classic_control_env(env_name: str) -> bool:
-    """Check if environment is Classic Control (supports state setting from observation)."""
-    classic_control = ['CartPole', 'Acrobot', 'MountainCar', 'Pendulum']
-    return any(name in env_name for name in classic_control)
-
-
-def is_mujoco_env(env_name: str) -> bool:
-    """Check if environment is MuJoCo-based."""
-    mujoco_envs = ['Hopper', 'Walker2d', 'HalfCheetah', 'Ant', 'Humanoid', 'Swimmer', 'Reacher']
-    return any(name in env_name for name in mujoco_envs)
-
-
 def get_full_state(env):
-    """Get full environment state that can be used for restoration.
-
-    Returns:
-        For Classic Control: observation (which is the full state)
-        For MuJoCo: tuple of (qpos, qvel)
-    """
-    if hasattr(env.unwrapped, 'state'):
-        # Classic Control - observation is the state
-        return env.unwrapped.state.copy()
-    elif hasattr(env.unwrapped, 'data'):
-        # MuJoCo - need full simulator state
-        return (env.unwrapped.data.qpos.copy(), env.unwrapped.data.qvel.copy())
-    else:
-        raise ValueError(f"Environment {type(env)} does not support state extraction")
+    """Get full MuJoCo environment state (qpos, qvel) for restoration."""
+    return (env.unwrapped.data.qpos.copy(), env.unwrapped.data.qvel.copy())
 
 
 def restore_full_state(env, state):
-    """Restore environment to a saved state.
-
-    Args:
-        env: Gymnasium environment
-        state: For Classic Control - observation array
-               For MuJoCo - tuple of (qpos, qvel)
-    """
-    if hasattr(env.unwrapped, 'state'):
-        # Classic Control
-        env.unwrapped.state = state.copy() if isinstance(state, np.ndarray) else state
-    elif hasattr(env.unwrapped, 'data'):
-        # MuJoCo
-        qpos, qvel = state
-        env.unwrapped.set_state(qpos, qvel)
-    else:
-        raise ValueError(f"Environment {type(env)} does not support state restoration")
+    """Restore MuJoCo environment to a saved state."""
+    qpos, qvel = state
+    env.unwrapped.set_state(qpos, qvel)
 
 
 def get_obs_from_env(env) -> np.ndarray:
     """Get current observation from env after state restoration."""
-    if hasattr(env.unwrapped, '_get_obs'):
-        return env.unwrapped._get_obs()
-    elif hasattr(env.unwrapped, 'state'):
-        state = env.unwrapped.state
-        return state.copy() if hasattr(state, 'copy') else np.array(state)
-    else:
-        raise ValueError(f"Cannot get observation from {type(env)}")
+    return env.unwrapped._get_obs()
 
 
 def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None, max_steps: int = None) -> float:
@@ -380,10 +337,6 @@ def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: fl
         policy_path: Optional path to policy file (defaults to experiments/<exp_id>/policy/policy_final.zip)
         n_workers: Number of parallel workers (None = use all CPUs)
     """
-    if not (is_classic_control_env(config.environment.name) or is_mujoco_env(config.environment.name)):
-        print(f"\nSkipping paired state generation: {config.environment.name} is not a supported environment")
-        return
-
     print(f"\nGenerating paired state evaluations")
     print(f"Environment: {config.environment.name}")
     print(f"Number of pairs: {config.evaluation.paired_states_n_pairs}")

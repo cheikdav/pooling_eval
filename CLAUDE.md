@@ -44,69 +44,103 @@ uv run -m src.estimate_storage --config configs/example_config.yaml --target-gb 
 
 This tool generates a small batch of episodes, measures storage size, and calculates the optimal `episodes_per_batch` to achieve your target total storage across all batches. Useful for planning experiments with storage constraints.
 
-### Run Complete Experiment Pipeline
+### Run Complete Experiment Pipeline (Snakemake)
+
+The pipeline is orchestrated by a Snakefile at the repository root. Snakemake
+handles DAG resolution, state tracking, retry, and cluster dispatch. The same
+workflow runs locally, on SGE, on SLURM, or in the cloud with a CLI flag
+change.
+
 ```bash
-# Simple shell script that runs all steps sequentially
-./run_experiment.sh
+# Local, 4 parallel jobs
+uv run snakemake --cores 4 --config experiment_config=configs/hopper/config.yaml
 
-# Or run steps individually:
-uv run -m src.train_policy --config configs/example_config.yaml
-uv run -m src.generate_data --config configs/example_config.yaml
-uv run -m src.train_estimator --config configs/example_config.yaml --method monte_carlo --batch-idx 0 --no-overwrite
+# Convenience wrapper (defaults: config=configs/test_mini/config.yaml, cores=4)
+./run_experiment.sh configs/hopper/config.yaml
 
-# Generate specific range of batches:
-uv run -m src.generate_data --config configs/example_config.yaml --start-batch-idx 0 --end-batch-idx 10  # Batches 0-9
-uv run -m src.generate_data --config configs/example_config.yaml --start-batch-idx 10  # Resume from batch 10
+# Dry-run: print the DAG without executing anything
+uv run snakemake -n --config experiment_config=configs/hopper/config.yaml
+
+# Visualize the DAG as a PNG (requires graphviz)
+uv run snakemake --dag --config experiment_config=configs/hopper/config.yaml \
+    | dot -Tpng > dag.png
+
+# Re-run a specific stage explicitly
+uv run snakemake --forcerun train_estimator \
+    --cores 4 --config experiment_config=configs/hopper/config.yaml
 ```
 
-### Run All Estimators (Multiple Methods × Multiple Batches)
+The workflow has one required config entry: `experiment_config` is the path
+to a pooling-eval experiment YAML. All other state (which batches to train,
+which methods to sweep, which episode counts to evaluate) is read from the
+experiment YAML at Snakefile preamble time.
+
+### Running on a Cluster
+
+SGE via the generic cluster executor:
 ```bash
-# Sequential (simple, good for debugging)
-uv run -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --no-overwrite
-
-# Parallel across GPUs (local machine)
-uv run -m src.run_all_estimators --config configs/example_config.yaml --mode parallel --no-overwrite
-
-# Cluster mode (SGE array jobs)
-uv run -m src.run_all_estimators --config configs/example_config.yaml --mode cluster --no-overwrite
-
-# Cluster mode with custom settings
-uv run -m src.run_all_estimators --config configs/example_config.yaml --mode cluster \
-    --grid-mem 16g \
-    --grid-ncpus 4 \
-    --max-concurrent 10 \
-    --no-overwrite
-
-# To overwrite existing models, use --overwrite instead of --no-overwrite
-uv run -m src.run_all_estimators --config configs/example_config.yaml --mode sequential --overwrite
-
-# Or call the bash script directly for parallel mode
-./run_parallel_estimators.sh configs/example_config.yaml monte_carlo,td 10 false
+uv run snakemake \
+    --executor cluster-generic \
+    --cluster-generic-submit-cmd \
+        "qsub -V -cwd -pe threaded {threads} -l h_vmem={resources.mem_mb}M" \
+    --jobs 50 \
+    --config experiment_config=configs/hopper/config.yaml
 ```
 
-**Overwrite Behavior:**
-- `--overwrite`: Always train estimators, overwriting existing models
-- `--no-overwrite`: Skip training if model file already exists (useful for resuming interrupted experiments)
-- **Required**: You must specify either `--overwrite` or `--no-overwrite` (no default)
+SLURM via the first-class slurm plugin (requires `snakemake-executor-plugin-slurm`):
+```bash
+uv run snakemake --executor slurm --jobs 50 \
+    --config experiment_config=configs/hopper/config.yaml
+```
 
-**Cluster Mode Details:**
-- Submits one SGE array job per method
-- Each array task (identified by `SGE_TASK_ID`) trains one batch
-- `SGE_TASK_ID` is automatically converted to batch index (1-indexed → 0-indexed)
-- Monitor jobs with `qstat`
-- View logs in `*.o*` and `*.e*` files
-- Use `--grid-mem` to specify memory per job (default: 8g)
-- Use `--grid-ncpus` to specify CPUs per job (default: 1)
-  - Recommended: 4-6 CPUs for large networks (Humanoid, Ant) or RBF features
-  - Recommended: 1-2 CPUs for simple networks (CartPole)
-- Use `--max-concurrent N` to limit concurrent tasks per method (useful for resource management)
+`threads:`, `resources: mem_mb=`, and `resources: runtime=` on each rule are
+translated automatically to the scheduler's resource request.
+
+### Running Individual Stages
+
+Each stage script still has its own CLI and can be invoked directly for
+debugging. Snakemake is not required for ad-hoc single-stage runs.
+```bash
+uv run -m src.train_policy --config configs/hopper/config.yaml
+uv run -m src.generate_data --config configs/hopper/config.yaml --phase training
+uv run -m src.train_estimator --config configs/hopper/config.yaml \
+    --method monte_carlo --batch-idx 3 --n-episodes 50
+uv run -m src.evaluate --config configs/hopper/config.yaml
+```
+
+`src.train_estimator` trains **one estimator per invocation** — one method on
+one batch at one episode count. Fan-out over the `(method × batch × n_episodes)`
+cross-product is Snakemake's job. This makes per-cell retry possible: if a
+single estimator fails, only that cell is re-trained, not the whole method's
+batch.
+
+### Retry and Resume
+
+Snakemake resume is automatic: if a pipeline is interrupted, re-running
+`snakemake` on the same config picks up from where it stopped based on which
+output files already exist.
+
+Per-rule retries are declared in the Snakefile (`retries: 2` on `train_estimator`).
+Transient failures of individual cells are automatically retried.
+
+If the previous run was killed hard, Snakemake may leave a lock file:
+```bash
+uv run snakemake --unlock --config experiment_config=configs/hopper/config.yaml
+uv run snakemake --rerun-incomplete \
+    --cores 4 --config experiment_config=configs/hopper/config.yaml
+```
 
 ### Evaluate Results
+`src.evaluate` runs as part of the Snakemake pipeline via the `evaluate_all`
+rule. To run it standalone (e.g. re-evaluating without retraining):
 ```bash
-# Generate predictions from trained models
-uv run -m src.evaluate --config configs/example_config.yaml
-# Saves to each method's eval dir: .../eval_NNN/results/
+uv run -m src.evaluate --config configs/hopper/config.yaml --n-jobs 1
+```
+Note: evaluate.py's ProcessPoolExecutor path (`--n-jobs > 1`) has a pre-existing
+hang with torch CUDA init on some systems. The Snakemake rule uses `--n-jobs 1`
+by default to work around this.
 
+```bash
 # Launch interactive dashboard for analysis
 uv run streamlit run src/analysis/app.py
 # Access at http://localhost:8501
@@ -119,44 +153,49 @@ uv run -m src.train_estimator ... --no-wandb
 ```
 
 ### Hyperparameter Tuning with W&B Sweeps
-```bash
-# Launch sweep with automatic config injection
-uv run launch_episode_sweeps.py --config configs/cartpole/config.yaml --method monte_carlo
 
-# Launch sweep with N parallel agents
-uv run launch_episode_sweeps.py --config configs/cartpole/config.yaml --method monte_carlo --launch-agents 4
+Methods opt into the sweep path by adding a `tuning:` field to their method
+config YAML. Methods without `tuning:` skip the sweep stage and train with
+their fixed hyperparams. The Snakemake workflow automatically schedules
+`sweep → select_tuned_hyperparams → train_estimator` for opt-in methods.
 
-# Dry run to see generated sweep config
-uv run launch_episode_sweeps.py --config configs/cartpole/config.yaml --method monte_carlo --dry-run
-
-# Manual method (after sweep created):
-wandb agent <sweep-id>
+```yaml
+# configs/hopper/monte_carlo.yaml
+name: monte_carlo
+type: monte_carlo
+learning_rate: 0.001  # fallback if tuning is skipped
+batch_size: 128
+tuning: {}            # marker — enables sweep path
 ```
 
-**New Sweep Workflow:**
-- **Single sweep per method**: Each hyperparameter set trains on ALL episode counts in one run
-- **Episode counts**: Loaded from `config.value_estimators.training.episode_subsets`
-- **Seed variation**: Each episode count uses a different seed for diversity
-- **Aggregated metrics**: Reports combined statistics across all episode counts
-  - `final/mean_val_mc_loss`: Mean of best losses across all episode counts (optimized by sweep)
-  - `final/std_val_mc_loss`: Standard deviation across episode counts
-  - `final/{N}ep/best_mc_loss`: Best loss for specific episode count
+The tuned hyperparameters are written to
+`{estimator_dir}/sweeps/tuned_hyperparams.json` (inside the results tree).
+`train_estimator` reads this JSON before constructing the estimator and
+merges the tuned values into the in-memory method config. **The source YAML
+is never mutated** — this is the key change from the pre-Snakemake workflow.
 
+Invocations (each sweep trial calls `train_one_estimator` once per episode
+count in the experiment config):
+```bash
+# Standalone sweep (Snakemake would call this automatically as a rule)
+uv run launch_episode_sweeps.py --config configs/hopper/config.yaml --method monte_carlo --launch-agents 4
 
-**How it works:**
-- Sweep configs in `configs/sweeps/sweep_*.yaml` define hyperparameter search space
-- **Monte Carlo / TD**: Tunes learning rate, batch size
-- **Least Squares (MC/TD)**: Tunes ridge_lambda
-- **Always uses `batch_tuning.npz` for training and `batch_tuning_validation.npz` for validation**
-- **Optimizes mean validation MC loss across all episode counts** (`final/mean_val_mc_loss`)
-- **W&B mode**: Set `wandb-mode: offline` in sweep config to avoid rate limits
-- Results saved under the method's estimator directory: `.../{method}_estimator_NNN/sweeps/<run_id>/<N>ep/`
+# Standalone selection: writes tuned_hyperparams.json to the results tree
+uv run -m src.select_hyperparameters --config configs/hopper/config.yaml --method monte_carlo
+```
 
-**Customizing sweeps:**
-- Edit `configs/sweeps/sweep_*.yaml` to change search range or method (bayes/grid/random)
-- Supported parameters: learning_rate, target_update_rate, batch_size, ridge_lambda
-- Episode counts are loaded from the experiment config's `episode_subsets` field
-- Set `wandb-mode: offline` to avoid rate limits with many parallel agents
+**Sweep mechanics:**
+- One W&B sweep per method, N parallel agents (configured via `--launch-agents`)
+- Each trial trains on ALL `episode_subsets` and reports
+  `final/mean_val_mc_loss` as the sweep objective
+- Results CSV: `{estimator_dir}/sweeps/sweep_results.csv`
+- Selection picks best trial by mean-normalized-loss across episode counts
+- Selected hyperparams land in `{estimator_dir}/sweeps/tuned_hyperparams.json`
+- Sweep configs in `configs/sweeps/sweep_*.yaml` define the search space
+- **Monte Carlo / TD**: tunes learning_rate, batch_size
+- **Least Squares (MC/TD)**: tunes ridge_lambda
+- Uses `batch_tuning.npz` for training, `batch_tuning_validation.npz` for validation
+- Set `wandb-mode: offline` in sweep config to avoid rate limits
 
 ## Architecture
 
@@ -169,8 +208,7 @@ The codebase is organized into two main parts:
 - `registry.py`: Parameter-based directory resolution (find-or-create numbered dirs)
 - `train_policy.py`: Policy training with SB3
 - `generate_data.py`: Episode data generation
-- `train_estimator.py`: Value estimator training
-- `run_all_estimators.py`: Batch training orchestration
+- `train_estimator.py`: Value estimator training (one estimator per invocation)
 - `tune_hyperparameters.py`: W&B hyperparameter sweeps
 - `evaluate.py`: Model evaluation and prediction generation
 - `estimators/`: Value estimator implementations (Monte Carlo, TD, etc.)
@@ -463,8 +501,8 @@ Offline runs are stored in `wandb_offline/` under the relevant estimator directo
 ### Creating a New Experiment
 
 1. Create a new directory: `mkdir configs/my_experiment`
-2. Copy and edit main config: `cp configs/cartpole/config.yaml configs/my_experiment/config.yaml`
-3. Copy method configs: `cp configs/cartpole/*.yaml configs/my_experiment/` (excluding config.yaml)
+2. Copy and edit main config: `cp configs/hopper/config.yaml configs/my_experiment/config.yaml`
+3. Copy method configs: `cp configs/hopper/*.yaml configs/my_experiment/` (excluding config.yaml)
 4. Edit `configs/my_experiment/config.yaml`:
    - Adjust environment, policy algorithm, timesteps, etc.
    - Update `value_estimators.methods` list to add/remove methods
@@ -483,36 +521,33 @@ cat experiments/{env}/policy_NNN/data_NNN/{method}_estimator_NNN/{n_episodes}/ba
 
 ### Resuming Interrupted Experiments
 
-**For data generation**, use `--start-batch-idx` and `--end-batch-idx` to control which batches to generate:
+Snakemake handles resume automatically: re-running `snakemake` on the same
+config picks up where the previous invocation stopped based on which output
+files already exist on disk. No flags needed.
+
+If the previous run was killed hard, snakemake may leave a lock file:
 ```bash
-# Resume from batch 10 onwards
-uv run -m src.generate_data --config config.yaml --start-batch-idx 10
-
-# Generate only batches 5-15 (exclusive end)
-uv run -m src.generate_data --config config.yaml --start-batch-idx 5 --end-batch-idx 15
-
-# Generate first 20 batches only
-uv run -m src.generate_data --config config.yaml --end-batch-idx 20
+uv run snakemake --unlock --config experiment_config=configs/hopper/config.yaml
+uv run snakemake --rerun-incomplete \
+    --cores 4 --config experiment_config=configs/hopper/config.yaml
 ```
 
-**For estimator training**, use `--no-overwrite` to skip already-trained models:
+To force re-training of one specific cell, delete its `estimator.pt` and
+re-run:
 ```bash
-uv run -m src.run_all_estimators --config config.yaml --mode sequential --no-overwrite
+rm experiments/.../monte_carlo_estimator_001/10/batch_3/estimator.pt
+uv run snakemake --cores 4 --config experiment_config=configs/hopper/config.yaml
 ```
 
-The framework checks for existing `estimator.pt` files and skips training if found.
-
-To force retraining all models, use `--overwrite`:
+To force re-running an entire rule:
 ```bash
-uv run -m src.run_all_estimators --config config.yaml --mode sequential --overwrite
+uv run snakemake --forcerun train_estimator --cores 4 \
+    --config experiment_config=configs/hopper/config.yaml
 ```
 
 ## Supported Environments
 
-- **Classic Control**: CartPole-v1, Acrobot-v1, MountainCar-v0
-- **Atari**: ALE/Pong-v5, ALE/Breakout-v5 (requires `gymnasium[atari,accept-rom-license]`)
 - **MuJoCo**: HalfCheetah-v5, Hopper-v5, Walker2d-v5, Ant-v5, Humanoid-v5 (requires `gymnasium[mujoco]`)
-- Any Gymnasium-compatible environment
 
 ## Key Dependencies
 

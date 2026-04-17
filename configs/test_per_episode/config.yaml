@@ -1,25 +1,20 @@
-# CartPole-v1 experiment configuration
+# Hopper-v5 experiment configuration for testing per-episode hyperparameters
 # Method-specific parameters are in separate files (monte_carlo.yaml, td.yaml, least_squares_mc.yaml, least_squares_td.yaml)
 
 experiment_id: test_per_episode_hyperparams
 data_root: .
 environment:
-  name: CartPole-v1
+  name: Hopper-v5
+  max_episode_steps: 500
 policy:
-  algorithm: PPO
+  algorithm: SAC
   seed: 42
   total_timesteps: 10000
   learning_rate: 0.0003
-  n_steps: 2048
-  batch_size: 64
-  n_epochs: 10
+  batch_size: 256
   gamma: 0.99
-  gae_lambda: 0.95
-  ent_coef: 0.0
-  clip_range: 0.2
-  max_grad_norm: 0.5
-  vf_coef: 0.5
-  n_envs: 4
+  learning_starts: 1000
+  n_envs: 1
 data_generation:
   n_batches: 10
   episodes_per_batch: 1000

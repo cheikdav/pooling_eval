@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "gymnasium[box2d,atari,mujoco]>=1.0.0",
+    "gymnasium[mujoco]>=1.0.0",
     "ipykernel>=7.1.0",
     "ipywidgets>=8.1.8",
     "stable-baselines3[extra]>=2.7.0",
@@ -21,4 +21,6 @@ dependencies = [
     "plotly>=5.24.0",
     "pyarrow>=14.0.0",
     "scikit-learn>=1.8.0",
+    "snakemake>=8.0.0",
+    "snakemake-executor-plugin-cluster-generic>=1.0.0",
 ]

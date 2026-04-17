@@ -14,19 +14,18 @@ logs_root: "/scratch/data"  # Training logs and wandb
 
 # Environment configuration
 environment:
-  name: "CartPole-v1"
+  name: "Hopper-v5"
+  max_episode_steps: 1000
 
 # Policy training (Stable Baselines 3)
 policy:
-  algorithm: "PPO"
+  algorithm: "SAC"
   total_timesteps: 10000
   learning_rate: 0.0003
-  n_steps: 512
-  batch_size: 64
-  n_epochs: 10
+  batch_size: 256
   gamma: 0.99
-  gae_lambda: 0.95
-  n_envs: 4
+  learning_starts: 1000
+  n_envs: 1
 
 # Data generation
 data_generation:

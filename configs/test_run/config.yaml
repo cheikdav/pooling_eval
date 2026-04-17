@@ -1,24 +1,22 @@
 # Minimal testing configuration for fast iteration
-# Uses CartPole with minimal data generation and 1 init per estimator
 
 experiment_id: "test_run"
 
 # Environment configuration
 environment:
-  name: "CartPole-v1"
+  name: "Hopper-v5"
+  max_episode_steps: 500
 
 # Policy training (Stable Baselines 3)
 policy:
-  algorithm: "PPO"
+  algorithm: "SAC"
   seed: 42
   total_timesteps: 5000
   learning_rate: 0.0003
-  n_steps: 512
   batch_size: 64
-  n_epochs: 10
   gamma: 0.99
-  gae_lambda: 0.95
-  n_envs: 4
+  learning_starts: 100
+  n_envs: 1
 
 # Data generation (minimal)
 data_generation:
