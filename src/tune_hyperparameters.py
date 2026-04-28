@@ -15,7 +15,7 @@ from datetime import datetime
 import filelock
 
 from src.config import ExperimentConfig
-from src.train_estimator import train_estimator
+from src.train_estimator import train_one_estimator
 
 
 def none_or_int(value):
@@ -105,8 +105,6 @@ def main():
     parser.add_argument("--preprocess-fraction", type=float, default=None)
     parser.add_argument("--log-frequency", type=int, default=None,
                        help="Override logging frequency for W&B (log every N epochs)")
-    parser.add_argument("--n-jobs", type=int, default=None,
-                       help="Number of parallel jobs for training different episode counts (None or 1 = sequential)")
     args = parser.parse_args()
 
     # Capture all output in buffer until we have the run ID
@@ -238,22 +236,29 @@ def main():
     sys.stderr.flush()
 
     log_freq = wandb.config.get('log_frequency', args.log_frequency)
-    n_jobs = wandb.config.get('n_jobs', args.n_jobs)
 
-    episode_results = train_estimator(
+    # One sweep trial trains on every episode count in sequence and aggregates
+    # the resulting losses. Each call to train_one_estimator reuses the same
+    # wandb run (sweep_mode=True), which was initialized above.
+    episode_results = []
+    for n_episodes in episode_subsets:
+        print(f"\n{'='*80}")
+        print(f"[SWEEP] Training on {n_episodes} episodes")
+        print(f"{'='*80}\n")
+        sys.stdout.flush()
+
+        result = train_one_estimator(
             config=config,
             method_config=method_config,
             batch_path=batch_path,
             output_dir=output_dir,
             batch_name="tuning",
-            overwrite=True,
+            n_episodes=n_episodes,
             use_wandb=True,
             sweep_mode=True,
-            log_dir=log_dir,
             log_frequency=log_freq,
-            n_jobs=n_jobs
         )
-
+        episode_results.append(result)
 
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Training completed for all episode counts")
 

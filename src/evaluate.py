@@ -146,7 +146,7 @@ def load_estimator_model(model_path: Path, method_name: str, device: str = "cpu"
         raise ValueError(f"Unknown method: {method_name}. Available methods: {list(ESTIMATOR_CLASSES.keys())}")
 
     # Load using the class method
-    estimator = estimator_class.load_from_checkpoint(model_path, device=device)
+    estimator = estimator_class.load_estimator(model_path, device=device)
     return estimator
 
 

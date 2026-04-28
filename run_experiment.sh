@@ -1,28 +1,25 @@
 #!/bin/bash
-# Simple script to run complete experiment pipeline
+# Run a complete experiment pipeline via Snakemake.
+#
+# Usage:
+#   ./run_experiment.sh [CONFIG_PATH] [SNAKEMAKE_ARGS...]
+#
+# Default config: configs/test_mini/config.yaml
+# Any extra arguments are forwarded to snakemake (e.g. -j 8, --dry-run).
+set -euo pipefail
 
-CONFIG="configs/test_config.yaml"
+CONFIG="${1:-configs/test_mini/config.yaml}"
+shift || true
 
 echo "============================================"
-echo "Step 1: Training Policy"
+echo "Running pipeline: $CONFIG"
 echo "============================================"
-uv run -m src.train_policy --config "$CONFIG"
+uv run snakemake \
+    --cores "${SNAKEMAKE_CORES:-4}" \
+    --config experiment_config="$CONFIG" \
+    "$@"
 
 echo ""
 echo "============================================"
-echo "Step 2: Generating Data"
+echo "Pipeline complete."
 echo "============================================"
-uv run -m src.generate_data --config "$CONFIG"
-
-echo ""
-echo "============================================"
-echo "Step 3: Training Estimators"
-echo "============================================"
-uv run -m src.run_all_estimators --config "$CONFIG" --mode sequential
-
-echo ""
-echo "============================================"
-echo "Experiment Complete!"
-echo "============================================"
-echo "To evaluate results, run:"
-echo "  python -m src.evaluate --config $CONFIG"

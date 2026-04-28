@@ -23,4 +23,5 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "snakemake>=8.0.0",
     "snakemake-executor-plugin-cluster-generic>=1.0.0",
+    "pytorch-lightning>=2.0",
 ]

@@ -1,13 +1,21 @@
-"""Base class for value estimators."""
+"""Lightning-based value estimator base."""
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from pathlib import Path
 from typing import Dict, Any, Optional
+import copy
+
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
+import pytorch_lightning as pl
+from torch.utils.data import DataLoader
 
-from src.estimators.feature_extractors import FeatureExtractor
+from src.estimators.feature_extractors import (
+    FeatureExtractor,
+    create_feature_extractor,
+    create_feature_extractor_from_saved_info,
+)
 
 
 class ValueNetwork(nn.Module):
@@ -15,13 +23,11 @@ class ValueNetwork(nn.Module):
 
     def __init__(self, feature_dim: int, hidden_sizes: list, activation: str = "relu"):
         super().__init__()
-
         self.feature_dim = feature_dim
         self.hidden_sizes = hidden_sizes
 
         layers = []
         prev_size = feature_dim
-
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(prev_size, hidden_size))
             if activation == "relu":
@@ -31,7 +37,6 @@ class ValueNetwork(nn.Module):
             else:
                 raise ValueError(f"Unknown activation: {activation}")
             prev_size = hidden_size
-
         layers.append(nn.Linear(prev_size, 1))
         self.network = nn.Sequential(*layers)
 
@@ -39,251 +44,153 @@ class ValueNetwork(nn.Module):
         return self.network(features)
 
 
-class ValueEstimator(ABC):
-    """Base class for all value estimators.
+class ValueEstimator(pl.LightningModule):
+    """Lightning base class for all value estimators.
 
-    Template method pattern: public methods extract features, abstract methods work with features.
+    Subclasses override `compute_targets(batch)` — the algorithm-specific hook.
+    Everything else (training loop, checkpointing, logging) is handled by Lightning.
     """
 
     def __init__(
         self,
         obs_dim: int,
         discount_factor: float,
-        feature_extractor: FeatureExtractor,
-        device: str = "auto"
+        feature_extractor_save_info: dict,
+        device_str: str = "auto",
     ):
+        super().__init__()
         self.obs_dim = obs_dim
         self.discount_factor = discount_factor
-        self.feature_extractor = feature_extractor
+        self.device_str = device_str
+
+        self.feature_extractor = create_feature_extractor_from_saved_info(
+            feature_extractor_save_info, device=device_str
+        )
+
         self.mean_reward = 0.0
         self._reward_sum = 0.0
         self._reward_count = 0
         self._n_terminated = 0
-
-        if device == "auto":
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device(device)
-
-        self.feature_extractor.to(self.device)
-        self.training_step = 0
+        self._reward_centering = False
+        self._features_cached = False
 
     @property
     def reward_offset(self) -> float:
-        """Offset to add to centered predictions to recover true values: mean_reward / (1 - gamma)."""
         return self.mean_reward / (1 - self.discount_factor) if self.mean_reward != 0.0 else 0.0
 
-    @classmethod
     @abstractmethod
-    def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
-        pass
+    def compute_targets(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        ...
 
-    @classmethod
-    def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
-        raise NotImplementedError("Subclasses must implement from_config")
+    def _get_features(self, batch):
+        if 'features' in batch and 'next_features' in batch:
+            return batch['features'], batch['next_features']
+        obs = batch['observations']
+        next_obs = batch['next_observations']
+        return self.feature_extractor(obs), self.feature_extractor(next_obs)
 
-    def train(self):
-        """Set estimator to training mode.
-
-        Note: Does NOT set feature_extractor to training mode.
-        Feature extractor mode is managed separately for normalizer control.
-        """
-        pass
-
-    def eval(self):
-        """Set estimator to eval mode.
-
-        Note: Does NOT set feature_extractor to eval mode.
-        Feature extractor mode is managed separately for normalizer control.
-        """
-        pass
-
-    def pre_training_pass(self, mini_batch: Dict[str, torch.Tensor]):
-        """Pre-training pass over a batch of data for initialization.
-
-        This should be called once before training on the full training dataset.
-        It performs initialization tasks like updating normalizer statistics
-        and accumulating reward statistics for reward centering.
-
-        Sets feature_extractor to training mode to enable normalizer updates.
-        After all pre_training_pass calls, feature_extractor should be set to eval mode.
-
-        Args:
-            mini_batch: Dictionary containing observations and rewards
-        """
-        self.eval()  # Set estimator to eval mode
-        self.feature_extractor.train()  # Set feature extractor to training mode for normalizer updates
-
-        with torch.no_grad():
-            obs = mini_batch['observations'].to(self.device)
-            # Extract features to update normalizer (only from obs, not next_obs)
-            self.feature_extractor(obs)
-        self.feature_extractor.eval()
-
-        # Accumulate reward statistics for reward centering
-        rewards = mini_batch['rewards']
-        self._reward_sum += rewards.sum().item()
-        self._reward_count += len(rewards)
-        self._n_terminated += mini_batch['dones'].sum().item()
-
-    def finalize_pre_training(self, reward_centering: bool = False):
-        """Finalize pre-training: compute mean_reward from accumulated stats.
-
-        Corrects for episode terminations: each terminated episode implies an infinite
-        tail of zero rewards, so we add n_terminated/(1-gamma) phantom steps to the
-        denominator to avoid overestimating r_bar.
-
-        Args:
-            reward_centering: If True, set mean_reward from accumulated reward statistics.
-        """
-        if reward_centering and self._reward_count > 0:
-            effective_count = self._reward_count + self._n_terminated / (1 - self.discount_factor)
-            self.mean_reward = self._reward_sum / effective_count
-
-    def cache_features_in_dataset(self, dataset, batch_size: int = 1024):
-        """Extract and cache features for entire dataset to avoid recomputation.
-
-        Should be called after pre_training_pass to cache features with finalized normalizer.
-
-        Args:
-            dataset: TransitionDataset instance to cache features in
-            batch_size: Batch size for feature extraction (default 1024)
-        """
-        from torch.utils.data import DataLoader
-
+    def predict(self, observations: np.ndarray, features: Optional[torch.Tensor] = None) -> np.ndarray:
+        """Predict values for an array of observations (returns uncentered values)."""
         self.eval()
-        self.feature_extractor.eval()
-
-        n_samples = len(dataset)
-        feature_dim = self.feature_extractor.get_feature_dim()
-
-        # Pre-allocate tensors for all features
-        all_features = torch.zeros(n_samples, feature_dim)
-        all_next_features = torch.zeros(n_samples, feature_dim)
-
-        # Create dataloader without shuffling
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-
-        with torch.no_grad():
-            start_idx = 0
-            for mini_batch in dataloader:
-                batch_len = len(mini_batch['observations'])
-                end_idx = start_idx + batch_len
-
-                obs = mini_batch['observations'].to(self.device)
-                next_obs = mini_batch['next_observations'].to(self.device)
-
-                features = self.feature_extractor(obs).cpu()
-                next_features = self.feature_extractor(next_obs).cpu()
-
-                all_features[start_idx:end_idx] = features
-                all_next_features[start_idx:end_idx] = next_features
-
-                start_idx = end_idx
-
-        dataset.set_features(all_features, all_next_features) 
-
-    def train_step(self, mini_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
-        """Extract features from observations then call _train_step()."""
-        # Use cached features if available, otherwise extract on-the-fly
-        if 'features' in mini_batch and 'next_features' in mini_batch:
-            features = mini_batch['features'].to(self.device)
-            next_features = mini_batch['next_features'].to(self.device)
-        else:
-            obs = mini_batch['observations'].to(self.device)
-            next_obs = mini_batch['next_observations'].to(self.device)
-            features = self.feature_extractor(obs)
-            next_features = self.feature_extractor(next_obs)
-
-        feature_batch = {
-            'features': features,
-            'next_features': next_features,
-            'rewards': mini_batch['rewards'].to(self.device),
-            'dones': mini_batch['dones'].to(self.device),
-            'mc_returns': mini_batch['mc_returns'].to(self.device),
-        }
-
-        return self._train_step(feature_batch)
-
-    @abstractmethod
-    def _train_step(self, feature_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
-        pass
-
-    def predict(self, observations: np.ndarray, features: torch.Tensor = None) -> np.ndarray:
-        """Extract features from observations then call _predict().
-
-        Adds reward_offset to convert centered predictions back to true values.
-
-        Args:
-            observations: Observation array
-            features: Optional pre-computed features. If provided, skips feature extraction.
-
-        Returns:
-            Predicted values (uncentered, i.e. true value estimates)
-        """
-        self.eval()
-
         with torch.no_grad():
             if features is None:
-                # Handle object dtype arrays (can occur with certain env data)
                 if observations.dtype == np.object_:
                     observations = observations.astype(np.float32)
-                obs = torch.FloatTensor(observations).to(self.device)
+                obs = torch.as_tensor(observations, dtype=torch.float32).to(self.device)
                 features = self.feature_extractor(obs)
             else:
                 features = features.to(self.device)
-            return self._predict(features) + self.reward_offset
+            values = self._predict_from_features(features)
+        return values + self.reward_offset
 
     @abstractmethod
-    def _predict(self, features: torch.Tensor) -> np.ndarray:
-        pass
+    def _predict_from_features(self, features: torch.Tensor) -> np.ndarray:
+        ...
 
-    @abstractmethod
-    def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """Compute target values for training.
+    # --- pre-training pass (normalizer init + reward stats) + feature caching ---
+    def configure_pretraining(self, train_dataset, val_dataset, batch_size: int,
+                              reward_centering: bool):
+        """Attach preprocessing context. Called before trainer.fit()."""
+        self._pre_train_dataset = train_dataset
+        self._pre_val_dataset = val_dataset
+        self._pre_batch_size = batch_size
+        self._reward_centering = reward_centering
 
-        Args:
-            feature_batch: Dictionary containing feature batch data
+    def on_fit_start(self):
+        if self._features_cached:
+            return
+        # Pre-training pass on the training dataloader (no shuffle) to update
+        # the feature extractor's running normalizer and accumulate reward stats.
+        self.feature_extractor.train()
+        loader = DataLoader(self._pre_train_dataset, batch_size=self._pre_batch_size,
+                            shuffle=False)
+        with torch.no_grad():
+            for mb in loader:
+                obs = mb['observations'].to(self.device)
+                self.feature_extractor(obs)
+                self._reward_sum += mb['rewards'].sum().item()
+                self._reward_count += len(mb['rewards'])
+                self._n_terminated += mb['dones'].sum().item()
+        self.feature_extractor.eval()
 
-        Returns:
-            Target values
-        """
-        pass
+        if self._reward_centering and self._reward_count > 0:
+            eff = self._reward_count + self._n_terminated / (1 - self.discount_factor)
+            self.mean_reward = self._reward_sum / eff
 
-    def _build_checkpoint(self) -> Dict[str, Any]:
-        """Build checkpoint dictionary. Subclasses override to add extra fields."""
-        return {
-            'feature_extractor_state_dict': self.feature_extractor.state_dict(),
-            'feature_extractor_info': self.feature_extractor.get_save_info(),
-            'training_step': self.training_step,
-            'obs_dim': self.obs_dim,
-            'discount_factor': self.discount_factor,
-            'mean_reward': self.mean_reward,
-        }
+        # Cache features into both datasets (with the now-frozen normalizer)
+        self._cache_features(self._pre_train_dataset)
+        if self._pre_val_dataset is not None:
+            self._cache_features(self._pre_val_dataset)
+        self._features_cached = True
 
-    def save(self, path: Path):
-        """Save estimator to disk."""
-        checkpoint = self._build_checkpoint()
-        torch.save(checkpoint, path)
+    def _cache_features(self, dataset):
+        loader = DataLoader(dataset, batch_size=self._pre_batch_size, shuffle=False)
+        feat_dim = self.feature_extractor.get_feature_dim()
+        n = len(dataset)
+        all_feat = torch.zeros(n, feat_dim)
+        all_next = torch.zeros(n, feat_dim)
+        with torch.no_grad():
+            i = 0
+            for mb in loader:
+                j = i + len(mb['observations'])
+                f = self.feature_extractor(mb['observations'].to(self.device)).cpu()
+                nf = self.feature_extractor(mb['next_observations'].to(self.device)).cpu()
+                all_feat[i:j] = f
+                all_next[i:j] = nf
+                i = j
+        dataset.set_features(all_feat, all_next)
 
-    def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
-        """Load state from checkpoint dictionary. Subclasses override to load extra fields."""
-        self.feature_extractor.load_state_dict(checkpoint['feature_extractor_state_dict'])
-        self.training_step = checkpoint['training_step']
-        self.mean_reward = checkpoint.get('mean_reward', 0.0)
+    # --- checkpoint hooks for non-hyperparam state ---
+    def on_save_checkpoint(self, ckpt):
+        ckpt['mean_reward'] = self.mean_reward
+        ckpt['feature_extractor_info'] = self.feature_extractor.get_save_info()
+        ckpt['feature_extractor_state_dict'] = self.feature_extractor.state_dict()
 
-    def load(self, path: Path):
-        """Load estimator from disk."""
-        checkpoint = torch.load(path, map_location=self.device)
-        self._load_from_checkpoint_dict(checkpoint)
+    def on_load_checkpoint(self, ckpt):
+        self.mean_reward = ckpt.get('mean_reward', 0.0)
+        if 'feature_extractor_state_dict' in ckpt:
+            self.feature_extractor.load_state_dict(ckpt['feature_extractor_state_dict'])
 
+    # --- inference-side loader used by evaluate.py (keeps old API shape) ---
     @classmethod
-    @abstractmethod
-    def load_from_checkpoint(cls, path: Path, device: str = "auto"):
-        pass
+    def load_estimator(cls, path: Path, device: str = "auto"):
+        """Load an estimator from a checkpoint saved by pl.Trainer.
 
-    @abstractmethod
-    def get_config(self) -> Dict[str, Any]:
-        pass
+        Named `load_estimator` (not `load_from_checkpoint`) to avoid clashing with
+        Lightning's built-in classmethod of that name.
+        """
+        if device == "auto":
+            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device_obj = torch.device(device)
 
-
+        ckpt = torch.load(path, map_location=device_obj, weights_only=False)
+        hparams = ckpt['hyper_parameters']
+        hparams = dict(hparams)
+        hparams['device_str'] = device
+        estimator = cls(**hparams)
+        estimator.load_state_dict(ckpt['state_dict'], strict=False)
+        estimator.on_load_checkpoint(ckpt)
+        estimator.to(device_obj)
+        estimator.eval()
+        return estimator

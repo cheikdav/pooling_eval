@@ -1,128 +1,66 @@
-"""TD-style value estimator with target network."""
+"""TD(0) value estimator with Polyak-averaged target network."""
 
-import torch
-from typing import Dict, Any
 import copy
+from typing import Dict, Any
+import torch
 
 from .base import NeuralNetEstimator
-from ..feature_extractors import FeatureExtractor
 
 
 class TDEstimator(NeuralNetEstimator):
-    """TD(0) value estimator with target network and Polyak averaging."""
+    """TD(0) with a Polyak-averaged target network."""
 
     def __init__(
         self,
         obs_dim: int,
         hidden_sizes: list,
         discount_factor: float,
-        feature_extractor: FeatureExtractor,
+        feature_extractor_save_info: dict,
         activation: str = "relu",
-        learning_rate: float = 0.001,
-        device: str = "auto",
-        target_update_rate: float = 1e-5
+        learning_rate: float = 1e-3,
+        device_str: str = "auto",
+        target_update_rate: float = 1e-5,
     ):
-        super().__init__(obs_dim, hidden_sizes, discount_factor, feature_extractor, activation, learning_rate, device)
+        super().__init__(obs_dim, hidden_sizes, discount_factor, feature_extractor_save_info,
+                         activation, learning_rate, device_str)
+        self.save_hyperparameters()
         self.target_update_rate = target_update_rate
-
-        self.target_net = copy.deepcopy(self.value_net).to(self.device)
-
-        # Compile target network for faster execution (PyTorch 2.0+)
-        try:
-            self.target_net = torch.compile(self.target_net, mode='default')
-        except (AttributeError, RuntimeError) as e:
-            # torch.compile not available (PyTorch < 2.0) or compilation failed
-            pass
-
+        self.target_net = copy.deepcopy(self.value_net)
+        for p in self.target_net.parameters():
+            p.requires_grad = False
         self.target_net.eval()
-        self.steps_since_target_update = 0
 
     @classmethod
     def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
-        return {
-            'target_update_rate': method_config.target_update_rate,
-        }
+        return {'target_update_rate': method_config.target_update_rate}
 
-    def update_target_network(self):
-        # In-place Polyak averaging (more efficient than state_dict approach)
-        for target_param, param in zip(self.target_net.parameters(), self.value_net.parameters()):
-            target_param.data.copy_(
-                (1 - self.target_update_rate) * target_param.data +
-                self.target_update_rate * param.data
-            )
-        self.steps_since_target_update = 0
-
-    def compute_targets(self, feature_batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        next_features = feature_batch['next_features']
-        rewards = feature_batch['rewards'] - self.mean_reward
-        dones = feature_batch['dones']
-
-        self.target_net.eval()
-
+    def compute_targets(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
         with torch.no_grad():
-            next_values = self.target_net(next_features).squeeze(-1)
-            # Terminal value: -mean_reward/(1-gamma) under reward centering, 0 otherwise
-            terminal_value = -self.reward_offset
-            targets = rewards + self.discount_factor * (next_values * (1 - dones) + dones * terminal_value)
+            next_values = self.target_net(batch['next_features']).squeeze(-1)
+            rewards = batch['rewards'] - self.mean_reward
+            dones = batch['dones']
+            terminal = -self.reward_offset
+            return rewards + self.discount_factor * (
+                next_values * (1 - dones) + dones * terminal
+            )
 
-        return targets
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        tau = self.target_update_rate
+        with torch.no_grad():
+            for tp, p in zip(self.target_net.parameters(), self.value_net.parameters()):
+                tp.data.mul_(1 - tau).add_(p.data, alpha=tau)
 
-    def _train_step(self, feature_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
-        metrics = super()._train_step(feature_batch)
-        self.update_target_network()
-        return metrics
+    def on_save_checkpoint(self, ckpt):
+        super().on_save_checkpoint(ckpt)
+        ckpt['target_net_state_dict'] = self.target_net.state_dict()
 
-    def _build_checkpoint(self) -> Dict[str, Any]:
-        """Build checkpoint with TD specific fields."""
-        checkpoint = super()._build_checkpoint()
-        checkpoint.update({
-            'target_net_state_dict': self.target_net.state_dict(),
-            'steps_since_target_update': self.steps_since_target_update,
-            'target_update_rate': self.target_update_rate,
-        })
-        return checkpoint
+    def on_load_checkpoint(self, ckpt):
+        super().on_load_checkpoint(ckpt)
+        if 'target_net_state_dict' in ckpt:
+            self.target_net.load_state_dict(ckpt['target_net_state_dict'])
 
-    def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
-        """Load TD specific fields."""
-        super()._load_from_checkpoint_dict(checkpoint)
-        self.target_net.load_state_dict(checkpoint['target_net_state_dict'])
-        self.steps_since_target_update = checkpoint['steps_since_target_update']
-
-    @classmethod
-    def load_from_checkpoint(cls, path, device: str = "auto"):
-        from ..feature_extractors import create_feature_extractor_from_saved_info
-
-        if device == "auto":
-            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            device_obj = torch.device(device)
-
-        checkpoint = torch.load(path, map_location=device_obj)
-
-        feature_extractor = create_feature_extractor_from_saved_info(
-            checkpoint['feature_extractor_info'],
-            device=device
-        )
-
-        estimator = cls(
-            obs_dim=checkpoint['obs_dim'],
-            hidden_sizes=checkpoint['hidden_sizes'],
-            discount_factor=checkpoint.get('discount_factor', 0.99),
-            feature_extractor=feature_extractor,
-            activation=checkpoint['activation'],
-            learning_rate=checkpoint['learning_rate'],
-            device=device,
-            target_update_rate=checkpoint.get('target_update_rate', 1e-5)
-        )
-
-        estimator.load(path)
-        return estimator
-
-    def get_config(self) -> Dict:
-        config = super().get_config()
-        config.update({
-            'discount_factor': self.discount_factor,
-            'target_update_rate': self.target_update_rate,
-            'estimator_type': 'td',
-        })
-        return config
+    def get_config(self) -> Dict[str, Any]:
+        cfg = super().get_config()
+        cfg['target_update_rate'] = self.target_update_rate
+        cfg['estimator_type'] = 'td'
+        return cfg

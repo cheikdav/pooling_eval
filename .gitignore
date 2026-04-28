@@ -40,7 +40,12 @@ core
 uv.*
 
 test.py
-run_pipeline.py
+
+# Snakemake runtime state (locks, incomplete markers, cluster logs, metadata)
+.snakemake/
+
+# Local cluster wrapper (copy and customize; not checked in)
+scripts/submit_qsub.sh
 
 # Testing config
 configs/test_config.yaml

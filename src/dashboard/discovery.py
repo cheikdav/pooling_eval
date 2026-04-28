@@ -37,10 +37,34 @@ def _find_estimator_dirs(parent: Path) -> List[Path]:
     )
 
 
-def _extract_method_name(dirname: str) -> str:
-    """'monte_carlo_estimator_001' -> 'monte_carlo'"""
+def _extract_method_info(dirname: str) -> tuple:
+    """'monte_carlo_estimator_001' -> ('monte_carlo', '001'). Returns (name, None) if no match."""
     m = ESTIMATOR_DIR.match(dirname)
-    return m.group(1) if m else dirname
+    if m:
+        return m.group(1), m.group(2)
+    return dirname, None
+
+
+def _add_method_display_names(entries: List[dict]):
+    """Disambiguate methods that have multiple estimator dirs in the same env.
+
+    If only one estimator dir exists for (env, method_base), the displayed
+    method is the bare base name (e.g. 'monte_carlo'). If multiple dirs share
+    the same base, suffix #1, #2, ... in estimator-dir-index order.
+    """
+    variants_by_key = {}
+    for e in entries:
+        key = (e["env_name"], e["method_base"])
+        variants_by_key.setdefault(key, set()).add(e["estimator_idx"])
+
+    for e in entries:
+        key = (e["env_name"], e["method_base"])
+        sorted_idx = sorted(variants_by_key[key])
+        if len(sorted_idx) == 1:
+            e["method"] = e["method_base"]
+        else:
+            num = sorted_idx.index(e["estimator_idx"]) + 1
+            e["method"] = f"{e['method_base']} #{num}"
 
 
 def _add_policy_display_names(entries: List[dict]):
@@ -89,13 +113,13 @@ def discover_experiments(search_paths: List[Path]) -> pd.DataFrame:
                     data_files_dir = data_dir / "data"
 
                     for est_dir in _find_estimator_dirs(data_dir):
-                        method = _extract_method_name(est_dir.name)
+                        method_base, estimator_idx = _extract_method_info(est_dir.name)
                         est_params = _load_params(est_dir)
 
                         for eval_dir in _find_numbered_dirs(est_dir, "eval"):
                             eval_params = _load_params(eval_dir)
                             results_dir = eval_dir / "results"
-                            method_results = results_dir / method
+                            method_results = results_dir / method_base
 
                             if not method_results.exists():
                                 continue
@@ -118,7 +142,9 @@ def discover_experiments(search_paths: List[Path]) -> pd.DataFrame:
 
                                 entries.append({
                                     "env_name": env_dir.name,
-                                    "method": method,
+                                    "method_base": method_base,
+                                    "estimator_idx": estimator_idx,
+                                    "method": method_base,  # finalized in _add_method_display_names
                                     "n_episodes": n_episodes,
                                     "predictions_path": str(pred_file),
                                     "paired_predictions_path": str(paired_file) if paired_file.exists() else None,
@@ -132,6 +158,7 @@ def discover_experiments(search_paths: List[Path]) -> pd.DataFrame:
                                     "eval_gamma": eval_params.get("gamma", policy_params.get("gamma", 0.99)),
                                 })
 
+    _add_method_display_names(entries)
     _add_policy_display_names(entries)
 
     if not entries:

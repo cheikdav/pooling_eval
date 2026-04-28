@@ -8,16 +8,21 @@ _project_root = str(Path(__file__).resolve().parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+import yaml
 import streamlit as st
 
 from src.dashboard.discovery import discover_experiments
 from src.dashboard import tab_metrics, tab_trajectory, tab_paired
 
 
-SEARCH_PATHS = [
-    Path("/scratch/dc3430/pooling_eval/experiments"),
-    Path("experiments"),
-]
+def _load_search_paths() -> list:
+    config_path = Path(__file__).resolve().parent / "config.yaml"
+    with open(config_path) as f:
+        cfg = yaml.safe_load(f) or {}
+    return [Path(p) for p in cfg.get("search_paths", [])]
+
+
+SEARCH_PATHS = _load_search_paths()
 
 
 def main():

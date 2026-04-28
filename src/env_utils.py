@@ -10,7 +10,6 @@ from typing import Optional, Tuple, Callable
 
 from src.config import ExperimentConfig
 from src.estimators.neural_net import MonteCarloEstimator, TDEstimator
-from src.estimators.least_squares import LeastSquaresMCEstimator, LeastSquaresTDEstimator
 
 import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning, module='gymnasium')
@@ -38,17 +37,8 @@ ALGORITHM_MAP = {
 # Centralized mapping from method names to estimator classes
 # Handles all method name variations including RBF and NNLS variants
 ESTIMATOR_CLASSES = {
-    # Base methods
     'monte_carlo': MonteCarloEstimator,
     'td': TDEstimator,
-    'least_squares_mc': LeastSquaresMCEstimator,
-    'least_squares_td': LeastSquaresTDEstimator,
-    # RBF feature extractor variants (same underlying classes)
-    'least_squares_mc_rbf': LeastSquaresMCEstimator,
-    'least_squares_td_rbf': LeastSquaresTDEstimator,
-    # NNLS (Non-negative least squares) variants with policy representation features
-    'nnls_mc': MonteCarloEstimator,
-    'nnls_td': TDEstimator,
 }
 
 

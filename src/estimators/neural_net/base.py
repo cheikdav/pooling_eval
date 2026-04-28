@@ -1,168 +1,105 @@
-"""Base class for neural network-based value estimators."""
+"""Lightning-based NN value estimator."""
 
-from pathlib import Path
 from typing import Dict, Any
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
 
 from ..base import ValueEstimator, ValueNetwork
-from ..feature_extractors import FeatureExtractor, create_feature_extractor, create_feature_extractor_from_saved_info
+
 
 class NeuralNetEstimator(ValueEstimator):
-    """Base class for neural network estimators."""
+    """Base class for neural-network value estimators.
+
+    Subclasses override `compute_targets(batch)` only.
+    """
 
     def __init__(
         self,
         obs_dim: int,
         hidden_sizes: list,
         discount_factor: float,
-        feature_extractor: FeatureExtractor,
+        feature_extractor_save_info: dict,
         activation: str = "relu",
-        learning_rate: float = 0.001,
-        device: str = "auto"
+        learning_rate: float = 1e-3,
+        device_str: str = "auto",
     ):
-        super().__init__(obs_dim, discount_factor, feature_extractor, device)
+        super().__init__(obs_dim, discount_factor, feature_extractor_save_info, device_str)
+        self.save_hyperparameters()
 
         self.hidden_sizes = hidden_sizes
         self.activation = activation
         self.learning_rate = learning_rate
 
-        feature_dim = self.feature_extractor.get_feature_dim()
-        self.value_net = ValueNetwork(feature_dim, hidden_sizes, activation).to(self.device)
-
-        # Compile network for faster execution (PyTorch 2.0+)
-        try:
-            self.value_net = torch.compile(self.value_net, mode='default')
-        except (AttributeError, RuntimeError) as e:
-            # torch.compile not available (PyTorch < 2.0) or compilation failed
-            pass
-
-        self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=learning_rate)
+        feat_dim = self.feature_extractor.get_feature_dim()
+        self.value_net = ValueNetwork(feat_dim, hidden_sizes, activation)
 
     @classmethod
     def from_config(cls, method_config, network_config, obs_dim: int, gamma: float):
-        feature_extractor = create_feature_extractor(
-            method_config.feature_extractor,
-            obs_dim,
-            device=network_config.device
-        )
-
-        # Use method-specific network config if provided, otherwise use global
+        from ..feature_extractors import create_feature_extractor
+        fx = create_feature_extractor(method_config.feature_extractor, obs_dim,
+                                      device=network_config.device)
         if method_config.network is not None:
             hidden_sizes = method_config.network.hidden_sizes
             activation = method_config.network.activation
-            # Device still comes from global network config
-            device = method_config.network.device if hasattr(method_config.network, 'device') and method_config.network.device else network_config.device
         else:
             hidden_sizes = network_config.hidden_sizes
             activation = network_config.activation
-            device = network_config.device
 
-        common_params = {
-            'obs_dim': obs_dim,
-            'hidden_sizes': hidden_sizes,
-            'discount_factor': gamma,
-            'feature_extractor': feature_extractor,
-            'activation': activation,
-            'learning_rate': method_config.learning_rate,
-            'device': device,
-        }
-
-        specific_params = cls._get_method_specific_params(method_config)
-        return cls(**common_params, **specific_params)
-
-    def train(self):
-        """Set value network to training mode.
-
-        Note: Does NOT affect feature_extractor mode.
-        """
-        self.value_net.train()
-
-    def eval(self):
-        """Set value network to eval mode.
-
-        Note: Does NOT affect feature_extractor mode.
-        """
-        self.value_net.eval()
-
-    def _train_step(self, feature_batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
-        self.train()
-
-        features = feature_batch['features']
-        mc_returns = feature_batch['mc_returns']
-
-        targets = self.compute_targets(feature_batch)
-        values = self.value_net(features).squeeze(-1)
-
-        loss = nn.functional.mse_loss(values, targets)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        with torch.no_grad():
-            mae = torch.abs(values - targets).mean().item()
-            # mc_returns are uncentered; network outputs centered values
-            mc_loss = nn.functional.mse_loss(values, mc_returns - self.reward_offset).item()
-
-        self.training_step += 1
-
-        return {
-            'loss': loss.item(),
-            'mae': mae,
-            'mean_value': values.mean().item(),
-            'mean_target': targets.mean().item(),
-            'mc_loss': mc_loss,
-        }
-
-    def _predict(self, features: torch.Tensor) -> np.ndarray:
-        values = self.value_net(features).squeeze(-1)
-        return values.cpu().numpy()
-
-    def _build_checkpoint(self) -> Dict[str, Any]:
-        """Build checkpoint with neural network specific fields."""
-        checkpoint = super()._build_checkpoint()
-        checkpoint.update({
-            'value_net_state_dict': self.value_net.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'hidden_sizes': self.hidden_sizes,
-            'activation': self.activation,
-            'learning_rate': self.learning_rate,
-        })
-        return checkpoint
-
-    def _load_from_checkpoint_dict(self, checkpoint: Dict[str, Any]):
-        """Load neural network specific fields."""
-        super()._load_from_checkpoint_dict(checkpoint)
-        self.value_net.load_state_dict(checkpoint['value_net_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        common = dict(
+            obs_dim=obs_dim,
+            hidden_sizes=hidden_sizes,
+            discount_factor=gamma,
+            feature_extractor_save_info=fx.get_save_info(),
+            activation=activation,
+            learning_rate=method_config.learning_rate,
+            device_str=network_config.device,
+        )
+        specific = cls._get_method_specific_params(method_config)
+        return cls(**common, **specific)
 
     @classmethod
-    def load_from_checkpoint(cls, path: Path, device: str = "auto"):
-        if device == "auto":
-            device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            device_obj = torch.device(device)
+    def _get_method_specific_params(cls, method_config) -> Dict[str, Any]:
+        return {}
 
-        checkpoint = torch.load(path, map_location=device_obj)
+    # --- Lightning hooks ---
+    def configure_optimizers(self):
+        return torch.optim.Adam(self.value_net.parameters(), lr=self.learning_rate)
 
-        feature_extractor = create_feature_extractor_from_saved_info(
-            checkpoint['feature_extractor_info'],
-            device=device
-        )
+    def training_step(self, batch, batch_idx):
+        features, next_features = self._get_features(batch)
+        feature_batch = {
+            'features': features,
+            'next_features': next_features,
+            'rewards': batch['rewards'],
+            'dones': batch['dones'],
+            'mc_returns': batch['mc_returns'],
+        }
+        targets = self.compute_targets(feature_batch)
+        values = self.value_net(features).squeeze(-1)
+        loss = nn.functional.mse_loss(values, targets)
 
-        estimator = cls(
-            obs_dim=checkpoint['obs_dim'],
-            hidden_sizes=checkpoint['hidden_sizes'],
-            discount_factor=checkpoint.get('discount_factor', 0.99),
-            activation=checkpoint['activation'],
-            learning_rate=checkpoint['learning_rate'],
-            feature_extractor=feature_extractor,
-            device=device
-        )
+        with torch.no_grad():
+            mc_loss = nn.functional.mse_loss(values, feature_batch['mc_returns'] - self.reward_offset)
 
-        estimator.load(path)
-        return estimator
+        self.log_dict({
+            'train/loss': loss.detach(),
+            'train/mc_loss': mc_loss,
+            'train/mean_value': values.mean().detach(),
+            'train/mean_target': targets.mean().detach(),
+        }, on_step=False, on_epoch=True, prog_bar=False)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        features, _ = self._get_features(batch)
+        with torch.no_grad():
+            values = self.value_net(features).squeeze(-1)
+            mc_loss = nn.functional.mse_loss(values, batch['mc_returns'] - self.reward_offset)
+        self.log('val/mc_loss', mc_loss, on_step=False, on_epoch=True, prog_bar=False)
+        return mc_loss
+
+    def _predict_from_features(self, features: torch.Tensor) -> np.ndarray:
+        return self.value_net(features).squeeze(-1).cpu().numpy()
 
     def get_config(self) -> Dict[str, Any]:
         return {
@@ -170,7 +107,5 @@ class NeuralNetEstimator(ValueEstimator):
             'hidden_sizes': self.hidden_sizes,
             'activation': self.activation,
             'learning_rate': self.learning_rate,
-            'training_step': self.training_step,
+            'discount_factor': self.discount_factor,
         }
-
-

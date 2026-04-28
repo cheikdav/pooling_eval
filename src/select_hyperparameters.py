@@ -1,39 +1,31 @@
-"""Select best hyperparameters from sweep results and write to method config.
+"""Select best hyperparameters from sweep results and write them to the results tree.
 
 Reads sweep_results.csv, picks the best hyperparameter set using
-mean-normalized-loss ranking, and updates the method's YAML config file.
-
-Can be used as CLI or imported programmatically by the pipeline.
+mean-normalized-loss ranking, and writes the selection as JSON into the
+estimator's `sweeps/tuned_hyperparams.json`. The downstream training stage
+reads this file at load time and merges the values into the method config;
+the source config YAML is never mutated.
 
 Usage:
-    uv run -m src.select_hyperparameters --config configs/humanoid/config.yaml --method monte_carlo
-    uv run -m src.select_hyperparameters --config configs/humanoid/config.yaml --method monte_carlo --dry-run
+    uv run -m src.select_hyperparameters \
+        --config configs/humanoid/config.yaml \
+        --method monte_carlo \
+        --output experiments/Humanoid-v5/.../monte_carlo_estimator_001/sweeps/tuned_hyperparams.json
 """
 
 import argparse
 import csv
+import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import yaml
 
 from src.config import ExperimentConfig
 from src.tune_hyperparameters import HYPERPARAM_KEYS
 
-
-# Which YAML keys each hyperparam maps to (top-level vs nested under feature_extractor)
-YAML_KEY_MAP = {
-    'learning_rate': ('top', 'learning_rate'),
-    'batch_size': ('top', 'batch_size'),
-    'target_update_rate': ('top', 'target_update_rate'),
-    'ridge_lambda': ('top', 'ridge_lambda'),
-    'n_components': ('top', 'n_components'),
-    'rbf_n_components': ('nested', 'feature_extractor', 'n_components'),
-    'rbf_gamma': ('nested', 'feature_extractor', 'gamma'),
-}
 
 INT_FIELDS = {'batch_size', 'n_components', 'rbf_n_components'}
 
@@ -44,12 +36,12 @@ MIN_RUNS_ERROR = 2
 
 @dataclass
 class SelectionResult:
-    """Result of hyperparameter selection, used by the pipeline."""
+    """Result of hyperparameter selection."""
     success: bool
     best_row: Optional[dict] = None
     score: float = float('inf')
     n_runs: int = 0
-    changes: dict = field(default_factory=dict)  # hp_key -> (old, new)
+    selected_hyperparams: dict = field(default_factory=dict)  # key -> value (flat dict)
     warnings: list = field(default_factory=list)
     errors: list = field(default_factory=list)
     ep_cols: list = field(default_factory=list)
@@ -95,7 +87,7 @@ def _filter_valid_rows(rows: list[dict], ep_cols: list[str]) -> tuple[list[dict]
             continue
         valid.append(row)
 
-    # Deduplicate by run_id (keep last occurrence, which is the most recent)
+    # Deduplicate by run_id (keep last occurrence, most recent)
     seen = {}
     for row in valid:
         seen[row.get('run_id', id(row))] = row
@@ -110,7 +102,7 @@ def select_best(rows: list[dict], ep_cols: list[str]) -> tuple[dict, list[dict]]
     """Select best hyperparameter set using mean-normalized-loss.
 
     For each episode count, divides each run's loss by the best loss seen
-    for that count. Then picks the run with the lowest mean normalized score.
+    for that count. Picks the run with the lowest mean normalized score.
     Best possible score is 1.0 (best at every episode count).
 
     Returns (best_row, all_rows_with_scores) sorted by score.
@@ -142,16 +134,13 @@ def _diagnose_results(scored_rows: list[dict], ep_cols: list[str]) -> list[str]:
         return warnings
 
     best = scored_rows[0]
-    worst = scored_rows[-1]
 
-    # Check if best run is much worse than 1.0 (all episode counts)
     if best['_score'] > 1.5:
         warnings.append(
             f"Best score is {best['_score']:.2f} (ideal=1.0). "
             "No single hyperparameter set is good across all episode counts."
         )
 
-    # Check if there's a huge gap between best and second-best
     if len(scored_rows) >= 2:
         second = scored_rows[1]
         gap = second['_score'] - best['_score']
@@ -161,7 +150,6 @@ def _diagnose_results(scored_rows: list[dict], ep_cols: list[str]) -> list[str]:
                 f"#2 (score={second['_score']:.3f}). Best run may be an outlier."
             )
 
-    # Check if any episode count has extreme normalized loss even for the best run
     for col in ep_cols:
         norm = best['_normalized'][col]
         if norm > 2.0:
@@ -171,7 +159,6 @@ def _diagnose_results(scored_rows: list[dict], ep_cols: list[str]) -> list[str]:
                 "Consider per-episode-count hyperparameters for this count."
             )
 
-    # Check absolute loss spread across episode counts for best run
     losses = [best[col] for col in ep_cols]
     if max(losses) > 100 * min(losses):
         warnings.append(
@@ -183,77 +170,48 @@ def _diagnose_results(scored_rows: list[dict], ep_cols: list[str]) -> list[str]:
 
 
 def format_value(key: str, value):
-    """Format a hyperparam value for YAML output."""
+    """Format a hyperparam value for JSON output (preserves int typing)."""
     if value is None:
         return None
     if key in INT_FIELDS:
         return int(value)
-    return value
+    return float(value)
 
 
-def compute_config_changes(yaml_path: Path, best_row: dict) -> tuple[dict, dict]:
-    """Compute what would change in the YAML without writing.
+def build_tuned_hyperparams(best_row: dict) -> dict:
+    """Extract a flat {key: value} dict of tuned hyperparams from a selected row.
 
-    Returns (changes_dict, updated_config) where changes_dict maps
-    hp_key -> (old_value, new_value).
+    Only includes keys in HYPERPARAM_KEYS that are present and non-None in
+    best_row. The resulting dict is what gets serialized to tuned_hyperparams.json
+    and applied by `src.train_estimator.apply_tuned_hyperparams`.
     """
-    with open(yaml_path, 'r') as f:
-        config = yaml.safe_load(f)
-
-    changes = {}
-
-    for hp_key in HYPERPARAM_KEYS:
-        value = best_row.get(hp_key)
+    out = {}
+    for key in HYPERPARAM_KEYS:
+        value = best_row.get(key)
         if value is None:
             continue
-
-        mapping = YAML_KEY_MAP[hp_key]
-        formatted = format_value(hp_key, value)
-
-        if mapping[0] == 'top':
-            yaml_key = mapping[1]
-            if yaml_key in config:
-                old = config[yaml_key]
-                if old != formatted:
-                    changes[hp_key] = (old, formatted)
-                    config[yaml_key] = formatted
-        elif mapping[0] == 'nested':
-            section = mapping[1]
-            yaml_key = mapping[2]
-            if section in config and isinstance(config[section], dict):
-                if yaml_key in config[section]:
-                    old = config[section][yaml_key]
-                    if old != formatted:
-                        changes[hp_key] = (old, formatted)
-                        config[section][yaml_key] = formatted
-
-    return changes, config
+        out[key] = format_value(key, value)
+    return out
 
 
-def write_method_yaml(yaml_path: Path, updated_config: dict):
-    """Write updated config to YAML file."""
-    with open(yaml_path, 'w') as f:
-        yaml.dump(updated_config, f, default_flow_style=False, sort_keys=False)
+def write_tuned_hyperparams_json(path: Path, hyperparams: dict):
+    """Write the flat hyperparam dict as JSON to the given path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'w') as f:
+        json.dump(hyperparams, f, indent=2, sort_keys=True)
 
 
-def select_and_apply(config: ExperimentConfig, method_name: str,
-                     config_path: Path, dry_run: bool = False) -> SelectionResult:
-    """Full selection pipeline: load CSV, select best, apply to config.
+def select_hyperparams_for_method(
+    config: ExperimentConfig,
+    method_name: str,
+) -> SelectionResult:
+    """Load sweep_results.csv for a method and return the best hyperparameter set.
 
-    This is the programmatic API used by run_pipeline.py.
-
-    Args:
-        config: Loaded experiment config
-        method_name: Method to select hyperparams for
-        config_path: Path to the config directory (for finding method YAML)
-        dry_run: If True, compute changes but don't write
-
-    Returns:
-        SelectionResult with all details
+    Does not write anything. Caller is responsible for persisting the result
+    via `write_tuned_hyperparams_json`.
     """
     result = SelectionResult(success=False)
 
-    # Find method config
     method_config = None
     for mc in config.value_estimators.method_configs:
         if mc.name == method_name:
@@ -264,7 +222,6 @@ def select_and_apply(config: ExperimentConfig, method_name: str,
         result.errors.append(f"Method '{method_name}' not found. Available: {available}")
         return result
 
-    # Find sweep results CSV
     estimator_dir = config.get_estimator_dir(method_config)
     csv_path = estimator_dir / "sweeps" / "sweep_results.csv"
     if not csv_path.exists():
@@ -283,7 +240,6 @@ def select_and_apply(config: ExperimentConfig, method_name: str,
         result.errors.append("No episode count columns found in sweep_results.csv")
         return result
 
-    # Filter out invalid rows
     valid_rows, filter_warnings = _filter_valid_rows(rows, ep_cols)
     result.warnings.extend(filter_warnings)
     result.n_runs = len(valid_rows)
@@ -301,26 +257,11 @@ def select_and_apply(config: ExperimentConfig, method_name: str,
             f"for more reliable selection (recommended >= {MIN_RUNS_WARNING})."
         )
 
-    # Select best
     best, scored = select_best(valid_rows, ep_cols)
     result.best_row = best
     result.score = best['_score']
-
-    # Diagnostics
+    result.selected_hyperparams = build_tuned_hyperparams(best)
     result.warnings.extend(_diagnose_results(scored, ep_cols))
-
-    # Compute config changes
-    method_yaml = config_path / f"{method_name}.yaml"
-    if not method_yaml.exists():
-        result.errors.append(f"Method config file not found at {method_yaml}")
-        return result
-
-    changes, updated_config = compute_config_changes(method_yaml, best)
-    result.changes = changes
-
-    # Write if not dry run
-    if not dry_run:
-        write_method_yaml(method_yaml, updated_config)
 
     result.success = True
     return result
@@ -358,32 +299,31 @@ def _print_table(scored: list[dict], ep_cols: list[str], top_n: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Select best hyperparameters from sweep results")
+    parser = argparse.ArgumentParser(
+        description="Select best hyperparameters from sweep results and write to tuned_hyperparams.json"
+    )
     parser.add_argument("--config", type=Path, required=True,
                         help="Path to experiment config.yaml")
     parser.add_argument("--method", type=str, required=True,
                         help="Method name (e.g., monte_carlo)")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="Destination for tuned_hyperparams.json "
+                             "(defaults to {estimator_dir}/sweeps/tuned_hyperparams.json)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would change without writing")
+                        help="Show selection without writing the file")
     parser.add_argument("--top-n", type=int, default=5,
                         help="Show top N candidates (default: 5)")
     args = parser.parse_args()
 
     config = ExperimentConfig.from_yaml(args.config)
+    result = select_hyperparams_for_method(config, args.method)
 
-    # Run selection (always dry-run first for display)
-    result = select_and_apply(config, args.method, args.config.parent, dry_run=True)
-
-    # Print errors and exit if failed
     if result.errors:
         for err in result.errors:
             print(f"ERROR: {err}", file=sys.stderr)
         sys.exit(1)
 
-    # Display results
-    print(f"Loaded {result.n_runs} valid sweep runs")
-
-    # Load raw data for table display
+    # Print ranked table for human inspection
     method_config = next(mc for mc in config.value_estimators.method_configs if mc.name == args.method)
     estimator_dir = config.get_estimator_dir(method_config)
     csv_path = estimator_dir / "sweeps" / "sweep_results.csv"
@@ -391,37 +331,26 @@ def main():
     valid_rows, _ = _filter_valid_rows(rows, result.ep_cols)
     _, scored = select_best(valid_rows, result.ep_cols)
 
+    print(f"Loaded {result.n_runs} valid sweep runs")
     print(f"\nTop {min(args.top_n, len(scored))} candidates (by mean normalized loss):\n")
     _print_table(scored, result.ep_cols, args.top_n)
 
-    # Print warnings
     if result.warnings:
         print(f"\nWarnings:")
         for w in result.warnings:
             print(f"  - {w}")
 
-    # Show selection
     print(f"\nSelected: run {result.best_row['run_id']} (score={result.score:.4f})")
+    print(f"Tuned hyperparams:")
+    for k, v in sorted(result.selected_hyperparams.items()):
+        print(f"  {k}: {v}")
 
-    method_yaml = args.config.parent / f"{args.method}.yaml"
-    if result.changes:
-        print(f"\nChanges to {method_yaml}:")
-        for hp, (old, new) in result.changes.items():
-            print(f"  {hp}: {old} -> {new}")
+    output_path = args.output or (estimator_dir / "sweeps" / "tuned_hyperparams.json")
+    if args.dry_run:
+        print(f"\n(dry run — would write to {output_path})")
     else:
-        print("No changes needed — config already matches best hyperparams.")
-
-    # Actually write if not dry run
-    if not args.dry_run and result.changes:
-        _, updated_config = compute_config_changes(method_yaml, result.best_row)
-        write_method_yaml(method_yaml, updated_config)
-        print(f"\nWritten to {method_yaml}")
-    elif args.dry_run and result.changes:
-        print("\n(dry run — no files modified)")
-
-    # Exit with warning code if there were warnings
-    if result.warnings and not result.success:
-        sys.exit(2)
+        write_tuned_hyperparams_json(output_path, result.selected_hyperparams)
+        print(f"\nWrote tuned hyperparams to {output_path}")
 
 
 if __name__ == "__main__":

@@ -53,10 +53,10 @@ value_estimators:
   methods:
   #- least_squares_mc
   #- least_squares_td
-  - least_squares_mc_rbf
-  - least_squares_td_rbf
-  #- monte_carlo
-  #- td
+  #- least_squares_mc_rbf
+  #- least_squares_td_rbf
+  - monte_carlo
+  - td
   #- nnls_mc
   #- nnls_td
 network:
