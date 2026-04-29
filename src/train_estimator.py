@@ -18,7 +18,7 @@ import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from src.config import (
     ExperimentConfig, BaseEstimatorConfig, resolve_param_for_episodes,
@@ -28,7 +28,7 @@ from src.estimators import ESTIMATOR_REGISTRY
 from src.data_preprocessing import preprocess_episodes, TransitionDataset
 
 
-METHOD_ABBREV = {'monte_carlo': 'MC', 'td': 'TD'}
+METHOD_ABBREV = {'monte_carlo': 'MC', 'td': 'TD', 'td_lambda': 'TDλ'}
 
 
 def get_method_abbreviation(method_name: str) -> str:
@@ -173,9 +173,15 @@ def train_single_estimator(
         devices=1,
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = (DataLoader(validation_dataset, batch_size=batch_size, shuffle=False)
-                  if validation_dataset is not None else None)
+    train_active_idx = train_dataset.active.nonzero(as_tuple=True)[0].tolist()
+    train_loader = DataLoader(Subset(train_dataset, train_active_idx),
+                              batch_size=batch_size, shuffle=True)
+    if validation_dataset is not None:
+        val_active_idx = validation_dataset.active.nonzero(as_tuple=True)[0].tolist()
+        val_loader = DataLoader(Subset(validation_dataset, val_active_idx),
+                                batch_size=batch_size, shuffle=False)
+    else:
+        val_loader = None
 
     trainer.fit(module, train_loader, val_loader)
 

@@ -132,6 +132,7 @@ class EstimatorType(str, Enum):
     """Enum for estimator types."""
     MONTE_CARLO = "monte_carlo"
     TD = "td"
+    TD_LAMBDA = "td_lambda"
     LEAST_SQUARES_MC = "least_squares_mc"
     LEAST_SQUARES_TD = "least_squares_td"
 
@@ -227,6 +228,18 @@ class TDConfig(BaseEstimatorConfig):
 
 
 @dataclass
+class TDLambdaConfig(BaseEstimatorConfig):
+    """TD(lambda) estimator configuration. Offline target refresh.
+
+    `lam=0.0` => one-step TD(0) with hard target snapshot.
+    `lam=1.0` => MC return on terminated trajectories.
+    """
+    lam: Union[float, Dict] = 0.95
+    recompute_every: Union[int, Dict] = 1
+    recompute_unit: str = "epoch"  # "epoch" or "batch"
+
+
+@dataclass
 class LeastSquaresMCConfig(BaseEstimatorConfig):
     """Least Squares Monte Carlo estimator configuration."""
     ridge_lambda: Union[float, Dict] = 1e-6  # Ridge regularization parameter
@@ -244,6 +257,7 @@ class LeastSquaresTDConfig(BaseEstimatorConfig):
 ESTIMATOR_CONFIG_REGISTRY: Dict[EstimatorType, Type[BaseEstimatorConfig]] = {
     EstimatorType.MONTE_CARLO: MonteCarloConfig,
     EstimatorType.TD: TDConfig,
+    EstimatorType.TD_LAMBDA: TDLambdaConfig,
     EstimatorType.LEAST_SQUARES_MC: LeastSquaresMCConfig,
     EstimatorType.LEAST_SQUARES_TD: LeastSquaresTDConfig,
 }

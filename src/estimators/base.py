@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from src.estimators.feature_extractors import (
     FeatureExtractor,
@@ -74,13 +74,34 @@ class ValueEstimator(pl.LightningModule):
         self._reward_centering = False
         self._features_cached = False
 
+        # Periodic-refresh schedule for offline target methods. None disables.
+        self.recompute_every: Optional[int] = None
+        self.recompute_unit: str = "epoch"
+        self._train_dataset = None
+        self._pre_val_dataset = None
+        self.cached_targets: Optional[torch.Tensor] = None
+
     @property
     def reward_offset(self) -> float:
         return self.mean_reward / (1 - self.discount_factor) if self.mean_reward != 0.0 else 0.0
 
-    @abstractmethod
     def compute_targets(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        ...
+        """Default: look up precomputed targets by row index.
+
+        Online-target methods (e.g. TD with Polyak target net) override this
+        to compute targets live per minibatch.
+        """
+        idx = batch['idx']
+        return self.cached_targets[idx].to(idx.device if isinstance(idx, torch.Tensor) else self.device)
+
+    def recompute_targets(self, dataset) -> None:
+        """Refresh self.cached_targets from the dataset. Default is a no-op.
+
+        Offline-target methods override this to write into self.cached_targets.
+        Called once at fit start and then on the schedule given by
+        (recompute_every, recompute_unit).
+        """
+        pass
 
     def _get_features(self, batch):
         if 'features' in batch and 'next_features' in batch:
@@ -115,15 +136,21 @@ class ValueEstimator(pl.LightningModule):
         self._pre_val_dataset = val_dataset
         self._pre_batch_size = batch_size
         self._reward_centering = reward_centering
+        self._train_dataset = train_dataset
 
     def on_fit_start(self):
         if self._features_cached:
             return
-        # Pre-training pass on the training dataloader (no shuffle) to update
-        # the feature extractor's running normalizer and accumulate reward stats.
+        # Pre-training pass over ACTIVE states only — the normalizer and reward
+        # stats should reflect the data that drives gradients/loss.
         self.feature_extractor.train()
-        loader = DataLoader(self._pre_train_dataset, batch_size=self._pre_batch_size,
-                            shuffle=False)
+        ds = self._pre_train_dataset
+        if hasattr(ds, 'active'):
+            active_idx = ds.active.nonzero(as_tuple=True)[0].tolist()
+            pre_ds = Subset(ds, active_idx)
+        else:
+            pre_ds = ds
+        loader = DataLoader(pre_ds, batch_size=self._pre_batch_size, shuffle=False)
         with torch.no_grad():
             for mb in loader:
                 obs = mb['observations'].to(self.device)
@@ -142,6 +169,26 @@ class ValueEstimator(pl.LightningModule):
         if self._pre_val_dataset is not None:
             self._cache_features(self._pre_val_dataset)
         self._features_cached = True
+
+        # Initial target recompute for offline methods. No-op for online TD.
+        self.recompute_targets(self._train_dataset)
+
+    def on_train_epoch_start(self):
+        if self.recompute_every is None or self.recompute_unit != "epoch":
+            return
+        if self.current_epoch == 0:
+            return  # initial recompute already happened in on_fit_start
+        if self.current_epoch % self.recompute_every == 0:
+            self.recompute_targets(self._train_dataset)
+
+    def on_train_batch_start(self, batch, batch_idx):
+        if self.recompute_every is None or self.recompute_unit != "batch":
+            return
+        step = self.global_step
+        if step == 0:
+            return  # initial recompute already happened in on_fit_start
+        if step % self.recompute_every == 0:
+            self.recompute_targets(self._train_dataset)
 
     def _cache_features(self, dataset):
         loader = DataLoader(dataset, batch_size=self._pre_batch_size, shuffle=False)

@@ -70,6 +70,9 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float, truncation_c
     all_dones = []
     all_next_observations = []
     all_mc_returns = []
+    all_active = []
+    kept_lengths = []
+    kept_truncated = []
 
     # Process each episode
     for i in range(len(batch['observations'])):
@@ -85,26 +88,31 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float, truncation_c
         # Check if this episode was truncated
         truncated = batch.get('truncated', np.zeros(len(batch['observations']), dtype=bool))[i]
 
-        # Only discard states from truncated episodes
         episode_length = len(rewards)
         if truncated:
             keep_length = max(0, episode_length - n_discard)
             if keep_length == 0:
-                # Skip episodes that are too short after discarding
+                # Entire trajectory would be inactive; skip it.
                 continue
+            active = np.concatenate([
+                np.ones(keep_length, dtype=bool),
+                np.zeros(episode_length - keep_length, dtype=bool),
+            ])
         else:
-            # Keep all states for naturally terminated episodes
-            keep_length = episode_length
+            active = np.ones(episode_length, dtype=bool)
 
-        # Add to lists (only keeping first keep_length states)
-        all_observations.append(obs[:keep_length])
-        all_actions.append(actions[:keep_length])
-        all_rewards.append(rewards[:keep_length])
-        all_dones.append(dones[:keep_length])
-        all_next_observations.append(next_obs[:keep_length])
-        all_mc_returns.append(mc_returns[:keep_length])
+        all_observations.append(obs)
+        all_actions.append(actions)
+        all_rewards.append(rewards)
+        all_dones.append(dones)
+        all_next_observations.append(next_obs)
+        all_mc_returns.append(mc_returns)
+        all_active.append(active)
+        kept_lengths.append(episode_length)
+        kept_truncated.append(bool(truncated))
 
-    # Concatenate all episodes
+    episode_starts = np.concatenate([[0], np.cumsum(kept_lengths)]).astype(np.int64)
+
     preprocessed = {
         'observations': np.concatenate(all_observations, axis=0).astype(np.float32),
         'actions': np.concatenate(all_actions, axis=0),
@@ -112,6 +120,9 @@ def preprocess_episodes(batch: Dict[str, np.ndarray], gamma: float, truncation_c
         'dones': np.concatenate(all_dones, axis=0).astype(np.float32),
         'next_observations': np.concatenate(all_next_observations, axis=0).astype(np.float32),
         'mc_returns': np.concatenate(all_mc_returns, axis=0).astype(np.float32),
+        'active': np.concatenate(all_active).astype(bool),
+        'episode_starts': episode_starts,
+        'truncated': np.array(kept_truncated, dtype=bool),
     }
 
     return preprocessed
@@ -192,6 +203,20 @@ class TransitionDataset(Dataset):
         self.dones = torch.FloatTensor(batch['dones'])
         self.mc_returns = torch.FloatTensor(batch['mc_returns'])
 
+        n = len(self.observations)
+        if 'episode_starts' in batch:
+            self.episode_starts = torch.as_tensor(batch['episode_starts'], dtype=torch.long)
+        else:
+            self.episode_starts = torch.tensor([0, n], dtype=torch.long)
+        if 'truncated' in batch:
+            self.truncated = torch.as_tensor(batch['truncated'], dtype=torch.bool)
+        else:
+            self.truncated = torch.zeros(self.episode_starts.numel() - 1, dtype=torch.bool)
+        if 'active' in batch:
+            self.active = torch.as_tensor(batch['active'], dtype=torch.bool)
+        else:
+            self.active = torch.ones(n, dtype=torch.bool)
+
         # Optional cached features (set via set_features())
         self.features = None
         self.next_features = None
@@ -211,6 +236,7 @@ class TransitionDataset(Dataset):
 
     def __getitem__(self, idx):
         item = {
+            'idx': idx,
             'observations': self.observations[idx],
             'next_observations': self.next_observations[idx],
             'rewards': self.rewards[idx],

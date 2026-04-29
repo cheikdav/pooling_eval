@@ -69,6 +69,7 @@ class NeuralNetEstimator(ValueEstimator):
     def training_step(self, batch, batch_idx):
         features, next_features = self._get_features(batch)
         feature_batch = {
+            'idx': batch['idx'],
             'features': features,
             'next_features': next_features,
             'rewards': batch['rewards'],
