@@ -6,9 +6,22 @@ Fan-out over methods, batches, and episode counts is handled by the Snakemake
 workflow at the repo root.
 """
 
+# Suppress torch's CUDA driver probe on CPU-only nodes. The torch wheel from
+# PyPI is built with CUDA (torch==2.9.1+cu128); on a node without an NVIDIA
+# driver, every Adam.step() calls _cuda_graph_capture_health_check ->
+# is_available() -> cudaGetDeviceCount, which retries cuInit and stalls ~95ms
+# per call. Set CUDA_VISIBLE_DEVICES="" only when no driver is present; on
+# GPU nodes leave it alone so torch can use the GPU. Must run before torch
+# is imported.
+import os
+if ("CUDA_VISIBLE_DEVICES" not in os.environ
+        and not os.path.exists("/proc/driver/nvidia/version")):
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 import argparse
 import copy
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -29,6 +42,36 @@ from src.data_preprocessing import preprocess_episodes, TransitionDataset
 
 
 METHOD_ABBREV = {'monte_carlo': 'MC', 'td': 'TD', 'td_lambda': 'TDλ'}
+
+
+def assert_no_cuda_probe_stall(threshold_ms: float = 10.0) -> None:
+    """Fail fast if Adam.step() is paying a slow CUDA-driver probe.
+
+    On CPU-only nodes with a CUDA-built torch wheel and no NVIDIA driver,
+    each Adam step calls is_available() -> cudaGetDeviceCount, which stalls
+    ~95ms. A tiny Linear+Adam loop normally runs in <1ms/step on CPU; if it
+    is much slower, the env-var fix isn't active and the run will be ~50x
+    slower than expected.
+    """
+    m = torch.nn.Linear(8, 1)
+    opt = torch.optim.Adam(m.parameters(), lr=1e-3)
+    x = torch.randn(4, 8)
+    for _ in range(3):  # warmup
+        opt.zero_grad(); m(x).sum().backward(); opt.step()
+    t0 = time.perf_counter()
+    for _ in range(20):
+        opt.zero_grad(); m(x).sum().backward(); opt.step()
+    per_step_ms = (time.perf_counter() - t0) / 20 * 1000
+    if per_step_ms > threshold_ms:
+        raise RuntimeError(
+            f"Adam step took {per_step_ms:.1f} ms (threshold {threshold_ms} ms). "
+            "This usually means torch's CUDA driver probe is firing on every "
+            "Adam.step() because the CUDA-built torch wheel is running on a "
+            "node without an NVIDIA driver. Aborting before wasting hours on "
+            "a ~50x-slower run. Fix: ensure CUDA_VISIBLE_DEVICES='' is set "
+            "before importing torch (this module sets it via os.environ at "
+            "the top), or install the CPU torch wheel."
+        )
 
 
 def get_method_abbreviation(method_name: str) -> str:
@@ -315,6 +358,7 @@ def main():
     args = parser.parse_args()
 
     config = ExperimentConfig.from_yaml(args.config)
+    assert_no_cuda_probe_stall()
 
     method_config = None
     for mc in config.value_estimators.method_configs:
