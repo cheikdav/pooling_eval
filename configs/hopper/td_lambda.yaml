@@ -1,0 +1,10 @@
+name: td_lambda
+type: td_lambda
+learning_rate: 0.00035
+batch_size: 512
+lam: 0.95
+recompute_every: 1
+recompute_unit: epoch
+feature_extractor:
+  type: identity
+  normalize: post

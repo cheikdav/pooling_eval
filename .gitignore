@@ -52,4 +52,5 @@ profiles/
 configs/test_config.yaml
 configs/config_test*.yaml
 configs/sweeps/sweep_test*.yaml
+configs/test_mini/
 test_*.py

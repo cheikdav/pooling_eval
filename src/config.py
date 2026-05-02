@@ -329,11 +329,58 @@ class CodeVersions:
 
 
 @dataclass
+class TrajectoriesEvalConfig:
+    """N on-policy rollouts; first n_save are the viz subset, all N are kept for gradient eval."""
+    n_total: int = 0   # 0 disables this mode
+    n_save: int = 0
+
+
+@dataclass
+class ResetStatesEvalConfig:
+    """Sample states from seed trajectories, then reset many times to compute V/Q/A ground truth."""
+    n_seed_trajectories: int = 0   # 0 disables this mode
+    state_stride: Union[int, str] = "auto"  # "auto" -> max(1, int(0.1/(1-gamma)))
+    n_states_max: int = 0
+    n_rollouts: int = 50           # used for ground-truth Q stats
+    n_rollouts_keep: int = 0       # save trajectories of first N rollouts per (s, a); 0 = none
+
+
+@dataclass
+class GradientReferenceConfig:
+    """Reference gradient computed at eval-data level for the gradient mode."""
+    baseline: str = "batch_mean"   # "batch_mean" | "zero"
+
+
+@dataclass
+class AdvantageModeConfig:
+    """Per-mode config — does not affect eval_NNN identity (post-processing only)."""
+    lambdas: List[float] = field(default_factory=list)
+
+
+@dataclass
+class GradientModeConfig:
+    """Per-mode config — does not affect eval_NNN identity (post-processing only)."""
+    lambdas: List[float] = field(default_factory=list)
+    n_chunks: int = 4
+    transition_checkpoints: List[int] = field(default_factory=list)
+
+
+@dataclass
+class EvalModesConfig:
+    """Per-mode evaluation knobs (do not enter eval_NNN identity)."""
+    value: bool = True
+    trajectory: bool = True
+    advantage: AdvantageModeConfig = field(default_factory=AdvantageModeConfig)
+    gradient: GradientModeConfig = field(default_factory=GradientModeConfig)
+
+
+@dataclass
 class EvaluationConfig:
-    """Configuration for evaluation (eval batch + paired states)."""
-    eval_episodes: int = 0
-    paired_states_n_pairs: int = 0  # 0 = no paired states
-    paired_states_n_trajectories: int = 50
+    """Configuration for ground-truth evaluation data generation + per-mode eval knobs."""
+    trajectories: TrajectoriesEvalConfig = field(default_factory=TrajectoriesEvalConfig)
+    reset_states: ResetStatesEvalConfig = field(default_factory=ResetStatesEvalConfig)
+    gradient_reference: GradientReferenceConfig = field(default_factory=GradientReferenceConfig)
+    modes: EvalModesConfig = field(default_factory=EvalModesConfig)
     seed: Optional[int] = None
 
 
@@ -414,6 +461,16 @@ class ExperimentConfig:
         estimator_dir = self.get_estimator_dir(method_config)
         return resolve_dir(estimator_dir, "eval", get_eval_params(self))
 
+    def get_eval_data_dir(self) -> Path:
+        """Resolve ground-truth eval-data directory: {data_NNN}/eval_NNN/.
+
+        Identity = eval params; shared across all methods.
+        """
+        from src.registry import resolve_dir, get_policy_params, get_data_params, get_eval_params
+        policy_parent = resolve_dir(self._get_env_root(), "policy", get_policy_params(self))
+        data_parent = resolve_dir(policy_parent, "data", get_data_params(self))
+        return resolve_dir(data_parent, "eval", get_eval_params(self))
+
     def get_logs_dir(self) -> Path:
         return Path(self.logs_root) / "experiments" / "logs"
 
@@ -480,7 +537,25 @@ class ExperimentConfig:
         data_gen_config = DataGenerationConfig(**config_dict['data_generation'])
         network_config = NetworkConfig(**config_dict['network'])
         logging_config = LoggingConfig(**config_dict['logging'])
-        evaluation_config = EvaluationConfig(**config_dict.get('evaluation', {}))
+        eval_dict = config_dict.get('evaluation', {})
+        traj_dict = eval_dict.get('trajectories', {})
+        reset_dict = eval_dict.get('reset_states', {})
+        gradref_dict = eval_dict.get('gradient_reference', {})
+        modes_dict = eval_dict.get('modes', {})
+        adv_dict = modes_dict.get('advantage', {})
+        grad_dict = modes_dict.get('gradient', {})
+        evaluation_config = EvaluationConfig(
+            trajectories=TrajectoriesEvalConfig(**traj_dict),
+            reset_states=ResetStatesEvalConfig(**reset_dict),
+            gradient_reference=GradientReferenceConfig(**gradref_dict),
+            modes=EvalModesConfig(
+                value=bool(modes_dict.get('value', True)),
+                trajectory=bool(modes_dict.get('trajectory', True)),
+                advantage=AdvantageModeConfig(**adv_dict),
+                gradient=GradientModeConfig(**grad_dict),
+            ),
+            seed=eval_dict.get('seed'),
+        )
 
         # Parse value estimators config
         ve_dict = config_dict['value_estimators']

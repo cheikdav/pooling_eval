@@ -27,10 +27,10 @@ policy:
   use_vec_normalize: false
 data_generation:
   n_batches: 100
-  episodes_per_batch: 80
+  episodes_per_batch: 10
   deterministic_policy: false
   n_envs: 122
-  tuning_episodes: 80
+  tuning_episodes: 10
   validation_episodes_per_batch: 42
   seed: 42
 value_estimators:
@@ -45,10 +45,10 @@ value_estimators:
     seed: 42
     episode_subsets:
        - 10
-       - 15
-       - 20
-       - 40
-       - 80
+       #- 15
+       #- 20
+       #- 40
+       #- 80
        
   methods:
   #- least_squares_mc
@@ -57,6 +57,9 @@ value_estimators:
   #- least_squares_td_rbf
   - monte_carlo
   - td
+  - td_lambda
+  - td_lambda_td0_fresh
+  - td_lambda_td0_stale
   #- nnls_mc
   #- nnls_td
 network:
@@ -72,8 +75,23 @@ logging:
   log_frequency: 20
   wandb_mode: offline
 evaluation:
-  eval_episodes: 80
-  paired_states_n_pairs: 100
-  paired_states_n_trajectories: 4000
+  trajectories:
+    n_total: 1000
+    n_save: 50
+  reset_states:
+    n_seed_trajectories: 5
+    state_stride: auto
+    n_states_max: 200
+    n_rollouts: 4000
+    n_rollouts_keep: 2000
+  gradient_reference:
+    baseline: batch_mean
+  modes:
+    advantage:
+      lambdas: [0.0, 0.5, 0.9, 0.95, 1.0]
+    gradient:
+      lambdas: [0.0, 0.5, 0.9, 0.95, 1.0]
+      n_chunks: 4
+      transition_checkpoints: [1000, 2500, 5000, 10000]
   seed: 42
 

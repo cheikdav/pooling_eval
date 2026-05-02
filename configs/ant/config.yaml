@@ -52,7 +52,7 @@ value_estimators:
 
   methods:
   - monte_carlo
-  - td
+  #- td
   #- least_squares_mc
   #- least_squares_td
   #- least_squares_mc_rbf
@@ -72,7 +72,22 @@ logging:
   log_frequency: 20
   wandb_mode: offline
 evaluation:
-  eval_episodes: 100
-  paired_states_n_pairs: 100
-  paired_states_n_trajectories: 4000
+  trajectories:
+    n_total: 20
+    n_save: 10
+  reset_states:
+    n_seed_trajectories: 2
+    state_stride: auto
+    n_states_max: 20
+    n_rollouts: 16
+    n_rollouts_keep: 8
+  gradient_reference:
+    baseline: batch_mean
+  modes:
+    advantage:
+      lambdas: [0.0, 0.95, 1.0]
+    gradient:
+      lambdas: [0.0, 0.95, 1.0]
+      n_chunks: 2
+      transition_checkpoints: [200, 500]
   seed: 237

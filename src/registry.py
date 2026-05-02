@@ -176,12 +176,28 @@ def get_estimator_params(config: ExperimentConfig, method_config: BaseEstimatorC
 
 
 def get_eval_params(config: ExperimentConfig) -> dict:
-    """Extract parameters that define the evaluation level identity."""
+    """Extract parameters that define the evaluation level identity.
+
+    Includes ground-truth-affecting fields only. Per-mode knobs (lambdas,
+    n_chunks, transition_checkpoints) are excluded because they don't change
+    what's stored — they only drive post-processing rules.
+    """
     ev = config.evaluation
     return {
-        'eval_episodes': ev.eval_episodes,
-        'paired_states_n_pairs': ev.paired_states_n_pairs,
-        'paired_states_n_trajectories': ev.paired_states_n_trajectories,
+        'trajectories': {
+            'n_total': ev.trajectories.n_total,
+            'n_save': ev.trajectories.n_save,
+        },
+        'reset_states': {
+            'n_seed_trajectories': ev.reset_states.n_seed_trajectories,
+            'state_stride': ev.reset_states.state_stride,
+            'n_states_max': ev.reset_states.n_states_max,
+            'n_rollouts': ev.reset_states.n_rollouts,
+            'n_rollouts_keep': ev.reset_states.n_rollouts_keep,
+        },
+        'gradient_reference': {
+            'baseline': ev.gradient_reference.baseline,
+        },
         'seed': ev.seed,
         'gamma': config.value_estimators.training.gamma,
         'code_version': config.code_versions.evaluation,

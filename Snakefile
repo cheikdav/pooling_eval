@@ -63,6 +63,7 @@ N_BATCHES = EXP.data_generation.n_batches
 # use concrete absolute paths and only fan out over {method}, {n_ep}, {batch}.
 POLICY_DIR = Path(EXP.get_policy_dir()).resolve()
 DATA_DIR = Path(EXP.get_data_dir()).resolve()
+EVAL_DATA_DIR = Path(EXP.get_eval_data_dir()).resolve()
 EST_DIRS = {name: Path(EXP.get_estimator_dir(mc)).resolve() for name, mc in METHODS.items()}
 EVAL_DIRS = {name: Path(EXP.get_eval_dir(mc)).resolve() for name, mc in METHODS.items()}
 
@@ -70,6 +71,12 @@ EVAL_DIRS = {name: Path(EXP.get_eval_dir(mc)).resolve() for name, mc in METHODS.
 # wildcards match one of the known estimator directory paths.
 METHOD_BY_EST_DIR = {str(d): name for name, d in EST_DIRS.items()}
 EST_DIR_ALTERNATION = "|".join(re.escape(str(d)) for d in EST_DIRS.values())
+
+METHOD_BY_EVAL_DIR = {str(d): name for name, d in EVAL_DIRS.items()}
+EVAL_DIR_ALTERNATION = "|".join(re.escape(str(d)) for d in EVAL_DIRS.values())
+
+ADV_LAMBDAS = list(EXP.evaluation.modes.advantage.lambdas)
+GRAD_LAMBDAS = list(EXP.evaluation.modes.gradient.lambdas)
 
 # Run identifier for application log paths. Same parameters -> same hash ->
 # retries of the same cell accumulate in one log directory. Different
@@ -94,17 +101,66 @@ def estimator_ckpt(method: str, n_ep: int, batch: int) -> str:
     return str(EST_DIRS[method] / str(n_ep) / f"batch_{batch}" / "estimator.pt")
 
 
-def prediction_parquet(method: str, n_ep: int) -> str:
-    return str(EVAL_DIRS[method] / "results" / method / str(n_ep) / "predictions.parquet")
+def value_parquet(method: str, n_ep: int, batch: int) -> str:
+    return str(EVAL_DIRS[method] / "results" / "value" / str(n_ep) / f"batch_{batch}" / "predictions.parquet")
+
+
+def trajectory_parquet(method: str, n_ep: int, batch: int) -> str:
+    return str(EVAL_DIRS[method] / "results" / "trajectory" / str(n_ep) / f"batch_{batch}" / "predictions.parquet")
+
+
+def advantage_parquet(method: str, n_ep: int, batch: int, lam: float) -> str:
+    return str(EVAL_DIRS[method] / "results" / "advantage" / f"lambda_{lam:g}"
+               / str(n_ep) / f"batch_{batch}" / "predictions.parquet")
+
+
+def gradient_parquet(method: str, n_ep: int, batch: int, lam: float) -> str:
+    return str(EVAL_DIRS[method] / "results" / "gradient" / f"lambda_{lam:g}"
+               / str(n_ep) / f"batch_{batch}" / "metrics.parquet")
 
 
 # ---------------------------------------------------------------------------
 # Terminal target
 # ---------------------------------------------------------------------------
 
+_eval_data_outputs = []
+if EXP.evaluation.trajectories.n_total > 0:
+    _eval_data_outputs.append(str(EVAL_DATA_DIR / "trajectories.npz"))
+    _eval_data_outputs.append(str(EVAL_DATA_DIR / "reference_gradient.npz"))
+if EXP.evaluation.reset_states.n_seed_trajectories > 0:
+    _eval_data_outputs.append(str(EVAL_DATA_DIR / "reset_states.npz"))
+    if EXP.evaluation.reset_states.n_rollouts_keep > 0:
+        _eval_data_outputs.append(str(EVAL_DATA_DIR / "reset_states_rollouts.npz"))
+
+_value_outputs = (
+    [value_parquet(m, n, b) for m in METHOD_NAMES for n in EPISODE_SUBSETS for b in range(N_BATCHES)]
+    if EXP.evaluation.modes.value else []
+)
+_trajectory_outputs = (
+    [trajectory_parquet(m, n, b) for m in METHOD_NAMES for n in EPISODE_SUBSETS for b in range(N_BATCHES)]
+    if EXP.evaluation.modes.trajectory else []
+)
+_advantage_outputs = [
+    advantage_parquet(m, n, b, lam)
+    for m in METHOD_NAMES for n in EPISODE_SUBSETS for b in range(N_BATCHES)
+    for lam in ADV_LAMBDAS
+]
+_gradient_outputs = [
+    gradient_parquet(m, n, b, lam)
+    for m in METHOD_NAMES for n in EPISODE_SUBSETS for b in range(N_BATCHES)
+    for lam in GRAD_LAMBDAS
+]
+
+
 rule all:
     input:
-        [prediction_parquet(m, n_ep) for m in METHOD_NAMES for n_ep in EPISODE_SUBSETS],
+        [estimator_ckpt(m, n_ep, b)
+         for m in METHOD_NAMES for n_ep in EPISODE_SUBSETS for b in range(N_BATCHES)],
+        _eval_data_outputs,
+        _value_outputs,
+        _trajectory_outputs,
+        _advantage_outputs,
+        _gradient_outputs,
 
 
 # ---------------------------------------------------------------------------
@@ -170,24 +226,58 @@ rule generate_training_data:
         "--phase training --n-workers {threads} > {log} 2>&1"
 
 
-_eval_outputs = [str(DATA_DIR / "batch_eval.npz")]
-if EXP.evaluation.paired_states_n_pairs > 0:
-    _eval_outputs.append(str(DATA_DIR / "paired_states.npz"))
-
-rule generate_eval_data:
+rule generate_trajectories:
     input:
         rules.train_policy.output.policy,
     output:
-        _eval_outputs,
+        str(EVAL_DATA_DIR / "trajectories.npz"),
     resources:
         mem_mb=200000,
         runtime="6h",
     threads: min(max(EXP.data_generation.n_envs, 4), 64)
     log:
-        str(LOGS_ROOT / "data" / "generate_eval.log"),
+        str(LOGS_ROOT / "data" / "generate_trajectories.log"),
     shell:
-        "uv run -m src.generate_data --config {CONFIG_PATH:q} "
-        "--phase eval --n-workers {threads} > {log} 2>&1"
+        "uv run -m src.generate_eval_data --config {CONFIG_PATH:q} "
+        "--mode trajectories --n-workers {threads} > {log} 2>&1"
+
+
+_reset_states_outputs = [str(EVAL_DATA_DIR / "reset_states.npz")]
+if EXP.evaluation.reset_states.n_rollouts_keep > 0:
+    _reset_states_outputs.append(str(EVAL_DATA_DIR / "reset_states_rollouts.npz"))
+
+
+rule generate_reset_states:
+    input:
+        rules.train_policy.output.policy,
+    output:
+        _reset_states_outputs,
+    resources:
+        mem_mb=200000,
+        runtime="6h",
+    threads: min(max(EXP.data_generation.n_envs, 4), 64)
+    log:
+        str(LOGS_ROOT / "data" / "generate_reset_states.log"),
+    shell:
+        "uv run -m src.generate_eval_data --config {CONFIG_PATH:q} "
+        "--mode reset_states --n-workers {threads} > {log} 2>&1"
+
+
+rule generate_reference_gradient:
+    input:
+        policy=rules.train_policy.output.policy,
+        traj=str(EVAL_DATA_DIR / "trajectories.npz"),
+    output:
+        str(EVAL_DATA_DIR / "reference_gradient.npz"),
+    resources:
+        mem_mb=32000,
+        runtime="2h",
+    threads: 1
+    log:
+        str(LOGS_ROOT / "data" / "generate_reference_gradient.log"),
+    shell:
+        "uv run -m src.generate_eval_data --config {CONFIG_PATH:q} "
+        "--mode reference_gradient > {log} 2>&1"
 
 
 # ---------------------------------------------------------------------------
@@ -281,35 +371,107 @@ rule train_estimator:
 
 
 # ---------------------------------------------------------------------------
-# Evaluation: one global rule that consumes every estimator and writes
-# predictions.parquet + ground_truth for all methods in a single pass.
-# (evaluate.py does not support per-method filtering today; running it once
-# is cheap compared to training.)
+# Per-cell evaluation: one job per (method × n_episodes × batch [× lambda]).
 # ---------------------------------------------------------------------------
 
-rule evaluate_all:
+rule evaluate_value:
     input:
-        estimators=[
-            estimator_ckpt(m, n_ep, b)
-            for m in METHOD_NAMES
-            for n_ep in EPISODE_SUBSETS
-            for b in range(N_BATCHES)
-        ],
-        eval_batch=str(DATA_DIR / "batch_eval.npz"),
+        ckpt=lambda wc: estimator_ckpt(METHOD_BY_EVAL_DIR[wc.eval_dir], int(wc.n_ep), int(wc.batch)),
+        rs=str(EVAL_DATA_DIR / "reset_states.npz"),
     output:
-        predictions=[
-            prediction_parquet(m, n_ep)
-            for m in METHOD_NAMES
-            for n_ep in EPISODE_SUBSETS
-        ],
+        "{eval_dir}/results/value/{n_ep}/batch_{batch}/predictions.parquet",
+    wildcard_constraints:
+        eval_dir=EVAL_DIR_ALTERNATION,
+        n_ep=r"\d+",
+        batch=r"\d+",
+    params:
+        method=lambda wc: METHOD_BY_EVAL_DIR[wc.eval_dir],
+    priority: 100
     resources:
-        mem_mb=30000,
-        runtime="4h",
-    # evaluate.py uses ProcessPoolExecutor + torch. The fork interaction with
-    # torch's CUDA init hangs on some systems, so we run single-threaded here.
-    # See issue: pre-existing hang with --n-jobs > 1 on NVML-less machines.
+        mem_mb=8000,
+        runtime="30m",
     threads: 1
     log:
-        str(LOGS_ROOT / "evaluate" / "evaluate.log"),
+        "{eval_dir}/results/value/{n_ep}/batch_{batch}/evaluate.log",
     shell:
-        "uv run -m src.evaluate --config {CONFIG_PATH:q} --n-jobs 1 > {log} 2>&1"
+        "uv run -m src.evaluators.value --config {CONFIG_PATH:q} "
+        "--method {params.method} --n-episodes {wildcards.n_ep} "
+        "--batch-idx {wildcards.batch} > {log} 2>&1"
+
+
+rule evaluate_trajectory:
+    input:
+        ckpt=lambda wc: estimator_ckpt(METHOD_BY_EVAL_DIR[wc.eval_dir], int(wc.n_ep), int(wc.batch)),
+        traj=str(EVAL_DATA_DIR / "trajectories.npz"),
+    output:
+        "{eval_dir}/results/trajectory/{n_ep}/batch_{batch}/predictions.parquet",
+    wildcard_constraints:
+        eval_dir=EVAL_DIR_ALTERNATION,
+        n_ep=r"\d+",
+        batch=r"\d+",
+    params:
+        method=lambda wc: METHOD_BY_EVAL_DIR[wc.eval_dir],
+    priority: 90
+    resources:
+        mem_mb=8000,
+        runtime="30m",
+    threads: 1
+    log:
+        "{eval_dir}/results/trajectory/{n_ep}/batch_{batch}/evaluate.log",
+    shell:
+        "uv run -m src.evaluators.trajectory --config {CONFIG_PATH:q} "
+        "--method {params.method} --n-episodes {wildcards.n_ep} "
+        "--batch-idx {wildcards.batch} > {log} 2>&1"
+
+
+rule evaluate_advantage:
+    input:
+        ckpt=lambda wc: estimator_ckpt(METHOD_BY_EVAL_DIR[wc.eval_dir], int(wc.n_ep), int(wc.batch)),
+        rollouts=str(EVAL_DATA_DIR / "reset_states_rollouts.npz"),
+    output:
+        "{eval_dir}/results/advantage/lambda_{lam}/{n_ep}/batch_{batch}/predictions.parquet",
+    wildcard_constraints:
+        eval_dir=EVAL_DIR_ALTERNATION,
+        lam=r"[\d.]+",
+        n_ep=r"\d+",
+        batch=r"\d+",
+    params:
+        method=lambda wc: METHOD_BY_EVAL_DIR[wc.eval_dir],
+    priority: 50
+    resources:
+        mem_mb=80000,
+        runtime="30m",
+    threads: 1
+    log:
+        "{eval_dir}/results/advantage/lambda_{lam}/{n_ep}/batch_{batch}/evaluate.log",
+    shell:
+        "uv run -m src.evaluators.advantage --config {CONFIG_PATH:q} "
+        "--method {params.method} --n-episodes {wildcards.n_ep} "
+        "--batch-idx {wildcards.batch} --lam {wildcards.lam} > {log} 2>&1"
+
+
+rule evaluate_gradient:
+    input:
+        ckpt=lambda wc: estimator_ckpt(METHOD_BY_EVAL_DIR[wc.eval_dir], int(wc.n_ep), int(wc.batch)),
+        traj=str(EVAL_DATA_DIR / "trajectories.npz"),
+        ref=str(EVAL_DATA_DIR / "reference_gradient.npz"),
+    output:
+        "{eval_dir}/results/gradient/lambda_{lam}/{n_ep}/batch_{batch}/metrics.parquet",
+    wildcard_constraints:
+        eval_dir=EVAL_DIR_ALTERNATION,
+        lam=r"[\d.]+",
+        n_ep=r"\d+",
+        batch=r"\d+",
+    params:
+        method=lambda wc: METHOD_BY_EVAL_DIR[wc.eval_dir],
+    priority: 10
+    resources:
+        mem_mb=16000,
+        runtime="1h",
+    threads: 1
+    log:
+        "{eval_dir}/results/gradient/lambda_{lam}/{n_ep}/batch_{batch}/evaluate.log",
+    shell:
+        "uv run -m src.evaluators.gradient --config {CONFIG_PATH:q} "
+        "--method {params.method} --n-episodes {wildcards.n_ep} "
+        "--batch-idx {wildcards.batch} --lam {wildcards.lam} > {log} 2>&1"

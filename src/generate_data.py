@@ -4,12 +4,7 @@ import argparse
 import json
 import numpy as np
 from pathlib import Path
-from tqdm import tqdm
-from typing import Dict, List, Tuple
-import gymnasium as gym
-import scipy.stats as stats
-import multiprocessing as mp
-from functools import partial
+from typing import Dict, List
 
 from src.config import ExperimentConfig
 from src.env_utils import ALGORITHM_MAP, create_vec_env
@@ -21,29 +16,12 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
 
     Runs n_envs episodes in parallel, waits for all to complete, then repeats.
     n_envs is capped at n_episodes to avoid bias toward short episodes.
-
-    Args:
-        env: VecEnv with n_envs parallel environments
-        model: Trained SB3 model
-        n_episodes: Total number of episodes to collect
-        deterministic: Whether to use deterministic actions
-        use_vec_normalize: Whether VecNormalize is used
-        seed: If set, seed the environment on the first reset for reproducibility
-
-    Returns:
-        List of episode dictionaries, each containing:
-            - observations: (T, obs_dim) array
-            - actions: (T,) or (T, act_dim) array
-            - rewards: (T,) array
-            - dones: (T,) array
-            - next_observations: (T, obs_dim) array
     """
     n_envs = env.num_envs
     completed_episodes = []
     first_reset = True
 
     while len(completed_episodes) < n_episodes:
-        # Use at most as many envs as episodes still needed
         n_active = min(n_envs, n_episodes - len(completed_episodes))
 
         episode_data = [
@@ -59,7 +37,6 @@ def collect_episodes_parallel(env, model, n_episodes: int, deterministic: bool =
         if isinstance(obs, tuple):
             obs = obs[0]
 
-        # Run until all n_active envs have completed one episode
         while any(active):
             if use_vec_normalize:
                 original_obs = env.get_original_obs()
@@ -138,16 +115,7 @@ def episodes_to_batch(episodes: List[Dict[str, np.ndarray]]) -> Dict[str, np.nda
 
 
 def save_and_log_batch(batch_data: dict, output_path: Path, batch_name: str) -> dict:
-    """Save batch data and return statistics.
-
-    Args:
-        batch_data: Dictionary containing batch data
-        output_path: Path to save the NPZ file
-        batch_name: Name for logging
-
-    Returns:
-        Dictionary of statistics
-    """
+    """Save batch data and return statistics."""
     np.savez_compressed(output_path, **batch_data)
 
     mean_return = batch_data['episode_returns'].mean()
@@ -165,308 +133,8 @@ def save_and_log_batch(batch_data: dict, output_path: Path, batch_name: str) -> 
     }
 
 
-def get_full_state(env):
-    """Get full MuJoCo environment state (qpos, qvel) for restoration."""
-    return (env.unwrapped.data.qpos.copy(), env.unwrapped.data.qvel.copy())
-
-
-def restore_full_state(env, state):
-    """Restore MuJoCo environment to a saved state."""
-    qpos, qvel = state
-    env.unwrapped.set_state(qpos, qvel)
-
-
-def get_obs_from_env(env) -> np.ndarray:
-    """Get current observation from env after state restoration."""
-    return env.unwrapped._get_obs()
-
-
-def generate_trajectory_from_state(env, model, full_state, gamma: float = 0.99, deterministic: bool = False, vec_normalize=None, max_steps: int = None) -> float:
-    """Generate a single trajectory from an initial state and return discounted return.
-
-    Trajectories are capped at max_steps (default: 10/(1-gamma)) since further
-    steps contribute < e^{-10} ≈ 0.005% to the discounted return.
-    """
-    if max_steps is None:
-        max_steps = int(10 / (1 - gamma))
-
-    env.reset()  # reset TimeLimit counter and all wrapper state
-    restore_full_state(env, full_state)
-
-    # Get obs fresh from env after restoration to avoid any stale-obs mismatch
-    obs = get_obs_from_env(env)
-    if vec_normalize is not None:
-        obs = vec_normalize.normalize_obs(obs[None])[0]
-
-    done = False
-    truncated = False
-    episode_return = 0.0
-    undiscounted_return = 0.0
-    discount = 1.0
-    step = 0
-
-    while not (done or truncated) and step < max_steps:
-        action, _ = model.predict(obs, deterministic=deterministic)
-        obs, reward, done, truncated, _ = env.step(action)
-        if vec_normalize is not None:
-            obs = vec_normalize.normalize_obs(obs[None])[0]
-        episode_return += discount * reward
-        undiscounted_return += reward
-        discount *= gamma
-        step += 1
-
-    return episode_return, undiscounted_return
-
-
-def sample_state_pairs(env, config: ExperimentConfig):
-    """Sample state pairs by resetting environment.
-
-    Args:
-        env: Gymnasium environment
-        config: Experiment configuration
-
-    Returns:
-        List of tuples: (obs1, obs2, state1, state2)
-        where obs is the observation and state is the full restorable state
-    """
-    pairs = []
-
-    for _ in range(config.evaluation.paired_states_n_pairs):
-        # Reset twice to get two different initial states
-        reset_result = env.reset()
-        obs1 = reset_result[0] if isinstance(reset_result, tuple) else reset_result
-        state1 = get_full_state(env)
-
-        reset_result = env.reset()
-        obs2 = reset_result[0] if isinstance(reset_result, tuple) else reset_result
-        state2 = get_full_state(env)
-
-        pairs.append((obs1, obs2, state1, state2))
-
-    return pairs
-
-
-def compute_confidence_interval(returns: np.ndarray, confidence: float = 0.95) -> Tuple[float, float]:
-    """Compute confidence interval using t-distribution.
-
-    Args:
-        returns: Array of returns
-        confidence: Confidence level (default 0.95 for 95% CI)
-
-    Returns:
-        (lower_bound, upper_bound)
-    """
-    mean = np.mean(returns)
-    std = np.std(returns, ddof=1)
-    n = len(returns)
-
-    t_value = stats.t.ppf((1 + confidence) / 2, n - 1)
-    margin = t_value * std / np.sqrt(n)
-
-    return mean - margin, mean + margin
-
-
-def _process_single_state(state_data: Tuple) -> Dict:
-    """Worker function to process a single state in parallel.
-
-    Args:
-        state_data: Tuple containing (pair_idx, state_idx, obs, full_state, env_name,
-                   policy_path, algorithm, max_episode_steps, n_trajectories, gamma,
-                   vec_normalize_path)
-
-    Returns:
-        Dictionary with results for this state
-    """
-    pair_idx, state_idx, obs, full_state, env_name, policy_path, algorithm, max_episode_steps, n_trajectories, gamma, vec_normalize_path = state_data
-
-    # Create environment for this worker
-    env = gym.make(env_name, max_episode_steps=max_episode_steps)
-
-    # Load model for this worker
-    AlgorithmClass = ALGORITHM_MAP[algorithm]
-    model = AlgorithmClass.load(policy_path)
-
-    # Load VecNormalize if available
-    vec_normalize = None
-    if vec_normalize_path is not None and Path(vec_normalize_path).exists():
-        from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
-        dummy_env = DummyVecEnv([lambda: gym.make(env_name, max_episode_steps=max_episode_steps)])
-        vec_normalize = VecNormalize.load(str(vec_normalize_path), dummy_env)
-        vec_normalize.training = False
-        vec_normalize.norm_reward = False
-
-    # Generate trajectories from this state
-    returns = []
-    total_undiscounted = 0.0
-    for _ in range(n_trajectories):
-        ret, undiscount_ret = generate_trajectory_from_state(env, model, full_state, gamma=gamma, deterministic=False, vec_normalize=vec_normalize)
-        returns.append(ret)
-        total_undiscounted += undiscount_ret
-
-    returns = np.array(returns)
-    avg_undiscounted = total_undiscounted / n_trajectories
-
-    # Compute statistics
-    mean_ret = np.mean(returns)
-    std_ret = np.std(returns, ddof=1)
-    ci_lower, ci_upper = compute_confidence_interval(returns)
-
-    env.close()
-
-    return {
-        'pair_idx': pair_idx,
-        'state_idx': state_idx,
-        'obs': obs,
-        'returns': returns,
-        'mean': mean_ret,
-        'std': std_ret,
-        'ci_lower': ci_lower,
-        'ci_upper': ci_upper,
-        'undiscounted': avg_undiscounted,
-    }
-
-
-def generate_paired_states(config: ExperimentConfig, output_dir: Path, gamma: float, vec_normalize_path: Path = None, policy_path: Path = None, n_workers: int = None):
-    """Generate paired state evaluations with ground truth confidence intervals.
-
-    Args:
-        config: Experiment configuration
-        output_dir: Directory where to save results
-        gamma: Discount factor for value computation
-        vec_normalize_path: Optional path to VecNormalize file
-        policy_path: Optional path to policy file (defaults to experiments/<exp_id>/policy/policy_final.zip)
-        n_workers: Number of parallel workers (None = use all CPUs)
-    """
-    print(f"\nGenerating paired state evaluations")
-    print(f"Environment: {config.environment.name}")
-    print(f"Number of pairs: {config.evaluation.paired_states_n_pairs}")
-    print(f"Trajectories per state: {config.evaluation.paired_states_n_trajectories}")
-
-    # Sample state pairs
-    env = gym.make(config.environment.name, max_episode_steps=config.environment.max_episode_steps)
-    env.reset(seed=config.evaluation.seed)
-
-    print("Sampling state pairs by resetting environment...")
-    state_pairs = sample_state_pairs(env, config)
-    env.close()
-
-    # Use default policy path if not provided
-    if policy_path is None:
-        policy_path = config.get_policy_dir() / "policy_final.zip"
-
-    # Flatten state pairs into individual states for parallel processing
-    all_states = []
-    for pair_idx, (obs1, obs2, state1, state2) in enumerate(state_pairs):
-        all_states.append((
-            pair_idx, 0, obs1, state1, config.environment.name,
-            str(policy_path),
-            config.policy.algorithm, config.environment.max_episode_steps,
-            config.evaluation.paired_states_n_trajectories, gamma,
-            str(vec_normalize_path) if vec_normalize_path else None
-        ))
-        all_states.append((
-            pair_idx, 1, obs2, state2, config.environment.name,
-            str(policy_path),
-            config.policy.algorithm, config.environment.max_episode_steps,
-            config.evaluation.paired_states_n_trajectories, gamma,
-            str(vec_normalize_path) if vec_normalize_path else None
-        ))
-
-    print(f"Generating trajectories from {len(all_states)} states in parallel (n_workers={n_workers or 'all CPUs'})...")
-
-    # Process all states in parallel
-    with mp.Pool(processes=n_workers) as pool:
-        state_results = list(tqdm(
-            pool.imap(_process_single_state, all_states),
-            total=len(all_states),
-            desc="Processing states"
-        ))
-
-    # Reconstruct paired results
-    results = {
-        'pair_indices': [],
-        'state1_obs': [],
-        'state2_obs': [],
-        's1_returns': [],
-        's2_returns': [],
-        's1_mean': [],
-        's1_std': [],
-        's1_ci_lower': [],
-        's1_ci_upper': [],
-        's2_mean': [],
-        's2_std': [],
-        's2_ci_lower': [],
-        's2_ci_upper': [],
-        'diff_mean': [],
-        'diff_std': [],
-        'diff_ci_lower': [],
-        'diff_ci_upper': [],
-    }
-    undiscounted_returns = []
-
-    # Group results by pair
-    for pair_idx in range(config.evaluation.paired_states_n_pairs):
-        s1_result = state_results[pair_idx * 2]
-        s2_result = state_results[pair_idx * 2 + 1]
-
-        # Compute difference statistics
-        diff_returns = s1_result['returns'] - s2_result['returns']
-        diff_mean = np.mean(diff_returns)
-        diff_std = np.std(diff_returns, ddof=1)
-        diff_ci_lower, diff_ci_upper = compute_confidence_interval(diff_returns)
-
-        results['pair_indices'].append(pair_idx)
-        results['state1_obs'].append(s1_result['obs'])
-        results['state2_obs'].append(s2_result['obs'])
-        results['s1_returns'].append(s1_result['returns'])
-        results['s2_returns'].append(s2_result['returns'])
-        results['s1_mean'].append(s1_result['mean'])
-        results['s1_std'].append(s1_result['std'])
-        results['s1_ci_lower'].append(s1_result['ci_lower'])
-        results['s1_ci_upper'].append(s1_result['ci_upper'])
-        results['s2_mean'].append(s2_result['mean'])
-        results['s2_std'].append(s2_result['std'])
-        results['s2_ci_lower'].append(s2_result['ci_lower'])
-        results['s2_ci_upper'].append(s2_result['ci_upper'])
-        results['diff_mean'].append(diff_mean)
-        results['diff_std'].append(diff_std)
-        results['diff_ci_lower'].append(diff_ci_lower)
-        results['diff_ci_upper'].append(diff_ci_upper)
-
-        undiscounted_returns.append(s1_result['undiscounted'])
-        undiscounted_returns.append(s2_result['undiscounted'])
-
-    for key in results:
-        if key in ['s1_returns', 's2_returns']:
-            results[key] = np.array(results[key], dtype=object)
-        else:
-            results[key] = np.array(results[key])
-
-    output_path = output_dir / "paired_states.npz"
-    np.savez_compressed(output_path, **results)
-
-    print(f"\nPaired state data saved to {output_path}")
-    print(f"Sample statistics:")
-    print(f"  S1 mean discounted returns: {np.mean(results['s1_mean']):.2f} ± {np.std(results['s1_mean']):.2f}")
-    print(f"  S2 mean discounted returns: {np.mean(results['s2_mean']):.2f} ± {np.std(results['s2_mean']):.2f}")
-    print(f"  Mean undiscounted returns (averaged over trajectories): {np.mean(undiscounted_returns):.2f} ± {np.std(undiscounted_returns):.2f}")
-    print(f"  Mean difference (V(s1) - V(s2)): {np.mean(results['diff_mean']):.2f} ± {np.std(results['diff_mean']):.2f}")
-    print(f"  Average CI width for differences: {np.mean(results['diff_ci_upper'] - results['diff_ci_lower']):.2f}")
-
-
 def _compute_batch_seeds(config: ExperimentConfig):
-    """Compute deterministic seed assignments for all batch types.
-
-    Seed layout (always the same regardless of which phase runs):
-      tuning:    base_seed
-      batch_0:   base_seed + 1
-      batch_1:   base_seed + 2
-      ...
-      batch_N-1: base_seed + N
-      eval:      base_seed + N + 1  (or base_seed + N if no tuning)
-
-    Returns dict with keys 'tuning', 'training' (list), 'eval'.
-    """
+    """Compute deterministic seed assignments for tuning + training batches."""
     base = config.data_generation.seed
     seeds = {}
     idx = 0
@@ -480,34 +148,20 @@ def _compute_batch_seeds(config: ExperimentConfig):
         seeds['training'].append(base + idx)
         idx += 1
 
-    if config.evaluation.eval_episodes > 0:
-        seeds['eval'] = base + idx
-        idx += 1
-
     return seeds
 
 
 def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
                   phase: str = "all",
-                  start_batch_idx: int = 0, end_batch_idx: int = None,
-                  generate_paired: bool = False, n_workers: int = None):
+                  start_batch_idx: int = 0, end_batch_idx: int = None):
     """Generate episode batches using trained policy.
 
-    Args:
-        config: Experiment configuration
-        policy_path: Path to trained policy (.zip file)
-        output_dir: Directory to save generated data
-        phase: Which batches to generate:
-            "all" — tuning + training + eval + paired (default, backward compat)
-            "tuning" — only batch_tuning (+ validation)
-            "training" — only regular batches (respects start/end_batch_idx)
-            "eval" — only batch_eval + paired states
-        start_batch_idx: Skip training batches before this index
-        end_batch_idx: Stop after this training batch index (exclusive)
-        generate_paired: Whether to generate paired state evaluations
-        n_workers: Number of parallel workers for paired state generation
+    Phases:
+        "all" — tuning + training
+        "tuning" — only batch_tuning (+ validation)
+        "training" — only regular batches (respects start/end_batch_idx)
     """
-    valid_phases = ("all", "tuning", "training", "eval")
+    valid_phases = ("all", "tuning", "training")
     if phase not in valid_phases:
         raise ValueError(f"Invalid phase '{phase}'. Must be one of {valid_phases}")
 
@@ -552,7 +206,6 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
     val_eps = config.data_generation.validation_episodes_per_batch
 
     def collect_and_save(batch_name, n_train, n_val, seed):
-        """Collect train + validation episodes together, split, and save."""
         total = n_train + n_val
         print(f"Collecting {batch_name} ({n_train}+{n_val} val = {total} episodes)")
         np.random.seed(seed)
@@ -578,13 +231,11 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     total_episodes = 0
 
-    # Tuning batch
     if phase in ("all", "tuning") and 'tuning' in batch_seeds:
         total_episodes += collect_and_save(
             "batch_tuning", config.data_generation.tuning_episodes,
             val_eps, batch_seeds['tuning'])
 
-    # Regular training batches
     if phase in ("all", "training"):
         for i in range(config.data_generation.n_batches):
             if i < start_batch_idx or (end_batch_idx is not None and i >= end_batch_idx):
@@ -593,13 +244,6 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
                 f"batch_{i}", config.data_generation.episodes_per_batch,
                 val_eps, batch_seeds['training'][i])
 
-    # Eval batch
-    if phase in ("all", "eval") and 'eval' in batch_seeds:
-        total_episodes += collect_and_save(
-            "batch_eval", config.evaluation.eval_episodes,
-            0, batch_seeds['eval'])
-
-    # Save statistics and metadata
     stats_file = output_dir / "data_statistics.npz"
     np.savez(
         stats_file,
@@ -616,7 +260,6 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
         'episodes_per_batch': config.data_generation.episodes_per_batch,
         'tuning_episodes': config.data_generation.tuning_episodes,
         'validation_episodes_per_batch': config.data_generation.validation_episodes_per_batch,
-        'eval_episodes': config.evaluation.eval_episodes,
         'seed': config.data_generation.seed,
         'policy_metadata': policy_metadata,
     }
@@ -631,66 +274,36 @@ def generate_data(config: ExperimentConfig, policy_path: Path, output_dir: Path,
 
     env.close()
 
-    # Generate paired state evaluations (only in eval or all phase)
-    if generate_paired and phase in ("all", "eval"):
-        generate_paired_states(config, output_dir, gamma=config.value_estimators.training.gamma,
-                               vec_normalize_path=vec_normalize_path, policy_path=policy_path,
-                               n_workers=n_workers)
-
 
 def main():
     parser = argparse.ArgumentParser(description="Generate episode data using trained policy")
     parser.add_argument("--config", type=Path, required=True, help="Path to config YAML file")
     parser.add_argument("--policy-path", type=Path, default=None,
-                       help="Path to trained policy (default: experiments/<experiment_id>/policy/policy_final.zip)")
+                        help="Path to trained policy (default: experiments/<experiment_id>/policy/policy_final.zip)")
     parser.add_argument("--output-dir", type=Path, default=None,
-                       help="Output directory (default: experiments/<experiment_id>/data)")
-    parser.add_argument("--phase", type=str, default="all", choices=["all", "tuning", "training", "eval"],
-                       help="Which data to generate (default: all)")
+                        help="Output directory (default: experiments/<experiment_id>/data)")
+    parser.add_argument("--phase", type=str, default="all", choices=["all", "tuning", "training"],
+                        help="Which data to generate (default: all)")
     parser.add_argument("--start-batch-idx", type=int, default=0,
-                       help="Skip training batches before this index (for resuming)")
+                        help="Skip training batches before this index (for resuming)")
     parser.add_argument("--end-batch-idx", type=int, default=None,
-                       help="Stop after this training batch index (exclusive)")
-    parser.add_argument("--generate-paired", action="store_true",
-                       help="Generate paired state evaluations (overrides config)")
-    parser.add_argument("--no-generate-paired", action="store_true",
-                       help="Skip paired state generation (overrides config)")
-    parser.add_argument("--eval-only", action="store_true",
-                       help="Deprecated: use --phase eval instead")
+                        help="Stop after this training batch index (exclusive)")
     parser.add_argument("--n-workers", type=int, default=None,
-                       help="Number of parallel workers for paired state generation (default: use all CPUs)")
+                        help="Reserved for compatibility; unused now that paired-state generation is gone")
     args = parser.parse_args()
 
     config = ExperimentConfig.from_yaml(args.config)
 
-    # Handle deprecated --eval-only
-    phase = args.phase
-    if args.eval_only:
-        print("Warning: --eval-only is deprecated, use --phase eval instead")
-        phase = "eval"
-
-    # Determine whether to generate paired states
-    if args.generate_paired:
-        generate_paired = True
-    elif args.no_generate_paired:
-        generate_paired = False
-    else:
-        generate_paired = config.evaluation.paired_states_n_pairs > 0
-
-    # Set default paths
     policy_path = args.policy_path or config.get_policy_dir() / "policy_final.zip"
     output_dir = args.output_dir or config.get_data_dir()
 
-    # Save config to output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     config.save(output_dir / "config.yaml")
 
     generate_data(config, policy_path, output_dir,
-                 phase=phase,
-                 start_batch_idx=args.start_batch_idx,
-                 end_batch_idx=args.end_batch_idx,
-                 generate_paired=generate_paired,
-                 n_workers=args.n_workers)
+                  phase=args.phase,
+                  start_batch_idx=args.start_batch_idx,
+                  end_batch_idx=args.end_batch_idx)
 
 
 if __name__ == "__main__":
