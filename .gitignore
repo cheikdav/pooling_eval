@@ -44,8 +44,9 @@ test.py
 # Snakemake runtime state (locks, incomplete markers, cluster logs, metadata)
 .snakemake/
 
-# Local cluster wrapper (copy and customize; not checked in)
-scripts/submit_qsub.sh
+# Local cluster wrappers and one-off scripts (copy and customize; not checked in)
+scripts/
+profiles/
 
 # Testing config
 configs/test_config.yaml
